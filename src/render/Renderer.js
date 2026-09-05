@@ -6,6 +6,15 @@ import { drawMecanumTread, drawPlate, drawTile, drawTractionTread } from './text
 import { CameraRig } from './Camera.js';
 import { clamp } from '../math/MathUtil.js';
 
+const GATE_POST_HEIGHT = 0.34;
+
+/** Grey for not yet reached, cyan for the one you want, green for cleared. */
+const STATUS_COLOURS = {
+  pending: [0.52, 0.56, 0.63, 1],
+  active: [0.20, 0.82, 0.98, 1],
+  done: [0.28, 0.78, 0.45, 1],
+};
+
 const LIGHT_DIR = [0.45, 0.35, 0.82];
 const SKY = [0.42, 0.46, 0.54];
 const GROUND = [0.10, 0.11, 0.13];
@@ -99,11 +108,12 @@ export class Renderer {
 
     this.resize();
     this.camera.update(this.width / this.height, {
-      mode: config.view.camera,
+      view: config.view,
       robotX: body.position.x,
       robotY: body.position.y,
       robotHeading: body.rotation.radians,
       fieldSize: sim.field.size,
+      time: sim.time,
       dt,
     });
 
@@ -118,11 +128,129 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE0);
 
     this._drawField(sim);
+    this._drawChallengeSolids(sim);
     this._drawRobot(sim);
 
     this.lines.reset();
+    this._buildChallengeLines(sim);
     this._buildOverlays(sim);
     this._drawLines();
+  }
+
+  /**
+   * World-anchored labels for the active drill, returned for the 2D overlay to
+   * draw. Kept here because this is where the camera projection lives.
+   * @param {import('../app/Simulation.js').Simulation} sim
+   * @returns {{x:number,y:number,visible:boolean,text:string,status:string}[]}
+   */
+  challengeLabels(sim) {
+    const challenge = sim.challenges?.active;
+    if (!challenge || !sim.config.view.showChallengeLabels) return [];
+    const out = [];
+    for (const shape of challenge.describe()) {
+      if (!shape.label || shape.kind === 'corridor') continue;
+      const height = shape.kind === 'gate' ? GATE_POST_HEIGHT + 0.04 : 0.06;
+      const p = this.camera.project(shape.center.x, shape.center.y, height);
+      out.push({ ...p, text: shape.label, status: shape.status });
+    }
+    return out;
+  }
+
+  /** Posts and other solid geometry belonging to the active drill. */
+  _drawChallengeSolids(sim) {
+    const challenge = sim.challenges?.active;
+    if (!challenge) return;
+    const m = this._model;
+
+    for (const shape of challenge.describe()) {
+      if (shape.kind !== 'gate') continue;
+      const colour = STATUS_COLOURS[shape.status] ?? STATUS_COLOURS.pending;
+      const c = Math.cos(shape.heading);
+      const s = Math.sin(shape.heading);
+      // Posts sit at the ends of the gate, perpendicular to its heading.
+      const nx = -s;
+      const ny = c;
+      const h = shape.width / 2;
+      for (const side of [1, -1]) {
+        mat4.composeZ(
+          m,
+          shape.center.x + nx * h * side,
+          shape.center.y + ny * h * side,
+          GATE_POST_HEIGHT / 2,
+          c,
+          s,
+          0.035,
+          0.035,
+          GATE_POST_HEIGHT,
+        );
+        this._draw(this.meshes.box, m, colour, this.textures.white, 0.5);
+      }
+    }
+  }
+
+  /**
+   * Floor markings for the active drill: gate bars, target rings and lane
+   * edges. Drawn as lines so they read clearly from the low driver-station
+   * camera, where a flat filled shape almost disappears.
+   */
+  _buildChallengeLines(sim) {
+    const challenge = sim.challenges?.active;
+    if (!challenge) return;
+    const z = 0.008;
+    // Pulse the active objective so the eye finds it without reading labels.
+    const pulse = 0.55 + 0.45 * Math.sin(sim.time * 4);
+
+    for (const shape of challenge.describe()) {
+      const base = STATUS_COLOURS[shape.status] ?? STATUS_COLOURS.pending;
+      const alpha = shape.status === 'active' ? pulse : shape.status === 'done' ? 0.4 : 0.55;
+
+      if (shape.kind === 'gate') {
+        const nx = -Math.sin(shape.heading);
+        const ny = Math.cos(shape.heading);
+        const h = shape.width / 2;
+        const x1 = shape.center.x + nx * h;
+        const y1 = shape.center.y + ny * h;
+        const x2 = shape.center.x - nx * h;
+        const y2 = shape.center.y - ny * h;
+        this.lines.line(x1, y1, z, x2, y2, z, base[0], base[1], base[2], alpha);
+        // A short arrow through the gate showing which way counts.
+        if (shape.status === 'active') {
+          const dx = Math.cos(shape.heading) * 0.22;
+          const dy = Math.sin(shape.heading) * 0.22;
+          this.lines.line(
+            shape.center.x - dx, shape.center.y - dy, z,
+            shape.center.x + dx, shape.center.y + dy, z,
+            base[0], base[1], base[2], alpha,
+          );
+        }
+      } else if (shape.kind === 'zone') {
+        this._circle(shape.center.x, shape.center.y, z, shape.radius, base[0], base[1], base[2], alpha, 36);
+        if (shape.status === 'active') {
+          this._circle(shape.center.x, shape.center.y, z, shape.radius * 0.55, base[0], base[1], base[2], alpha * 0.7, 28);
+        }
+        // A tick showing the heading the robot must hold, where one is required.
+        if (shape.heading !== undefined && shape.status !== 'done') {
+          const dx = Math.cos(shape.heading) * shape.radius;
+          const dy = Math.sin(shape.heading) * shape.radius;
+          this.lines.line(shape.center.x, shape.center.y, z, shape.center.x + dx, shape.center.y + dy, z, base[0], base[1], base[2], alpha);
+        }
+      } else if (shape.kind === 'corridor') {
+        // Both edges of the lane, red while the robot is outside it.
+        const colour = shape.straying ? [1.0, 0.3, 0.2] : [0.55, 0.6, 0.7];
+        for (const side of [1, -1]) {
+          for (let i = 1; i < shape.points.length; i++) {
+            const a = shape.points[i - 1];
+            const b = shape.points[i];
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const len = Math.hypot(dx, dy) || 1;
+            const nx = (-dy / len) * shape.halfWidth * side;
+            const ny = (dx / len) * shape.halfWidth * side;
+            this.lines.line(a.x + nx, a.y + ny, z, b.x + nx, b.y + ny, z, colour[0], colour[1], colour[2], 0.85);
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -370,6 +498,7 @@ export class Renderer {
     }
   }
 
+  /** Draw a horizontal circle into the line batch. */
   _circle(x, y, z, radius, r, g, b, a, segments = 24) {
     let prevX = x + radius;
     let prevY = y;

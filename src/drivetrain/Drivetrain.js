@@ -194,6 +194,16 @@ export class Drivetrain {
   }
 
   /**
+   * Can this drivetrain command sideways motion?
+   *
+   * Read from the kinematics rather than from the layout name, so a custom
+   * layout added later answers correctly without being listed anywhere.
+   */
+  get canStrafe() {
+    return this._normalisation.b > 1e-6;
+  }
+
+  /**
    * Command the drivetrain with normalised chassis motion, the way an FTC
    * op-mode does. Each argument is -1..1.
    *

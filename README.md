@@ -29,7 +29,7 @@ For development:
 
 ```
 npm start      # serves locally and opens your browser
-npm test       # 113 unit and integration tests
+npm test       # 132 unit and integration tests
 npm run check  # headless browser smoke test + screenshots
 ```
 
@@ -99,17 +99,24 @@ robot. `Import` loads it back.
   schema, so adding a tunable is one entry in `src/config/schema.js`.
 - **Presets** for common chassis, including a deliberately tippy one for
   training and a "last match of the day" tired-battery setup.
+- **Eight timed driving drills** — sprint-and-stop, shuttle runs, slalom,
+  precision parking, figure eight, barrel course, a tight lane and a strafe
+  gauntlet. None are game-specific; they train the skills underneath any game.
+  Best times are kept per drivetrain, because a mecanum time says nothing about
+  the same driver on tank.
 - **Live telemetry**: speed, bus voltage, current draw, per-wheel grip usage and
   slip, with strip charts.
 - **Debug overlays**: per-wheel force vectors coloured by how much grip is left,
   slip markers, wheel load rings and a path trail.
-- **Cameras**: driver station (the default, and the one that actually builds
-  useful skill), chase, overhead and free orbit.
+- **Fully adjustable cameras**: driver station (the default, and the one that
+  actually builds useful skill), chase, overhead and free orbit. Drag and scroll
+  in any view; the driver-station camera can be set to your real eye height and
+  where you actually stand along the wall.
 
 ## What is deliberately *not* in the box
 
-No game elements, no scoring, no autonomous routines, no mechanisms. The season
-has not started. The extension points for all of them exist and are documented
+No game elements, no scoring, no autonomous routines, no mechanisms. The drills
+are about driving, not about a game. The season has not started. The extension points for all of them exist and are documented
 in [docs/EXTENDING.md](docs/EXTENDING.md) — adding a game piece or an arm should
 not require touching the core.
 
@@ -136,13 +143,14 @@ src/
   drivetrain/  wheel layouts, generic kinematics, drivetrain assembly
   robot/       robot assembly, Subsystem extension point
   field/       FTC field, FieldElement extension point
+  challenges/  timed driving drills: geometry, state machine, records
   input/       Gamepad API with FTC semantics, keyboard, latency model
   teleop/      OpMode extension point, drive schemes, driver-feel processing
   render/      WebGL2 renderer, cameras, procedural geometry and textures
   ui/          schema-driven settings panel, HUD, telemetry graphs
   config/      parameter schema, config store, motor and robot presets
   app/         simulation loop, application wiring
-test/          113 tests: unit, physics validation, and end-to-end
+test/          132 tests: unit, physics validation, drills, and end-to-end
 tools/         static server, headless browser check
 ```
 

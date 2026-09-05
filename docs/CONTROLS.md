@@ -38,10 +38,12 @@ These match what most FTC teams use, so muscle memory built here transfers.
 | Arrow keys | Drive and rotate (alternative) |
 | `Shift` | Precision mode |
 | `Space` | Boost / full power |
-| `R` | Reset robot |
+| `R` | Restart the drill, or reset the robot |
+| `N` | Driving drills |
 | `F` | Toggle field centric |
 | `H` | Reset IMU heading |
 | `C` | Cycle camera |
+| `B` | Reset the camera framing |
 | `P` | Pause |
 | `Tab` | Show / hide settings |
 | `?` | Help |
@@ -64,6 +66,78 @@ The **driver station** camera is the default on purpose. It is the view you
 actually have in a match: low, from one end, with the far side hard to judge.
 Overhead makes the field trivially readable and teaches habits that fall apart
 at competition.
+
+## Moving the camera
+
+The mouse works in every view, and every adjustment is saved with your config,
+so a framing you like comes back next session and travels to your teammates
+when you export.
+
+| Input | What it does |
+| --- | --- |
+| **Drag** | Look around. From the driver station this moves where you are *standing*: along the wall, and up or down for eye height. |
+| **Right-drag** (or `Shift`+drag) | Pan |
+| **Scroll** | Zoom |
+| **Double-click** | Reset this view's framing |
+| `C` | Cycle through the four views |
+| `B` | Reset this view's framing |
+
+Zoom means different things depending on where you are, because it should. From
+the driver station you cannot walk onto the field, so scrolling narrows the
+field of view — the same thing as leaning in and squinting. Everywhere else it
+moves the camera closer.
+
+### Matching your real driver station
+
+Every camera parameter is in the **Camera** group of the settings panel. The
+three worth setting honestly:
+
+- **Driver eye height** — how tall you are, standing. Shorter drivers really do
+  find the far side of the field harder to read, and this reproduces it rather
+  than pretending everyone is 1.8 m.
+- **Distance behind wall** — how far back the alliance station puts you.
+- **Position along the wall** — real stations put you off to one side, which is
+  why the far corner on your own side is the hardest place on the field to judge
+  distance. Set this to where you actually stand.
+
+The other views are adjustable too: chase distance, height and angle (swing it
+round to watch from the side while driving), overhead zoom and follow, and full
+orbit control with an option to keep the robot centred.
+
+## Driving drills
+
+Press `N`, or click **Drills**. Eight timed courses, none of them game-specific,
+because the season's game is not known — they train the skills underneath any
+game.
+
+| Drill | What it trains |
+| --- | --- |
+| **Sprint and stop** | Braking distance. Start here. |
+| **Shuttle run** | Repeatable cycles — the closest drill to a real match |
+| **Slalom** | Carrying speed through turns instead of stopping to rotate |
+| **Precision parking** | Stopping dead and square, as at a scoring position |
+| **Figure eight** | Both turn directions equally; find your weak one |
+| **Barrel course** | Route planning, not just car control |
+| **Tight lane** | Staying smooth under pressure |
+| **Strafe gauntlet** | Lateral movement (holonomic drivetrains only) |
+
+How they work:
+
+- **The clock starts when the robot first moves**, so you can line up in your
+  own time without it counting against you.
+- **Objectives must be taken in order.** Gates only count when crossed in the
+  direction the arrow shows, so you cannot farm one gate by rocking back and
+  forth through it.
+- **Hitting a wall adds time.** So does straying out of the lane in the corridor
+  drill, charged per second you are outside rather than as a one-off.
+- **Press `R` to run it again** from the start line.
+
+Best times are saved in your browser, **separately for each drivetrain type**. A
+time set on a 435 RPM mecanum robot says nothing about the same driver on a
+geared-down tank, so mixing them in one leaderboard would be actively
+misleading.
+
+Drills that need strafing are hidden when a tank drivetrain is selected.
 
 ## Tuning driver feel
 

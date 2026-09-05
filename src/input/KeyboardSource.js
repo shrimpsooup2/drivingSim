@@ -132,9 +132,11 @@ export const KEYBOARD_HELP = [
   ['Arrow keys', 'Drive and rotate (alternative)'],
   ['Shift', 'Precision mode'],
   ['Space', 'Boost / full power'],
-  ['R', 'Reset robot to start'],
+  ['R', 'Restart drill, or reset the robot'],
+  ['N', 'Driving drills'],
   ['F', 'Toggle field centric'],
   ['H', 'Reset IMU heading'],
   ['C', 'Cycle camera'],
+  ['B', 'Reset the camera framing'],
   ['Tab', 'Show / hide settings'],
 ];

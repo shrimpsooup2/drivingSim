@@ -283,6 +283,76 @@ async function main() {
     console.log(`  Panel built ${panelResult.controls} controls; rebuild OK (${panelResult.wheels} wheels, ${panelResult.mass} kg)`);
     if (panelResult.controls < 80) failures.push(`expected 80+ panel controls, got ${panelResult.controls}`);
 
+    // 6b. Camera controls must work in every mode, and every adjustment must
+    //     land in the config so the settings panel stays in step.
+    const cameraResult = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const rig = app.renderer.camera;
+      const set = (path, value) => app.config.set(path, value);
+      const out = {};
+      for (const mode of ['driverStation', 'chase', 'overhead', 'orbit']) {
+        app.config.set('view.camera', mode);
+        const before = JSON.stringify(app.config.values.view);
+        rig.drag(app.config.values.view, set, 40, 25);
+        rig.zoom(app.config.values.view, set, -240);
+        rig.pan(app.config.values.view, set, 15, 15);
+        out[mode] = {
+          changed: JSON.stringify(app.config.values.view) !== before,
+          describe: rig.describe(app.config.values.view),
+        };
+      }
+      app.config.set('view.camera', 'driverStation');
+      app._resetCamera();
+      out.resetFov = app.config.values.view.fov;
+      // Projection must place the field centre somewhere sensible on screen.
+      app.renderer.render(app.sim, 1 / 60);
+      const p = rig.project(0, 0, 0);
+      out.centreProjects = { x: +p.x.toFixed(3), y: +p.y.toFixed(3), visible: p.visible };
+      return out;
+    })()`);
+    for (const mode of ['driverStation', 'chase', 'overhead', 'orbit']) {
+      if (!cameraResult[mode].changed) failures.push(`camera controls did nothing in ${mode} mode`);
+    }
+    console.log(`  Camera: ${cameraResult.driverStation.describe}`);
+    console.log(`  Camera reset restored fov to ${cameraResult.resetFov}`);
+    if (cameraResult.resetFov !== 55) failures.push(`camera reset did not restore the default fov (got ${cameraResult.resetFov})`);
+    if (!cameraResult.centreProjects.visible) failures.push('field centre did not project on screen');
+
+    // 6c. Drills: every course must load, place the robot and render geometry.
+    const drillResult = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const runner = app.sim.challenges;
+      const summary = [];
+      for (const challenge of runner.available()) {
+        runner.select(challenge.id);
+        app.renderer.render(app.sim, 1 / 60);
+        const labels = app.renderer.challengeLabels(app.sim);
+        summary.push({
+          id: challenge.id,
+          objectives: challenge.total,
+          shapes: challenge.describe().length,
+          labels: labels.length,
+          placed: Math.abs(app.sim.robot.body.position.x - challenge.startPose.x) < 1e-6,
+        });
+      }
+      runner.select('slalom');
+      // Drive it for a moment so the clock starts and an objective is cleared.
+      app.input.keyboardSource.keys.add('KeyW');
+      app.input.keyboardSource.active = true;
+      for (let i = 0; i < 150; i++) app.sim.step(1 / 60);
+      app.input.keyboardSource.keys.clear();
+      const active = runner.active;
+      return { summary, running: active.state, elapsed: +active.elapsed.toFixed(2), index: active.index };
+    })()`);
+    console.log(`  Drills: ${drillResult.summary.length} available`);
+    for (const d of drillResult.summary) {
+      if (!d.placed) failures.push(`drill ${d.id} did not place the robot on its start line`);
+      if (d.shapes < d.objectives) failures.push(`drill ${d.id} rendered ${d.shapes} shapes for ${d.objectives} objectives`);
+    }
+    console.log(`  Slalom after driving: ${drillResult.running}, ${drillResult.elapsed}s, objective ${drillResult.index}`);
+    if (drillResult.running !== 'running') failures.push(`drill clock did not start (state ${drillResult.running})`);
+    if (drillResult.elapsed <= 0) failures.push('drill clock did not advance');
+
     // 7. Screenshots, with the help overlay dismissed so the field is visible.
     await cdp.evaluate('globalThis.ftcSim.toggleHelp(false)');
     await sleep(500);
@@ -337,6 +407,27 @@ async function main() {
     const chassisPath = shotPath.replace(/\.png$/, '-chassis.png');
     await writeFile(chassisPath, Buffer.from(shot3.data, 'base64'));
     console.log(`  Screenshot: ${chassisPath}`);
+
+    // A drill in progress, from the driver station: gates, labels and the HUD.
+    await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      for (const k of ['showHud', 'showGraphs', 'showTrail', 'showForceVectors', 'showSlip']) {
+        app.config.set('view.' + k, true);
+      }
+      app.config.set('view.camera', 'driverStation');
+      app._resetCamera();
+      app.sim.challenges.select('slalom');
+      app.input.keyboardSource.keys.add('KeyW');
+      app.input.keyboardSource.keys.add('KeyA');
+      app.input.keyboardSource.active = true;
+      for (let i = 0; i < 90; i++) app.sim.step(1 / 60);
+      app.input.keyboardSource.keys.clear();
+    })()`);
+    await sleep(700);
+    const shot4 = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const drillPath = shotPath.replace(/\.png$/, '-drill.png');
+    await writeFile(drillPath, Buffer.from(shot4.data, 'base64'));
+    console.log(`  Screenshot: ${drillPath}`);
 
     if (consoleErrors.length) {
       failures.push(`${consoleErrors.length} console error(s): ${consoleErrors[0]}`);

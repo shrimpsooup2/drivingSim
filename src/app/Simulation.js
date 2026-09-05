@@ -1,3 +1,4 @@
+import { ChallengeRunner } from '../challenges/ChallengeRunner.js';
 import { Robot } from '../robot/Robot.js';
 import { Field } from '../field/Field.js';
 import { TeleOpDrive } from '../teleop/TeleOpDrive.js';
@@ -55,6 +56,9 @@ export class Simulation {
     /** Recent positions for the path trail, as [x, y, t] triples. */
     this.trail = /** @type {number[][]} */ ([]);
 
+    /** Driving drills. Null active challenge means free driving. */
+    this.challenges = new ChallengeRunner(this);
+
     this._bindConfig();
     this.resetRobot();
   }
@@ -102,6 +106,9 @@ export class Simulation {
 
   resetRobot() {
     const p = this.startPose;
+    // A drill's clock is meaningless once the robot has been teleported, so it
+    // restarts with the robot rather than continuing to run.
+    this.challenges?.active?.reset();
     this.robot.reset(p.x, p.y, p.heading);
     this.opMode.reset();
     this.opMode.init();
@@ -159,10 +166,16 @@ export class Simulation {
     // Drop any backlog we could not work through, rather than accumulating debt.
     if (substeps >= maxSubsteps) this._physicsAccumulator = 0;
 
+    // How much simulated time actually elapsed. Using the requested frame time
+    // instead would let a drill's clock drift away from the physics whenever
+    // the browser stutters or a substep budget is hit.
+    const advanced = substeps * h;
+
     this.substepsLastFrame = substeps;
-    this.field.update(scaled);
-    this.robot.updateStats(scaled);
-    this._updateTrail(scaled);
+    this.field.update(advanced);
+    this.robot.updateStats(advanced);
+    this.challenges.update(advanced);
+    this._updateTrail(advanced);
     this.stepCostMs = now() - t0;
   }
 

@@ -112,6 +112,7 @@ connected, `KEYBOARD` otherwise.
 | `Q` `E` | Turn left / right |
 | `Shift` | Precision mode (slow) |
 | `R` | Put the robot back at the start |
+| `N` | Driving drills |
 | `C` | Change camera |
 | `?` | Show all the controls |
 
@@ -128,6 +129,24 @@ throttle control, because a key is either fully on or fully off.
    *slower* because of it.
 3. Press `Tab` to open the settings, find **Acceleration ramp**, and lower it.
    Try the same launch again.
+
+### Then run a drill
+
+Press `N` (or click **Drills**) and pick **Sprint and stop**. Drive flat out to
+the far end and stop inside the target. Almost everyone overshoots the first
+time — braking distance is the thing new drivers consistently underestimate.
+
+There are eight courses. Your best time on each is saved, so you can race
+yourself, and your teammates. Press `R` to run it again.
+
+### Move the camera
+
+Drag with the mouse to look around, and scroll to zoom. From the driver station
+view, dragging moves where you are *standing* — along the wall and up or down
+for eye height. Set it to match where you actually stand at a competition:
+that changes what you can see, and it is worth practising against.
+
+Double-click, or press `B`, to put the camera back.
 
 ---
 

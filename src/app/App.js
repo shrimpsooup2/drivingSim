@@ -3,7 +3,10 @@ import { Simulation } from './Simulation.js';
 import { Renderer } from '../render/Renderer.js';
 import { Hud } from '../ui/Hud.js';
 import { ParamPanel } from '../ui/ParamPanel.js';
+import { ChallengePanel } from '../ui/ChallengePanel.js';
 import { InputManager } from '../input/InputManager.js';
+import { Overlay2d } from '../render/Overlay2d.js';
+import { defaultConfig } from '../config/schema.js';
 import { KEYBOARD_HELP } from '../input/KeyboardSource.js';
 import { INCH } from '../math/MathUtil.js';
 
@@ -21,6 +24,7 @@ export class App {
     this.config.load();
 
     this.canvas = /** @type {HTMLCanvasElement} */ (root.querySelector('#field-canvas'));
+    this.labelCanvas = /** @type {HTMLCanvasElement} */ (root.querySelector('#label-canvas'));
     this.viewport = /** @type {HTMLElement} */ (root.querySelector('#viewport'));
     this.panelRoot = /** @type {HTMLElement} */ (root.querySelector('#panel'));
     this.hudRoot = /** @type {HTMLElement} */ (root.querySelector('#hud'));
@@ -38,8 +42,13 @@ export class App {
     this.sim.resetRobot();
 
     this.renderer = new Renderer(this.canvas);
+    this.overlay = new Overlay2d(this.labelCanvas);
     this.hud = new Hud(this.hudRoot);
     this.panel = new ParamPanel(this.panelRoot, this.config);
+    this.drills = new ChallengePanel(this.viewport, this.sim.challenges);
+
+    /** Schema defaults, so a camera can be reset to its as-shipped framing. */
+    this._defaultView = defaultConfig().view;
 
     this._buildOverlays();
     this._bindKeys();
@@ -114,9 +123,14 @@ export class App {
   _bindKeys() {
     const keyboard = this.input.keyboardSource;
     keyboard.on('KeyR', () => {
-      this.sim.resetRobot();
+      // With a drill loaded, R means "run it again from the line", which is
+      // what a driver wants far more often than a bare teleport.
+      if (this.sim.challenges.active) this.sim.challenges.restart();
+      else this.sim.resetRobot();
       this.hud.clearGraphs();
     });
+    keyboard.on('KeyN', () => this.drills.toggle());
+    keyboard.on('KeyB', () => this._resetCamera());
     keyboard.on('KeyC', () => this._cycleCamera());
     keyboard.on('KeyF', () => {
       const opMode = /** @type {any} */ (this.sim.opMode);
@@ -128,7 +142,10 @@ export class App {
     });
     keyboard.on('Tab', () => this.togglePanel());
     keyboard.on('Slash', () => this.toggleHelp());
-    keyboard.on('Escape', () => this.toggleHelp(false));
+    keyboard.on('Escape', () => {
+      this.toggleHelp(false);
+      this.drills.toggle(false);
+    });
   }
 
   _cycleCamera() {
@@ -143,8 +160,13 @@ export class App {
     let lastX = 0;
     let lastY = 0;
 
+    // Every adjustment goes through the config store rather than mutating the
+    // rig, so the settings panel, persistence and export all stay in step with
+    // what the mouse just did.
+    const set = (path, value) => this.config.set(path, value);
+    const view = () => this.config.values.view;
+
     this.canvas.addEventListener('pointerdown', (e) => {
-      if (this.config.values.view.camera !== 'orbit') return;
       dragging = true;
       button = e.button;
       lastX = e.clientX;
@@ -157,8 +179,9 @@ export class App {
       const dy = e.clientY - lastY;
       lastX = e.clientX;
       lastY = e.clientY;
-      if (button === 0) this.renderer.camera.orbitDrag(dx, dy);
-      else this.renderer.camera.orbitPan(dx, dy);
+      // Left drag looks around; right drag (or shift) pans.
+      if (button === 0 && !e.shiftKey) this.renderer.camera.drag(view(), set, dx, dy);
+      else this.renderer.camera.pan(view(), set, dx, dy);
     });
     const stop = (e) => {
       dragging = false;
@@ -169,15 +192,42 @@ export class App {
     this.canvas.addEventListener('pointerup', stop);
     this.canvas.addEventListener('pointercancel', stop);
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.canvas.addEventListener('dblclick', () => this._resetCamera());
     this.canvas.addEventListener(
       'wheel',
       (e) => {
-        if (this.config.values.view.camera !== 'orbit') return;
         e.preventDefault();
-        this.renderer.camera.orbitZoom(e.deltaY);
+        this.renderer.camera.zoom(view(), set, e.deltaY);
       },
       { passive: false },
     );
+  }
+
+  _resetCamera() {
+    this.renderer.camera.resetMode(this.config.values.view, (path, value) => this.config.set(path, value), this._defaultView);
+  }
+
+  /** World-anchored labels for the active drill, drawn on the 2D overlay. */
+  _drawLabels() {
+    this.overlay.begin();
+    const labels = this.renderer.challengeLabels(this.sim);
+    for (const label of labels) {
+      if (!label.visible) continue;
+      const colour =
+        label.status === 'active' ? '#0b0d10' : label.status === 'done' ? '#8f9aa8' : '#c8d0da';
+      const background =
+        label.status === 'active'
+          ? 'rgba(51, 209, 250, 0.95)'
+          : label.status === 'done'
+            ? 'rgba(10, 13, 17, 0.6)'
+            : 'rgba(10, 13, 17, 0.8)';
+      this.overlay.label(label, label.text, {
+        color: colour,
+        background,
+        bold: label.status === 'active',
+        size: label.status === 'active' ? 13 : 11,
+      });
+    }
   }
 
   _frame(timestamp) {
@@ -190,6 +240,8 @@ export class App {
     try {
       this.sim.step(dt);
       this.renderer.render(this.sim, dt);
+      this._drawLabels();
+      this.drills.update();
       const view = this.config.values.view;
       this.hud.setVisible(view.showHud, view.showGraphs);
       if (view.showHud || view.showGraphs) this.hud.update(this.sim, dt);
