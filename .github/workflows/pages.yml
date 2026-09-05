@@ -38,8 +38,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       # No install step: the project has no dependencies.
+      #
+      # `npm test` runs `node --test` with no arguments on purpose. Node's own
+      # test-file discovery works on every version from 18 onward, whereas
+      # passing a glob (`node --test "test/*.test.js"`) only works on Node 22+
+      # and fails with "Could not find" on older runners.
       - name: Run tests
         run: npm test
 
