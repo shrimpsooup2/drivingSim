@@ -1,0 +1,61 @@
+# Publishes the simulator to GitHub Pages so anyone on the team can drive it
+# from a link, with nothing to install and no terminal involved.
+#
+# This works because the project is plain static files: native ES modules and a
+# hand-written renderer, no build step. The whole repository is uploaded as-is.
+#
+# ONE-TIME SETUP (a repo admin does this once, in the browser):
+#   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"
+#
+# After that, every push to the branches below republishes the site at
+#   https://<owner>.github.io/<repo>/
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - claude/ftc-driving-simulator-j65m6n
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a run in progress finish rather than cancelling it, so a deploy is never
+# left half-applied.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # No install step: the project has no dependencies.
+      - name: Run tests
+        run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -9,16 +9,34 @@ tiles**, with a real motor curve, a real battery, real traction limits and real
 command latency. Everything else is scaffolding for the mechanisms and game
 elements you will add once the season starts.
 
+## Running it
+
+**If you just want to drive**, see **[QUICKSTART.md](QUICKSTART.md)** — written
+for people who have never opened a terminal.
+
+The short version, easiest first:
+
+| | How | Who it's for |
+| --- | --- | --- |
+| **1** | Open **`https://shrimpsooup2.github.io/drivingSim/`** | Drivers. Nothing to install. Works on a Chromebook. |
+| **2** | Download the ZIP, double-click **`Start Simulator (Mac).command`** or **`(Windows).bat`** | Offline practice |
+| **3** | `npm start` | People editing the code |
+
+Option 1 needs [one-time setup](QUICKSTART.md#setting-up-the-link-one-time-30-seconds)
+by a repo admin (Settings → Pages → Source: GitHub Actions). About 30 seconds.
+
+For development:
+
 ```
-npm start      # serves on http://127.0.0.1:8080
+npm start      # serves locally and opens your browser
 npm test       # 113 unit and integration tests
 npm run check  # headless browser smoke test + screenshots
 ```
 
 There is **no build step and no dependencies**. It is native ES modules and a
-hand-written WebGL2 renderer, so `git clone` and a static server is the whole
-setup. Nothing to install, nothing to keep up to date, and it will still run in
-four years when this season's students have graduated.
+hand-written WebGL2 renderer, so a clone and a static server is the whole setup.
+Nothing to install, nothing to keep up to date, and it will still run in four
+years when this season's students have graduated.
 
 ---
 
@@ -43,14 +61,14 @@ against goBILDA's quoted 5.0–5.2 ft/s for that exact configuration.
 
 ---
 
-## Getting started
+## Once it is open
 
-1. `npm start`, then open <http://127.0.0.1:8080>.
-2. Plug in a controller and **press a button on it** — browsers hide gamepads
-   until they are used. A Logitech F310 must have its rear switch on **X**
-   (XInput); in **D** mode the axis mapping is different and the simulator will
-   warn you.
-3. Or drive with the keyboard: `WASD` to translate, `Q`/`E` to rotate.
+Plug in a controller and **press a button on it** — browsers hide gamepads until
+they are used, so an idle controller looks disconnected. A Logitech F310 must
+have its rear switch on **X** (XInput); in **D** mode the axis mapping is
+different and the simulator will say so.
+
+Or drive with the keyboard: `WASD` to translate, `Q`/`E` to rotate.
 
 Press `?` for the full control list, `Tab` for the settings panel.
 
@@ -99,6 +117,8 @@ not require touching the core.
 
 ## Documentation
 
+- **[QUICKSTART.md](QUICKSTART.md)** — getting it running, written for
+  people who have never used a terminal. Start here if you are a driver.
 - **[docs/PHYSICS.md](docs/PHYSICS.md)** — the model, the derivations, the
   assumptions and their limits, and how to calibrate against your robot.
 - **[docs/EXTENDING.md](docs/EXTENDING.md)** — adding subsystems, game
@@ -131,8 +151,12 @@ canvas, which is how the physics is regression-tested.
 
 ## Requirements
 
-A browser with WebGL2 (any current Chrome, Firefox, Edge or Safari) and Node 18+
-to run the static server and the tests. Any other static server works too.
+A browser with WebGL2 — any current Chrome, Firefox, Edge or Safari. That is all
+you need for the hosted version.
+
+To run it locally you also need something that can serve static files. The
+double-click launchers use Node, Python, Ruby or PHP, whichever your computer
+already has. Node 18+ is required for `npm test` and `npm run check`.
 
 ## Licence
 
