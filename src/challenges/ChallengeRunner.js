@@ -1,5 +1,6 @@
 import { createChallenges } from './library.js';
 import { EventBus } from '../util/events.js';
+import { Obstacle } from '../field/Obstacle.js';
 
 const STORAGE_KEY = 'ftc-sim-records-v1';
 
@@ -37,13 +38,42 @@ export class ChallengeRunner {
   select(id) {
     const challenge = this.challenges.find((c) => c.id === id);
     if (!challenge) return null;
+
+    this._teardown();
     this.active = challenge;
     challenge.build(this.sim.field);
+    this._placeCourse(challenge);
     challenge.reset();
     this.sim.setStartPose(challenge.startPose.x, challenge.startPose.y, challenge.startPose.heading);
     this.sim.resetRobot();
     this.events.emit('select', challenge);
     return challenge;
+  }
+
+  /** Put the drill's obstacles and opponents onto the field. */
+  _placeCourse(challenge) {
+    challenge.obstacles.forEach((spec, i) => {
+      this.sim.field.addElement(
+        new Obstacle({
+          id: `${challenge.id}-obstacle-${i}`,
+          position: spec.position,
+          size: spec.size,
+          heading: spec.heading ?? 0,
+          height: spec.height ?? 0.3,
+        }),
+      );
+    });
+    for (const spec of challenge.opponents) this.sim.addOpponent(spec);
+  }
+
+  /** Remove whatever the previous drill left behind. */
+  _teardown() {
+    if (this.active) {
+      for (let i = 0; i < this.active.obstacles.length; i++) {
+        this.sim.field.removeElement(`${this.active.id}-obstacle-${i}`);
+      }
+    }
+    this.sim.clearOpponents();
   }
 
   /** Put the robot back on the line and clear the clock. */
@@ -61,6 +91,7 @@ export class ChallengeRunner {
 
   /** Leave drill mode and go back to free driving. */
   clear() {
+    this._teardown();
     this.active = null;
     this.events.emit('select', null);
   }
@@ -84,12 +115,17 @@ export class ChallengeRunner {
   _record(challenge) {
     const key = this._recordKey(challenge.id);
     const previousBest = this.records[key]?.score ?? null;
-    const isRecord = previousBest === null || challenge.score < previousBest;
+    // Most drills are a race, so lower is better. Match simulation counts
+    // completed cycles in a fixed window, where higher is better.
+    const isRecord =
+      previousBest === null ||
+      (challenge.higherIsBetter ? challenge.score > previousBest : challenge.score < previousBest);
     if (isRecord) {
       this.records[key] = {
         score: challenge.score,
         time: challenge.elapsed,
         penalties: challenge.penaltySeconds,
+        grade: challenge.grade(),
         at: new Date().toISOString(),
       };
       this._saveRecords();

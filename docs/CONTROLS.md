@@ -106,100 +106,98 @@ orbit control with an option to keep the robot centred.
 
 ## Driving drills
 
-Press `N`, or click **Drills**. Eight timed courses, none of them game-specific,
-because the season's game is not known — they train the skills underneath any
-game.
+Press `N`, or click **Drills**. Fifteen courses in three tiers, none
+game-specific — they train what sits underneath any game.
+
+### Basic — learn the machine
 
 | Drill | What it trains |
 | --- | --- |
 | **Sprint and stop** | Braking distance. Start here. |
-| **Shuttle run** | Repeatable cycles — the closest drill to a real match |
+| **Shuttle run** | Four repeatable cycles — the simplest match-like drill |
 | **Slalom** | Carrying speed through turns instead of stopping to rotate |
 | **Precision parking** | Stopping dead and square, as at a scoring position |
-| **Figure eight** | Both turn directions equally; find your weak one |
-| **Barrel course** | Route planning, not just car control |
-| **Tight lane** | Staying smooth under pressure |
-| **Strafe gauntlet** | Lateral movement (holonomic drivetrains only) |
 
-How they work:
+### Intermediate — real manoeuvres
 
-- **The clock starts when the robot first moves**, so you can line up in your
-  own time without it counting against you.
-- **Objectives must be taken in order.** Gates only count when crossed in the
-  direction the arrow shows, so you cannot farm one gate by rocking back and
-  forth through it.
-- **Hitting a wall adds time.** So does straying out of the lane in the corridor
-  drill, charged per second you are outside rather than as a one-off.
-- **Press `R` to run it again** from the start line.
+| Drill | What it trains |
+| --- | --- |
+| **Figure eight** | Three laps; both turn directions equally. Find your weak one |
+| **Barrel course** | Route planning around pillars, not just car control |
+| **Threading the needle** | Four gaps barely wider than the robot. Arrive crooked and you do not fit |
+| **Reverse docking** | Backing blind into three slots, facing away |
+| **Strafe gauntlet** | Lateral movement through narrowed lanes (holonomic only) |
+| **Delicate approach** | Speed limits on the way in; decide when the penalty is worth it |
 
-Best times are saved in your browser, **separately for each drivetrain type**. A
-time set on a 435 RPM mecanum robot says nothing about the same driver on a
-geared-down tank, so mixing them in one leaderboard would be actively
-misleading.
+### Advanced — long and contested
 
-Drills that need strafing are hidden when a tank drivetrain is selected.
+| Drill | What it trains |
+| --- | --- |
+| **The maze** | A serpentine through four full-width barriers |
+| **The gauntlet** | The long one: sprint, pinches, a reversed gate, a corner park, a return leg |
+| **Under defence** | Three cycles with a heavy Pusher denying your route |
+| **Evasion** | Six waypoints while a fast Scout hunts you |
+| **Match simulation** | Two minutes, two opponents, obstacles. Most cycles wins |
 
-## Tuning driver feel
+### How they work
 
-Everything below is in the **Driver controls** group and costs nothing to
-experiment with — no rebuild, no new parts. In rough order of impact:
+- **The clock starts when the robot first moves**, so lining up costs nothing.
+- **Objectives run in order.** Gates only count crossed in the direction the
+  arrow shows, so you cannot farm one by rocking back and forth through it.
+- **Obstacles are solid.** Clipping a pillar spins the robot and costs three
+  seconds — a course is only tight if something stops you cutting the corner.
+- **Penalties**: walls and obstacles cost a flat charge (rate-limited, so
+  resting against something does not bill forever); straying out of a lane and
+  speeding through a limited approach are charged per second; being shoved by
+  an opponent costs time, which is what makes evading one worth the detour.
+- **Medals.** Gold, silver and bronze par times are shown on each card. They
+  are a first calibration against a clean run with no input latency, so treat
+  them as provisional and edit `src/challenges/library.js` if your team finds
+  them wrong.
+- **Press `R`** to run it again from the start line.
 
-### Turn power limit (`driver.turnScale`, default 0.8)
+Best times are saved in your browser, **separately for each drivetrain type**.
+A time set on a 435 RPM mecanum robot says nothing about the same driver on a
+geared-down tank, so mixing them would be actively misleading.
 
-The fastest fix for a robot that feels twitchy. Rotation is the easiest axis to
-overdrive; most drivers are better with it capped at 0.6–0.8.
+## Driving against opponents
 
-### Acceleration ramp (`driver.slewRate`, default 6)
+Three of the advanced drills put AI robots on the field. Each one is a **fully
+simulated robot** — same motor curve, battery, traction and mass as yours — so
+it accelerates, breaks traction, and can be pushed. You can out-drive it,
+which is the whole point.
 
-How fast commanded power may rise, in full-scale units per second. 6 means zero
-to full in about 170 ms. Lower values stop the driver breaking the wheels loose
-at the cost of responsiveness. The separate **deceleration ramp** is fast by
-default, so the robot still stops promptly with a gentle acceleration ramp.
+### The builds
 
-Hold the right trigger to bypass the ramp — a good way to feel exactly how much
-it was protecting you from.
+| Robot | Mass | Top speed | Character |
+| --- | --- | --- | --- |
+| **Scout** | 8.5 kg | 7.2 ft/s | Small and quick. You will not out-run it; you can shove it anywhere |
+| **Rival** | 14 kg | 5.2 ft/s | A mirror of a standard competition robot. Whoever drives better wins |
+| **Pusher** | 19 kg | 3.7 ft/s | Heavy tank on traction wheels. Slow, but it moves you and you do not move it |
+| **Brick** | 21 kg | 1.9 ft/s | Barely moves, nothing shifts it. A rolling roadblock |
 
-### Response curve (`driver.exponent` and `driver.curveBlend`)
+### The skill levels
 
-Exponent 1 is linear; 2 or 3 gives fine control near centre with full power
-still available at the ends. `curveBlend` mixes between linear and the full
-curve; around 0.7 keeps low-speed precision without feeling dead off centre.
+Skill is modelled where it actually lives on a drive team, not as better
+physics: how stale the driver's picture of the field is (reaction time), how
+precisely they place the robot, how much power they dare use, how often they
+re-plan, and how often they commit to something unhelpful.
 
-Most drivers who say a robot is "hard to line up" want this, not a lower speed.
+| Level | Reaction | Character |
+| --- | --- | --- |
+| **Rookie** | 450 ms | Imprecise, hesitant, frequently caught out |
+| **Competent** | 220 ms | Solid, occasionally makes a mistake |
+| **Veteran** | 100 ms | Fast, precise, leads your motion |
 
-### Precision mode (`driver.slowModeFactor`, default 0.35)
+### What they do
 
-The multiplier while the left trigger is held. It is analogue, so it works as a
-proportional brake rather than an on/off switch.
-
-### Strafe power limit (`driver.strafeScale`)
-
-Mecanum strafing is genuinely slower than driving — about 88% in this simulator.
-Many teams push this above 1 to compensate; desaturation then scales everything
-back down proportionally, so the robot still travels the direction you asked for.
-
-### Heading hold (`driver.headingLockEnabled`)
-
-When the driver is not commanding a turn, a PD loop holds the current heading.
-Stops the robot being knocked off course and makes strafing track straight. It
-engages only once rotation has nearly stopped, so it never fights an intentional
-turn.
-
-Worth trying, but note it depends on the IMU, so it inherits IMU drift.
-
-### Field centric vs robot centric
-
-Robot centric means forward is wherever the robot is pointing. Field centric
-means forward is always away from the driver station, using the IMU.
-
-Field centric is easier to learn and much easier to lose confidence in: the IMU
-drifts, and by the end of a two and a half minute match at the default 0.05°/s a
-heading is off by more than 7°. That is enough to notice while strafing, and it
-is the usual reason field centric "stops working" mid-match. Practise resetting
-the heading (`B` / `H`) when you are square to a wall.
-
-Set `imu.enabled` to false for a perfect IMU when you want to tell an IMU
-problem apart from a driving problem.
+- **Blocker** — sits between you and your next objective. It does not chase, it
+  *denies*, which is far more annoying and much closer to real defence.
+- **Chaser** — pursues and pushes.
+- **Camper** — parks on your objective, so you must wait it out or shove it off.
+- **Shadow** — mirrors you across the field centre.
+- **Patroller** — drives a fixed loop, ignoring you: a moving obstacle with
+  predictable timing.
 
 ## Things worth practising here
 

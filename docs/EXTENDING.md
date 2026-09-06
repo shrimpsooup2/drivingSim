@@ -232,6 +232,145 @@ Inside an op-mode:
 - `gamepad1` is the **delayed** state, matching what the Control Hub actually
   sees.
 
+## Adding a driving drill
+
+A drill is a subclass of `Challenge` that implements `build(field)`. Ordering,
+timing, penalties, medals and records are all handled for you.
+
+```js
+import { Challenge } from './src/challenges/Challenge.js';
+import { CircleZone, Gate } from './src/challenges/zones.js';
+import { Vec2 } from './src/math/Vec2.js';
+import { DEG, INCH } from './src/math/MathUtil.js';
+
+class CornerToCorner extends Challenge {
+  constructor() {
+    super({
+      id: 'corners',
+      name: 'Corner to corner',
+      description: 'Diagonal sprints between opposite corners, squared up at each end.',
+      tip: 'The far corner on your own side is the hardest to judge.',
+      tier: 'intermediate',
+      obstaclePenalty: 3,
+      par: { gold: 24, silver: 32, bronze: 44 },
+    });
+  }
+
+  build(field) {
+    const q = field.size * 0.3;
+    this.startPose = { x: -q, y: -q, heading: 0 };
+
+    this.objectives = [
+      // Enter a region.
+      { kind: 'zone', zone: new CircleZone({ center: new Vec2(q, q), radius: 0.3 }), label: '1' },
+      // Cross a line, in this direction only.
+      {
+        kind: 'gate',
+        gate: new Gate({ center: new Vec2(0, 0), heading: 180 * DEG, width: 0.8 }),
+        label: '2',
+      },
+      // Stop dead, square, and hold it.
+      {
+        kind: 'park',
+        zone: new CircleZone({ center: new Vec2(-q, q), radius: 8 * INCH }),
+        label: 'Finish',
+        dwellSeconds: 1.0,
+        headingTarget: 90 * DEG,
+        headingTolerance: 10 * DEG,
+      },
+    ];
+
+    // Solid boxes. The runner places and removes these automatically.
+    this.obstacles = [{ position: new Vec2(0, 0.5), size: new Vec2(0.16, 0.6) }];
+  }
+}
+```
+
+Register it in `CHALLENGE_CLASSES` in `src/challenges/library.js` and it appears
+in the picker under its tier.
+
+### Objective modifiers
+
+Any objective can carry:
+
+- `headingTarget` / `headingTolerance` — must be facing this way
+- `requireReverse` — must be *travelling backwards* through a gate, or have
+  **entered** a zone backwards. The entry check matters: a park ends with the
+  robot stationary, so asking "is it reversing now" would always be false.
+- `approachSpeedLimit` / `approachRadius` — charged per second over the limit
+  while closing in
+- `dwellSeconds` / `speedLimit` — for `park`
+
+### Scoring modes
+
+- `scoreMode: 'time'` (default) — finish the course; lowest total wins.
+- `scoreMode: 'count'` with a `duration` — a fixed window, the course loops, and
+  the score is objectives completed. This is how a match actually works, and it
+  rewards a sustainable pace over one hot lap.
+
+### Two things that will bite you
+
+1. **Do not put an objective inside an obstacle.** It is invisible until someone
+   tries to drive the course. There is a test (`no objective is buried inside a
+   solid obstacle`) that scans every drill for this.
+2. **Check the course is actually drivable.** The test
+   `every uncontested drill can be completed by driving it` runs a crude
+   autonomous driver through every drill. It has already caught a figure eight
+   whose loops were not tangent and a gate placed behind a pillar.
+
+## Adding an AI opponent
+
+Two extension points: a **build** (`src/ai/profiles.js`) and a **behaviour**
+(`src/ai/behaviors.js`).
+
+A build is config overrides — the opponent is a full `Robot`, so anything in the
+parameter schema works:
+
+```js
+{
+  id: 'sprinter',
+  name: 'Sprinter',
+  description: 'Light, tall and geared silly. Quick, and tips if you lean on it.',
+  color: [0.3, 0.9, 0.6, 1],
+  config: {
+    'drivetrain.type': 'mecanum',
+    'chassis.mass': 10,
+    'chassis.cgHeight': 0.26,
+    'motor.gearRatio': 13.7,
+  },
+}
+```
+
+A behaviour only decides *where the robot wants to be*; turning that into drive
+commands is shared, so skill level applies uniformly:
+
+```js
+export function interceptor(ctx, state) {
+  // Aim at where the player will be, not where they are.
+  const lead = 0.6;
+  return {
+    point: new Vec2(
+      ctx.playerPosition.x + ctx.playerVelocity.x * lead,
+      ctx.playerPosition.y + ctx.playerVelocity.y * lead,
+    ),
+    faceTarget: true,
+    aggression: 1,
+  };
+}
+```
+
+Add it to `BEHAVIORS` and reference it from a drill's `opponents` array:
+
+```js
+this.opponents = [
+  { profileId: 'sprinter', skillId: 'veteran', behavior: 'interceptor',
+    start: { x: 1.2, y: 0, heading: Math.PI } },
+];
+```
+
+Opponents take their randomness from an injectable source, so seed
+`sim.random` in tests and the whole run becomes reproducible.
+
 ## Adding a drivetrain layout
 
 Add a builder to `src/drivetrain/layouts.js` that returns `Wheel` instances. The

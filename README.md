@@ -29,7 +29,7 @@ For development:
 
 ```
 npm start      # serves locally and opens your browser
-npm test       # 132 unit and integration tests
+npm test       # 157 unit and integration tests
 npm run check  # headless browser smoke test + screenshots
 ```
 
@@ -99,11 +99,16 @@ robot. `Import` loads it back.
   schema, so adding a tunable is one entry in `src/config/schema.js`.
 - **Presets** for common chassis, including a deliberately tippy one for
   training and a "last match of the day" tired-battery setup.
-- **Eight timed driving drills** — sprint-and-stop, shuttle runs, slalom,
-  precision parking, figure eight, barrel course, a tight lane and a strafe
-  gauntlet. None are game-specific; they train the skills underneath any game.
-  Best times are kept per drivetrain, because a mecanum time says nothing about
-  the same driver on tank.
+- **Fifteen timed driving drills in three tiers** — from sprint-and-stop up to a
+  two-minute match simulation. Solid obstacles you can crash into, gates that
+  must be taken in the right direction, slots you have to reverse into blind,
+  and speed-limited approaches. None are game-specific; they train the skills
+  underneath any game. Medal par times, and best times kept per drivetrain,
+  because a mecanum time says nothing about the same driver on tank.
+- **AI opponents to out-manoeuvre** — four builds from an 8.5 kg Scout to a
+  21 kg Brick, three skill levels, and five behaviours including a blocker that
+  denies your route rather than chasing you. Each is a *fully simulated robot*,
+  so it accelerates, loses traction and gets shoved like the real thing.
 - **Live telemetry**: speed, bus voltage, current draw, per-wheel grip usage and
   slip, with strip charts.
 - **Debug overlays**: per-wheel force vectors coloured by how much grip is left,
@@ -116,7 +121,8 @@ robot. `Import` loads it back.
 ## What is deliberately *not* in the box
 
 No game elements, no scoring, no autonomous routines, no mechanisms. The drills
-are about driving, not about a game. The season has not started. The extension points for all of them exist and are documented
+and the opponents are about driving, not about a game. The season has not
+started. The extension points for all of them exist and are documented
 in [docs/EXTENDING.md](docs/EXTENDING.md) — adding a game piece or an arm should
 not require touching the core.
 
@@ -143,6 +149,7 @@ src/
   drivetrain/  wheel layouts, generic kinematics, drivetrain assembly
   robot/       robot assembly, Subsystem extension point
   field/       FTC field, FieldElement extension point
+  ai/          opponent robots: builds, skill levels, behaviours
   challenges/  timed driving drills: geometry, state machine, records
   input/       Gamepad API with FTC semantics, keyboard, latency model
   teleop/      OpMode extension point, drive schemes, driver-feel processing
@@ -150,7 +157,7 @@ src/
   ui/          schema-driven settings panel, HUD, telemetry graphs
   config/      parameter schema, config store, motor and robot presets
   app/         simulation loop, application wiring
-test/          132 tests: unit, physics validation, drills, and end-to-end
+test/          157 tests: unit, physics validation, drills, AI, and end-to-end
 tools/         static server, headless browser check
 ```
 

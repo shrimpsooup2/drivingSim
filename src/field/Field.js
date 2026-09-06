@@ -1,6 +1,6 @@
 import { Vec2 } from '../math/Vec2.js';
 import { INCH } from '../math/MathUtil.js';
-import { fieldWalls, resolveHalfPlanes } from '../physics/collision.js';
+import { fieldWalls, resolveHalfPlanes, resolveObstacles } from '../physics/collision.js';
 
 /**
  * The FTC field: a 12 ft square of foam tiles inside a perimeter wall.
@@ -31,6 +31,8 @@ export class Field {
     this._walls = fieldWalls(this.size);
     /** @type {import('../physics/collision.js').ContactResult[]} */
     this.lastContacts = [];
+    /** @type {import('../physics/collision.js').ContactResult[]} */
+    this.lastObstacleContacts = [];
   }
 
   /** Rebuild static geometry after a config change. */
@@ -80,21 +82,57 @@ export class Field {
     return planes;
   }
 
+  /** Solid boxes on the field, gathered from any collidable element that is one. */
+  obstacleColliders() {
+    const out = [];
+    for (const element of this.elements) {
+      if (element.collidable && typeof element.collider === 'function') out.push(element.collider());
+    }
+    return out;
+  }
+
   /**
-   * Resolve the robot against the field.
+   * Resolve the robot against the field: first the perimeter walls, then any
+   * solid obstacles.
+   * @param {import('../physics/RigidBody2d.js').RigidBody2d} body
+   * @param {number} halfLength
+   * @param {number} halfWidth
+   */
+  /**
+   * Resolve one body against walls and obstacles, without recording it as the
+   * player's contact state. Used for opponent robots, which need the same
+   * treatment but must not overwrite what the drill is watching.
+   */
+  collideBody(body, halfLength, halfWidth) {
+    if (!this.config.field.collisionsEnabled) return { walls: [], obstacles: [] };
+    const options = {
+      restitution: this.config.field.wallRestitution,
+      friction: this.config.field.wallFriction,
+    };
+    return {
+      walls: resolveHalfPlanes(body, halfLength, halfWidth, this.collisionPlanes(), options),
+      obstacles: resolveObstacles(body, halfLength, halfWidth, this.obstacleColliders(), options),
+    };
+  }
+
+  /**
+   * Resolve the player's robot and record the result, which drills read to
+   * charge wall and obstacle penalties.
    * @param {import('../physics/RigidBody2d.js').RigidBody2d} body
    * @param {number} halfLength
    * @param {number} halfWidth
    */
   collide(body, halfLength, halfWidth) {
-    if (!this.config.field.collisionsEnabled) {
-      this.lastContacts = [];
-      return this.lastContacts;
+    const result = this.collideBody(body, halfLength, halfWidth);
+    this.lastContacts = result.walls;
+    this.lastObstacleContacts = result.obstacles;
+
+    // Mark which obstacles the player is touching, so they light up and drills
+    // can charge for clipping one.
+    const hit = new Set(result.obstacles.map((c) => c.id));
+    for (const element of this.elements) {
+      if ('touched' in element) element.touched = hit.has(element.id);
     }
-    this.lastContacts = resolveHalfPlanes(body, halfLength, halfWidth, this.collisionPlanes(), {
-      restitution: this.config.field.wallRestitution,
-      friction: this.config.field.wallFriction,
-    });
     return this.lastContacts;
   }
 
@@ -106,6 +144,7 @@ export class Field {
   reset() {
     for (const el of this.elements) el.reset();
     this.lastContacts = [];
+    this.lastObstacleContacts = [];
   }
 
   /**

@@ -113,6 +113,7 @@ connected, `KEYBOARD` otherwise.
 | `Shift` | Precision mode (slow) |
 | `R` | Put the robot back at the start |
 | `N` | Driving drills |
+| `B` | Reset the camera |
 | `C` | Change camera |
 | `?` | Show all the controls |
 
@@ -136,8 +137,13 @@ Press `N` (or click **Drills**) and pick **Sprint and stop**. Drive flat out to
 the far end and stop inside the target. Almost everyone overshoots the first
 time — braking distance is the thing new drivers consistently underestimate.
 
-There are eight courses. Your best time on each is saved, so you can race
-yourself, and your teammates. Press `R` to run it again.
+There are fifteen courses in three tiers. The later ones add solid obstacles you
+can crash into, slots you have to reverse into blind, and AI robots actively
+getting in your way. Each has gold, silver and bronze par times, and your best
+is saved so you can race yourself and your teammates. Press `R` to run it again.
+
+When you want a real test, try **Match simulation**: two minutes, two opponents,
+and the score is how many cycles you complete — not how fast one lap was.
 
 ### Move the camera
 

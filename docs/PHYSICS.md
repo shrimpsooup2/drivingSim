@@ -315,6 +315,35 @@ Measured in the simulator, against independently known figures:
 | Weight transfer under acceleration | `m·a·h/L` | exact, to 1e-6 |
 | Peak acceleration | ≤ μ·g | friction bound respected |
 
+## Obstacles, opponents and contact
+
+The perimeter uses half-planes, which are exact and cheap for an infinite wall.
+Field obstacles are finite boxes and need a real box-vs-box test: a half-plane
+obstacle would push the robot away even when it is well past the end of it.
+
+**Robot-on-robot** contact takes a third path, because both bodies move.
+Impulses are split by inverse mass and both robots are pushed apart, which is
+what makes size and weight matter: an 8.5 kg Scout bounces off a 21 kg Brick
+rather than moving it. Momentum is conserved exactly, which is asserted in
+`test/opponents.test.js`.
+
+Opponents are **fully simulated robots**, not scripted movers along a path.
+They run the same drivetrain, motor curve, battery and traction model as the
+player, on their own chassis and gearing. That is deliberate: a robot that
+glides along a spline cannot be out-driven, only waited out, and beating it
+teaches nothing. Because they obey the same physics, a light one really can be
+shoved aside and a heavy one really cannot.
+
+Their *skill* is modelled where it lives on a real drive team rather than as
+better physics: reaction latency (how stale their picture of you is), aim
+noise, how much of the available power they commit, how often they re-plan, and
+how often they commit to something unhelpful and have to recover. A veteran and
+a rookie running the same behaviour differ in all of those and in none of the
+physics.
+
+Cost is about 0.35 ms per opponent per frame at the default solver rate, so two
+opponents plus the player run at roughly 4% of real time.
+
 ## Assumptions and known limits
 
 Worth knowing before you trust a number:
@@ -335,8 +364,12 @@ Worth knowing before you trust a number:
 - **The 6-wheel drop centre is approximated.** All six wheels are on the ground
   and the load solver gives the centre pair the larger share, which is the
   practical effect of the drop, rather than modelling the geometry directly.
-- **Collisions are robot-against-static-geometry.** No robot-on-robot. The SAT
-  routine for oriented boxes is written and tested, ready for game elements.
+- **Collisions are box-shaped.** Robots and obstacles are oriented rectangles,
+  resolved with separating-axis tests and sequential impulses at the penetrating
+  corners. That is why a glancing hit spins you (a 30 degree yaw change from
+  clipping a pillar off-centre is typical) rather than just stopping you. Real
+  robots are not rectangles, so a protruding mechanism would not catch the way
+  its real counterpart does.
 - **Gearbox efficiency is a single constant** applied in both directions of
   power flow, rather than being load- and speed-dependent.
 

@@ -1,4 +1,6 @@
 import { ChallengeRunner } from '../challenges/ChallengeRunner.js';
+import { Opponent } from '../ai/Opponent.js';
+import { resolveDynamicPair } from '../physics/collision.js';
 import { Robot } from '../robot/Robot.js';
 import { Field } from '../field/Field.js';
 import { TeleOpDrive } from '../teleop/TeleOpDrive.js';
@@ -59,6 +61,15 @@ export class Simulation {
     /** Driving drills. Null active challenge means free driving. */
     this.challenges = new ChallengeRunner(this);
 
+    /** @type {Opponent[]} AI robots sharing the field. */
+    this.opponents = [];
+    /**
+     * Randomness source handed to opponents. Tests seed it so an AI drill is
+     * reproducible; left null it falls through to Math.random.
+     * @type {(() => number)|null}
+     */
+    this.random = null;
+
     this._bindConfig();
     this.resetRobot();
   }
@@ -67,6 +78,7 @@ export class Simulation {
     this.configStore.on('rebuild', () => {
       this.config = this.configStore.values;
       this.robot.applySettings(this.config, true);
+      for (const opponent of this.opponents) opponent.applyBaseConfig(this.config);
       this.field.applySettings(this.config);
       if (this.opMode instanceof TeleOpDrive) this.opMode.applySettings(this.config);
       this.events.emit('rebuilt');
@@ -74,6 +86,9 @@ export class Simulation {
     this.configStore.on('change', (path) => {
       this.config = this.configStore.values;
       this.robot.applySettings(this.config, false);
+      // Opponents share the world, so a change to tile grip or battery must
+      // reach them too -- without rebuilding, which would discard their state.
+      for (const opponent of this.opponents) opponent.applyBaseConfig(this.config, false);
       this.field.applySettings(this.config);
       if (this.opMode instanceof TeleOpDrive) this.opMode.applySettings(this.config);
       if (path === 'control.inputLatencyMs') {
@@ -98,6 +113,22 @@ export class Simulation {
     return opMode;
   }
 
+  /**
+   * Put an AI opponent on the field.
+   * @param {Omit<ConstructorParameters<typeof Opponent>[0], 'baseConfig'>} spec
+   */
+  addOpponent(spec) {
+    const opponent = new Opponent({ ...spec, baseConfig: this.config, random: this.random ?? undefined });
+    this.opponents.push(opponent);
+    this.events.emit('opponentsChanged', this.opponents);
+    return opponent;
+  }
+
+  clearOpponents() {
+    this.opponents.length = 0;
+    this.events.emit('opponentsChanged', this.opponents);
+  }
+
   /** Set where `resetRobot` puts the robot. */
   setStartPose(x, y, heading) {
     this.startPose = { x, y, heading };
@@ -110,6 +141,7 @@ export class Simulation {
     // restarts with the robot rather than continuing to run.
     this.challenges?.active?.reset();
     this.robot.reset(p.x, p.y, p.heading);
+    for (const opponent of this.opponents) opponent.reset();
     this.opMode.reset();
     this.opMode.init();
     this.input.reset();
@@ -157,6 +189,7 @@ export class Simulation {
 
       this.robot.stepPhysics(h);
       this.field.collide(this.robot.body, this.robot.halfLength, this.robot.halfWidth);
+      if (this.opponents.length > 0) this._stepOpponents(h);
 
       this._physicsAccumulator -= h;
       this.time += h;
@@ -183,6 +216,72 @@ export class Simulation {
     const gamepad = this.input.update(dt);
     this.opMode.loop(dt, gamepad, gamepad);
     this.robot.updateControl(dt, gamepad);
+
+    if (this.opponents.length === 0) return;
+    // Opponents are told what the player is doing and, if a drill is running,
+    // where the player is trying to get to. Knowing the objective is what lets
+    // a defender deny the route rather than merely chase.
+    const objective = this.challenges.active?.current;
+    const target = objective
+      ? (objective.gate ? objective.gate.center : objective.zone.center)
+      : null;
+    const world = {
+      position: this.robot.body.position,
+      velocity: this.robot.body.velocity,
+      heading: this.robot.body.rotation.radians,
+      target,
+      fieldHalfSize: this.field.halfSize,
+    };
+    for (const opponent of this.opponents) opponent.updateControl(dt, world);
+  }
+
+  /**
+   * Advance every opponent and resolve robot-on-robot contact.
+   *
+   * Opponents run the same physics as the player, so they accelerate, break
+   * traction and get shoved for real. A scripted mover that slides along a path
+   * would be unbeatable in the wrong way -- you could not out-drive it, only
+   * wait for it.
+   * @param {number} h substep, seconds
+   */
+  _stepOpponents(h) {
+    const contactOptions = {
+      restitution: this.config.field.wallRestitution,
+      friction: this.config.field.wallFriction,
+    };
+
+    for (const opponent of this.opponents) {
+      opponent.stepPhysics(h);
+      this.field.collideBody(opponent.robot.body, opponent.halfLength, opponent.halfWidth);
+    }
+
+    // Player against each opponent.
+    this.robotContact = false;
+    for (const opponent of this.opponents) {
+      const contact = resolveDynamicPair(
+        this.robot.body,
+        this.robot.halfLength,
+        this.robot.halfWidth,
+        opponent.robot.body,
+        opponent.halfLength,
+        opponent.halfWidth,
+        contactOptions,
+      );
+      if (contact) this.robotContact = true;
+    }
+
+    // And each pair of opponents, so they cannot occupy the same space.
+    for (let i = 0; i < this.opponents.length; i++) {
+      for (let j = i + 1; j < this.opponents.length; j++) {
+        const a = this.opponents[i];
+        const b = this.opponents[j];
+        resolveDynamicPair(
+          a.robot.body, a.halfLength, a.halfWidth,
+          b.robot.body, b.halfLength, b.halfWidth,
+          contactOptions,
+        );
+      }
+    }
   }
 
   _updateTrail(dt) {

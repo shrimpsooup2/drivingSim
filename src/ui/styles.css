@@ -397,3 +397,38 @@ select { width: 100%; }
 @media (max-width: 900px) {
   .drill-hud { min-width: 0; max-width: 88vw; }
 }
+
+/* Drill tiers, tags and medals */
+.drill-picker h3 { margin: 18px 0 8px; }
+.drill-picker h3:first-of-type { margin-top: 14px; }
+
+.drill-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
+.drill-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.drill-tag.hazard { color: var(--warn); border-color: rgba(242, 163, 60, 0.4); }
+.drill-tag.ai { color: var(--danger); border-color: rgba(226, 86, 74, 0.45); }
+.drill-tag.mode { color: var(--accent); border-color: rgba(43, 155, 216, 0.4); }
+
+.medal {
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-radius: 3px;
+  padding: 2px 6px;
+  margin-left: 6px;
+}
+.medal.gold { background: #d9a441; color: #2a1d05; }
+.medal.silver { background: #b9c0c9; color: #1c2026; }
+.medal.bronze { background: #b1764a; color: #23130a; }
+
+.drill-toast.gold { border-color: #d9a441; color: #f0c674; }
+.drill-toast.silver { border-color: #b9c0c9; color: #d8dee6; }
+.drill-toast.bronze { border-color: #b1764a; color: #d79a6e; }

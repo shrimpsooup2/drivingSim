@@ -6,6 +6,7 @@ import { drawMecanumTread, drawPlate, drawTile, drawTractionTread } from './text
 import { CameraRig } from './Camera.js';
 import { clamp } from '../math/MathUtil.js';
 
+const ACCENT = [0.16, 0.62, 0.86, 1];
 const GATE_POST_HEIGHT = 0.34;
 
 /** Grey for not yet reached, cyan for the one you want, green for cleared. */
@@ -313,9 +314,25 @@ export class Renderer {
   }
 
   _drawRobot(sim) {
+    this._drawRobotBody(sim.robot, sim.config, ACCENT, true);
+    for (const opponent of sim.opponents) {
+      this._drawRobotBody(opponent.robot, opponent.config, opponent.color, false);
+    }
+  }
+
+  /**
+   * Draw one robot. Shared between the player and every AI opponent, so an
+   * opponent is visibly the same kind of machine -- the plates, the wheels and
+   * the motors all read at a glance, which is how you judge whether the thing
+   * blocking you is a light scout you can shove or a heavy pusher you cannot.
+   *
+   * @param {import('../robot/Robot.js').Robot} robot
+   * @param {import('../config/schema.js').SimConfig} config that robot's own build
+   * @param {number[]} accent
+   * @param {boolean} isPlayer
+   */
+  _drawRobotBody(robot, config, accent, isPlayer) {
     const gl = this.gl;
-    const robot = sim.robot;
-    const config = sim.config;
     const body = robot.body;
     const m = this._model;
     const cosT = body.rotation.cos;
@@ -351,9 +368,12 @@ export class Renderer {
     gl.depthMask(true);
     gl.disable(gl.BLEND);
 
-    const plateColor = [0.80, 0.83, 0.88, 1];
+    // Opponents are tinted toward their own colour so they are instantly
+    // distinguishable from the player's robot at driver-station distance.
+    const plateColor = isPlayer
+      ? [0.80, 0.83, 0.88, 1]
+      : [0.30 + accent[0] * 0.55, 0.32 + accent[1] * 0.55, 0.35 + accent[2] * 0.55, 1];
     const darkMetal = [0.40, 0.43, 0.48, 1];
-    const accent = [0.16, 0.62, 0.86, 1];
 
     // The two parallel side plates the chassis style is named for.
     for (const side of [1, -1]) {
@@ -495,6 +515,15 @@ export class Renderer {
       // Chassis velocity, from the centre of mass.
       const vScale = 0.35;
       this.lines.line(px, py, z + 0.004, px + body.velocity.x * vScale, py + body.velocity.y * vScale, z + 0.004, 0.3, 0.6, 1, 0.95);
+    }
+
+    // A ring under each opponent in its own colour, so it stays findable when
+    // the robots overlap or the view is crowded.
+    for (const opponent of sim.opponents) {
+      const p = opponent.robot.body.position;
+      const c = opponent.color;
+      const radius = Math.max(opponent.halfLength, opponent.halfWidth) * 1.15;
+      this._circle(p.x, p.y, 0.006, radius, c[0], c[1], c[2], 0.75, 28);
     }
   }
 

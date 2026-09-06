@@ -1,4 +1,6 @@
-import { fmt } from '../util/units.js';
+import { fmt, fmtClock } from '../util/units.js';
+import { TIER_LABELS } from '../challenges/library.js';
+import { PROFILE_BY_ID, SKILL_BY_ID } from '../ai/profiles.js';
 
 /**
  * Drill picker and in-run heads-up display.
@@ -64,11 +66,18 @@ export class ChallengePanel {
       'Timed courses that train the skills every game needs: judging distance from the driver station, stopping where you meant to, and keeping the wheels hooked up. The clock starts when the robot first moves. Hitting a wall adds time.';
     this.card.append(blurb);
 
-    const list = el('div', 'drill-list');
-    for (const challenge of this.runner.available()) {
-      list.append(this._drillCard(challenge));
+    // Grouped by tier, so the progression is visible rather than implied by
+    // list order.
+    for (const tier of ['basic', 'intermediate', 'advanced']) {
+      const inTier = this.runner.available().filter((c) => c.tier === tier);
+      if (inTier.length === 0) continue;
+      const heading = el('h3');
+      heading.textContent = TIER_LABELS[tier];
+      this.card.append(heading);
+      const list = el('div', 'drill-list');
+      for (const challenge of inTier) list.append(this._drillCard(challenge));
+      this.card.append(list);
     }
-    this.card.append(list);
 
     const footer = el('div', 'drill-footer');
     const free = button('Free driving', () => {
@@ -103,13 +112,43 @@ export class ChallengePanel {
 
     const best = this.runner.bestFor(challenge.id);
     const bestEl = el('span', 'drill-best');
-    bestEl.textContent = best ? `best ${fmt(best.score, 2)}s` : 'no time yet';
-    head.append(bestEl);
+    if (best) {
+      const grade = best.grade ?? challenge.grade(best.score);
+      bestEl.textContent = challenge.higherIsBetter
+        ? `best ${Math.round(best.score)}`
+        : `best ${fmt(best.score, 2)}s`;
+      if (grade) {
+        const medal = el('span', `medal ${grade}`);
+        medal.textContent = grade;
+        head.append(bestEl, medal);
+      } else {
+        head.append(bestEl);
+      }
+    } else {
+      bestEl.textContent = 'no time yet';
+      head.append(bestEl);
+    }
     card.append(head);
 
     const description = el('p');
     description.textContent = challenge.description;
     card.append(description);
+
+    // What this drill throws at you, at a glance.
+    const tags = el('div', 'drill-tags');
+    if (challenge.scoreMode === 'count') {
+      tags.append(tag(`${fmtClock(challenge.duration)} window — most cycles wins`, 'mode'));
+    } else if (challenge.par) {
+      tags.append(tag(`par ${challenge.par.gold} / ${challenge.par.silver} / ${challenge.par.bronze}s`, 'par'));
+    }
+    if (challenge.obstacles.length > 0) tags.append(tag(`${challenge.obstacles.length} solid obstacles`, 'hazard'));
+    for (const spec of challenge.opponents) {
+      const profile = PROFILE_BY_ID[spec.profileId];
+      const skill = SKILL_BY_ID[spec.skillId];
+      tags.append(tag(`${skill?.name ?? spec.skillId} ${profile?.name ?? spec.profileId}`, 'ai'));
+    }
+    if (challenge.holonomicOnly) tags.append(tag('needs strafing', 'mode'));
+    if (tags.childElementCount > 0) card.append(tags);
 
     const start = button(this.runner.active?.id === challenge.id ? 'Restart' : 'Start', () => {
       this.runner.select(challenge.id);
@@ -150,9 +189,17 @@ export class ChallengePanel {
 
     const h = challenge.hud();
     this.hudName.textContent = h.name;
-    this.hudProgress.textContent = `${Math.min(h.index + 1, h.total)} / ${h.total}`;
-    this.hudClock.textContent = `${fmt(h.score, 2)}s`;
-    this.hudClock.className = `drill-hud-clock${h.penalties > 0 ? ' warn' : ''}`;
+
+    if (h.scoreMode === 'count') {
+      // Against a match clock, what matters is time left and cycles banked.
+      this.hudProgress.textContent = `${h.completions} done`;
+      this.hudClock.textContent = fmtClock(h.remaining);
+      this.hudClock.className = `drill-hud-clock${h.remaining < 20 ? ' warn' : ''}`;
+    } else {
+      this.hudProgress.textContent = `${Math.min(h.index + 1, h.total)} / ${h.total}`;
+      this.hudClock.textContent = `${fmt(h.score, 2)}s`;
+      this.hudClock.className = `drill-hud-clock${h.penalties > 0 ? ' warn' : ''}`;
+    }
 
     if (h.state === 'ready') {
       this.hudObjective.textContent = 'Drive to start the clock';
@@ -169,30 +216,42 @@ export class ChallengePanel {
   }
 
   _showResult(challenge, info) {
-    const parts = [
-      `${challenge.name} complete`,
-      `${fmt(challenge.score, 2)}s`,
-    ];
-    if (challenge.penaltySeconds > 0) {
-      parts.push(`(${fmt(challenge.elapsed, 2)}s + ${fmt(challenge.penaltySeconds, 1)}s penalties)`);
+    const grade = challenge.grade();
+    const parts = [challenge.name];
+
+    if (challenge.higherIsBetter) {
+      parts.push(`${challenge.completions} objectives`);
+    } else {
+      parts.push(`${fmt(challenge.score, 2)}s`);
+      if (challenge.penaltySeconds > 0) {
+        parts.push(`(${fmt(challenge.elapsed, 2)} + ${fmt(challenge.penaltySeconds, 1)} penalties)`);
+      }
     }
+    if (grade) parts.push(grade.toUpperCase());
     if (info.isRecord) {
-      parts.push(info.previousBest === null ? 'first time set' : `beat ${fmt(info.previousBest, 2)}s`);
-    } else if (info.previousBest !== null) {
-      parts.push(`best is ${fmt(info.previousBest, 2)}s`);
+      parts.push(
+        info.previousBest === null
+          ? 'first result'
+          : `beat ${challenge.higherIsBetter ? Math.round(info.previousBest) : fmt(info.previousBest, 2) + 's'}`,
+      );
     }
 
     this.toast.textContent = parts.join('   ');
-    this.toast.classList.toggle('record', Boolean(info.isRecord));
-    this.toast.classList.remove('hidden');
+    this.toast.className = `drill-toast${info.isRecord ? ' record' : ''}${grade ? ' ' + grade : ''}`;
     clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => this.toast.classList.add('hidden'), 6000);
+    this._toastTimer = setTimeout(() => this.toast.classList.add('hidden'), 7000);
   }
 }
 
 function el(tag, className) {
   const node = document.createElement(tag);
   if (className) node.className = className;
+  return node;
+}
+
+function tag(text, kind) {
+  const node = el('span', `drill-tag ${kind}`);
+  node.textContent = text;
   return node;
 }
 

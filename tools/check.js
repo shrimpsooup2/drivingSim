@@ -429,6 +429,44 @@ async function main() {
     await writeFile(drillPath, Buffer.from(shot4.data, 'base64'));
     console.log(`  Screenshot: ${drillPath}`);
 
+    // A contested drill: solid obstacles plus AI opponents on the field.
+    const contested = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.sim.challenges.select('matchSim');
+      app.config.set('view.camera', 'orbit');
+      app.renderer.camera.orbitDistance = 6.0;
+      app.renderer.camera.orbitPitch = 40;
+      app.renderer.camera.orbitYaw = -150;
+      app.config.set('view.orbitFollow', false);
+      app.renderer.camera.orbitTarget = [0, 0, 0.1];
+      app.input.keyboardSource.keys.add('KeyW');
+      app.input.keyboardSource.active = true;
+      for (let i = 0; i < 240; i++) app.sim.step(1 / 60);
+      app.input.keyboardSource.keys.clear();
+      return {
+        opponents: app.sim.opponents.map((o) => ({
+          id: o.id,
+          mass: o.robot.body.mass,
+          x: +o.robot.body.position.x.toFixed(2),
+          y: +o.robot.body.position.y.toFixed(2),
+          moving: o.robot.body.speed > 0.05,
+        })),
+        obstacles: app.sim.field.elements.length,
+        completions: app.sim.challenges.active.completions,
+      };
+    })()`);
+    console.log(`  Contested drill: ${contested.opponents.length} opponents, ${contested.obstacles} obstacles`);
+    for (const o of contested.opponents) {
+      console.log(`    ${o.id} ${o.mass} kg at (${o.x}, ${o.y})${o.moving ? ' moving' : ' stationary'}`);
+    }
+    if (contested.opponents.length !== 2) failures.push('match simulation should spawn two opponents');
+    if (!contested.opponents.some((o) => o.moving)) failures.push('opponents never moved');
+    await sleep(600);
+    const shot5 = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const contestedPath = shotPath.replace(/\.png$/, '-contested.png');
+    await writeFile(contestedPath, Buffer.from(shot5.data, 'base64'));
+    console.log(`  Screenshot: ${contestedPath}`);
+
     if (consoleErrors.length) {
       failures.push(`${consoleErrors.length} console error(s): ${consoleErrors[0]}`);
     }
