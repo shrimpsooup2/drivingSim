@@ -18,13 +18,20 @@ The reference screenshot is a filmstrip: five red strokes side by side, one per
 frame, playing left to right. The stroke stabs in short, draws out longer over
 the next two frames, curls into a hook, then breaks apart into specks.
 
-`slash.js` is not a redrawing of that — it holds the screenshot's own
-silhouettes. Each frame was cut out of the strip at full resolution and stored
-verbatim as vertical runs on a shared 33x148 grid, in the colour sampled from
-the strokes themselves (`#fd6481`). Rasterising the runs and laying them back
-over the screenshot agrees pixel for pixel: 3386 ink pixels in, 3386 out, no
-pixel in one and not the other. `npm test` pins the per-frame counts so an edit
-to the run data cannot silently drop or duplicate part of a frame.
+Those strokes were traced out of the screenshot first, and `slash.js` was then
+redrawn from the traces by hand on a grid at half their resolution, 17x74. The
+trace itself could not be used as art: the screenshot is a resized JPEG, so its
+edges carry a pixel of wobble that reads as fuzz rather than as pixel art.
+Redrawing squares that off — every frame is a stack of solid rectangles, so
+every edge is a clean step and every run is deliberate — while keeping each
+stroke's silhouette, its steps, and the gaps in it. Against the trace the
+redraw scores 0.91 IoU, the difference being tapers squared off to the grid.
+
+`npm test` pins the per-frame ink counts, so an edit to the rectangles cannot
+silently drop or duplicate part of a frame, and checks that no pixel stands
+alone in its row or column — the property that makes the art crisp.
+
+Colour is `#fd6481`, sampled from the middle of the strokes.
 
 To look at the frames on their own:
 

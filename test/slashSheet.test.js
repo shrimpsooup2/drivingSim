@@ -53,12 +53,26 @@ test('every slash frame stays inside the art grid and none is empty', () => {
   }
 });
 
-test('the traced frames still hold the ink they were cut from the screenshot with', () => {
-  // The strip's five strokes, in the order they play. Guards the run data
+test('the drawn frames hold the ink they were drawn with', () => {
+  // The strip's five strokes, in the order they play. Guards the rectangles
   // against an edit that silently drops or duplicates part of a frame.
   const ink = frameMasks().map((mask) => mask.reduce((total, on) => total + on, 0));
-  assert.deepEqual(ink, [382, 819, 1222, 704, 259]);
-  assert.equal(ink.reduce((a, b) => a + b, 0), 3386);
+  assert.deepEqual(ink, [102, 216, 311, 202, 89]);
+});
+
+test('every frame is drawn as clean rectangles, with no stray single pixels', () => {
+  // Pixel art, not a trace: every run is at least two wide and two tall, so no
+  // edge can carry the single-pixel wobble the screenshot's JPEG edges had.
+  frameMasks().forEach((mask, frame) => {
+    const on = (x, y) => (x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT ? 0 : mask[y * WIDTH + x]);
+    for (let y = 0; y < HEIGHT; y++) {
+      for (let x = 0; x < WIDTH; x++) {
+        if (!on(x, y)) continue;
+        assert.ok(on(x - 1, y) || on(x + 1, y), `frame ${frame + 1}: lone pixel column at ${x},${y}`);
+        assert.ok(on(x, y - 1) || on(x, y + 1), `frame ${frame + 1}: lone pixel row at ${x},${y}`);
+      }
+    }
+  });
 });
 
 test('frames spread over a sheet without ever going backwards', () => {

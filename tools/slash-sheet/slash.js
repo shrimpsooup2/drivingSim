@@ -1,66 +1,86 @@
 /**
- * The slash animation, traced from the reference screenshot.
+ * The slash animation, drawn as pixel art.
  *
- * The screenshot is a filmstrip: five red strokes side by side, one per frame,
- * playing left to right. The stroke stabs in short, draws out longer over the
- * next two frames, curls into a hook, then breaks apart into specks.
+ * The reference screenshot is a filmstrip: five red strokes side by side, one
+ * per frame, playing left to right. The stroke stabs in short, draws out
+ * longer over the next two frames, curls into a hook, then breaks apart into
+ * specks.
  *
- * The art here is not a redrawing of that -- it is the screenshot's own
- * silhouettes. Each frame was cut out of the strip at full resolution and
- * stored verbatim as vertical runs `[column, topRow, bottomRow]` on a shared
- * WIDTH x HEIGHT grid, so what plays back is exactly what was drawn.
+ * Those strokes were traced out of the screenshot first, and this art was then
+ * redrawn from the traces by hand on a grid at half their resolution. The
+ * trace itself could not be used as art: the screenshot is a resized JPEG, so
+ * its edges carry a pixel of wobble that reads as fuzz rather than as pixel
+ * art. Redrawing squares that off -- every frame here is a stack of solid
+ * rectangles, so every edge is a clean step and every run is deliberate --
+ * while keeping each stroke's silhouette, its steps, and the gaps in it.
  *
  * Frames keep the top edge they had in the strip -- they all hang from the
  * same blade edge, and frames 4 and 5 start lower than the rest because that
  * is how they were drawn -- and are centred horizontally in the grid.
+ *
+ * Each frame is a list of rectangles `[topRow, bottomRow, leftCol, rightCol]`,
+ * inclusive on all four sides. They may overlap; the frame is their union.
  */
 
-/** Grid the frames were traced onto, one cell per screenshot pixel. */
-export const WIDTH = 33;
-export const HEIGHT = 148;
+/** Grid the frames are drawn on, in art pixels. */
+export const WIDTH = 17;
+export const HEIGHT = 74;
 
 /** The stroke's colour, sampled from the middle of the strokes themselves. */
 export const COLOR = { r: 0xfd, g: 0x64, b: 0x81, a: 0xff };
 
 /** The five frames of the animation, first to last. */
 const FRAMES = [
-  // Frame 1
+  // 1. The stab: a short stroke that swells in the middle and steps left as it
+  //    tapers off.
   [
-    [12, 14, 50], [13, 14, 50], [14, 14, 50], [15, 14, 50], [16, 13, 50], [17, 1, 50], [18, 1, 36],
-    [19, 0, 36], [20, 0, 36], [21, 1, 36],
+    [0, 6, 8, 10],
+    [7, 18, 6, 10],
+    [19, 25, 6, 8],
   ],
-  // Frame 2
+  // 2. Drawn out to twice the length, with the same swell and a wider step.
   [
-    [9, 43, 68], [9, 71, 72], [10, 42, 74], [11, 42, 74], [12, 42, 74], [13, 42, 74], [14, 15, 97],
-    [15, 15, 96], [16, 15, 97], [17, 15, 97], [18, 2, 96], [19, 2, 39], [19, 51, 97], [20, 2, 38],
-    [21, 2, 38], [22, 2, 38], [23, 2, 38],
+    [1, 6, 9, 11],
+    [7, 18, 7, 11],
+    [19, 20, 7, 9],
+    [21, 36, 4, 9],
+    [37, 48, 7, 9],
   ],
-  // Frame 3
+  // 3. Full length: the tip has torn away from the stroke, which drifts right
+  //    down its length and trails off in two steps.
   [
-    [8, 43, 98], [9, 43, 98], [10, 43, 98], [11, 43, 98], [12, 21, 129], [13, 21, 129],
-    [14, 21, 129], [15, 21, 129], [16, 3, 16], [16, 21, 130], [17, 3, 17], [17, 22, 142],
-    [18, 3, 17], [18, 89, 142], [19, 3, 17], [19, 89, 142], [20, 3, 17], [20, 88, 142],
-    [21, 3, 17], [21, 89, 146], [22, 90, 90], [22, 142, 147], [23, 143, 147], [24, 143, 147],
-    [25, 143, 146],
+    [1, 8, 8, 10],
+    [11, 21, 6, 8],
+    [22, 43, 4, 8],
+    [44, 49, 4, 10],
+    [50, 64, 6, 10],
+    [65, 70, 8, 10],
+    [71, 73, 10, 12],
   ],
-  // Frame 4
+  // 4. The curl: the stroke thickens, bends right into a hook, and meets a
+  //    piece that has broken off ahead of it.
   [
-    [0, 23, 25], [0, 30, 50], [0, 52, 53], [1, 23, 54], [2, 23, 55], [3, 23, 55], [4, 23, 55],
-    [5, 10, 10], [5, 12, 14], [5, 23, 68], [6, 9, 14], [6, 31, 68], [7, 9, 14], [7, 32, 68],
-    [8, 9, 14], [8, 31, 68], [9, 9, 15], [9, 32, 69], [10, 9, 14], [10, 32, 77], [11, 49, 77],
-    [12, 49, 77], [13, 49, 77], [14, 49, 77], [15, 51, 55], [15, 67, 77], [16, 67, 77],
-    [17, 67, 77], [18, 67, 77], [19, 67, 81], [20, 71, 81], [21, 72, 81], [22, 72, 81],
-    [23, 72, 79], [24, 72, 78], [25, 72, 77], [26, 72, 76], [27, 71, 76], [28, 68, 73],
-    [28, 75, 75], [29, 68, 72], [30, 68, 72], [31, 68, 72], [32, 69, 72],
+    [4, 7, 3, 5],
+    [11, 15, 0, 2],
+    [16, 24, 0, 5],
+    [25, 27, 0, 7],
+    [28, 32, 2, 7],
+    [33, 34, 2, 9],
+    [35, 35, 4, 10],
+    [34, 35, 14, 16],
+    [36, 36, 5, 16],
+    [37, 38, 5, 13],
+    [39, 40, 9, 12],
   ],
-  // Frame 5
+  // 5. Broken up: specks either side of what is left of the curl.
   [
-    [0, 13, 13], [0, 15, 16], [1, 13, 17], [2, 12, 17], [3, 12, 17], [4, 12, 17], [5, 13, 17],
-    [5, 21, 25], [6, 21, 26], [7, 21, 26], [8, 21, 26], [9, 21, 26], [10, 17, 29], [11, 17, 30],
-    [12, 17, 30], [13, 17, 30], [14, 17, 30], [15, 18, 18], [15, 20, 30], [16, 21, 30],
-    [17, 21, 30], [18, 21, 30], [19, 21, 27], [20, 21, 26], [21, 21, 26], [22, 21, 26],
-    [23, 18, 26], [24, 17, 22], [25, 17, 21], [26, 17, 21], [27, 17, 21], [28, 3, 8], [28, 18, 20],
-    [29, 3, 8], [30, 3, 8], [31, 3, 8], [32, 3, 8],
+    [1, 4, 14, 16],
+    [6, 8, 0, 2],
+    [8, 9, 5, 7],
+    [8, 9, 11, 14],
+    [10, 11, 2, 13],
+    [12, 13, 2, 11],
+    [14, 15, 5, 9],
   ],
 ];
 
@@ -70,12 +90,12 @@ export const FRAME_COUNT = FRAMES.length;
 /** Rasterise frame `index` to a WIDTH x HEIGHT mask of 0/1 bytes. */
 export function frameMask(index) {
   const mask = new Uint8Array(WIDTH * HEIGHT);
-  for (const [col, top, bottom] of FRAMES[index]) {
+  for (const [top, bottom, left, right] of FRAMES[index]) {
+    if (top < 0 || left < 0 || bottom >= HEIGHT || right >= WIDTH || top > bottom || left > right) {
+      throw new Error(`slash frame ${index + 1} has a bad rectangle ${[top, bottom, left, right]}`);
+    }
     for (let row = top; row <= bottom; row++) {
-      if (col < 0 || col >= WIDTH || row < 0 || row >= HEIGHT) {
-        throw new Error(`slash frame ${index + 1} draws outside the ${WIDTH}x${HEIGHT} grid at ${col},${row}`);
-      }
-      mask[row * WIDTH + col] = 1;
+      for (let col = left; col <= right; col++) mask[row * WIDTH + col] = 1;
     }
   }
   return mask;
