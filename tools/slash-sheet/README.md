@@ -33,7 +33,7 @@ about 19px square.
 
 `npm test` pins the per-frame ink counts, so an edit to the rectangles cannot
 silently drop or duplicate part of a frame; pins how many pixels stand alone
-(frame 5 breaks into specks and one is meant to be a single pixel, so a stray
+(frame 5 breaks into specks and two are meant to be single pixels, so a stray
 elsewhere shows up as a change); and checks the grid stays coarse enough for
 blocks this size.
 

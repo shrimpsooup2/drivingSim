@@ -58,13 +58,13 @@ test('the drawn frames hold the ink they were drawn with', () => {
   // The strip's five strokes, in the order they play. Guards the rectangles
   // against an edit that silently drops or duplicates part of a frame.
   const ink = frameMasks().map((mask) => mask.reduce((total, on) => total + on, 0));
-  assert.deepEqual(ink, [13, 25, 39, 25, 13]);
+  assert.deepEqual(ink, [13, 25, 39, 25, 10]);
 });
 
 test('the art has exactly the lone pixels it means to have', () => {
   // The grid is coarse enough that a stroke is one or two pixels wide, so a
   // pixel standing alone is no longer proof of a stray -- frame 5 breaks up
-  // into specks and one of them is meant to be a single pixel. Pinning the
+  // into specks and two of them are meant to be single pixels. Pinning the
   // count per frame still catches a stray introduced by an edit.
   const lone = frameMasks().map((mask) => {
     const on = (x, y) => (x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT ? 0 : mask[y * WIDTH + x]);
@@ -77,7 +77,7 @@ test('the art has exactly the lone pixels it means to have', () => {
     }
     return count;
   });
-  assert.deepEqual(lone, [0, 0, 0, 0, 1]);
+  assert.deepEqual(lone, [0, 0, 0, 0, 2]);
 });
 
 test('the grid is coarse enough that a sheet frame gets big blocks', () => {

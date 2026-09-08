@@ -73,9 +73,10 @@ const FRAMES = [
     [12, 12, 2, 5],
     [13, 13, 3, 4],
   ],
-  // 5. Broken up: specks either side of what is left of the curl.
+  // 5. Broken up: specks either side of what is left of the curl. The tip that
+  //    has run furthest ahead is down to a single pixel.
   [
-    [0, 1, 4, 5],
+    [1, 1, 5, 5],
     [2, 2, 0, 0],
     [3, 3, 2, 2],
     [3, 3, 4, 4],
