@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { decodePng, encodePng } from '../tools/slash-sheet/png.js';
-import { detectFrames, orderFrames } from '../tools/slash-sheet/frames.js';
-import { HEIGHT, STAGE_COUNT, WIDTH, stageMask, stageMasks, stageSequence } from '../tools/slash-sheet/slash.js';
+import { detectFrames, gridSeeds, orderFrames, partitionFrames } from '../tools/slash-sheet/frames.js';
+import { FRAME_COUNT, HEIGHT, WIDTH, frameMask, frameMasks, frameSequence } from '../tools/slash-sheet/slash.js';
 
 /** A blank RGBA image. */
 function canvas(width, height, fill = 0) {
@@ -45,22 +45,30 @@ test('PNG encoding round-trips every pixel', () => {
   assert.deepEqual(Array.from(back.data), Array.from(img.data));
 });
 
-test('every slash stage stays inside the art grid and none is empty', () => {
-  for (let i = 0; i < STAGE_COUNT; i++) {
-    const mask = stageMask(i);
+test('every slash frame stays inside the art grid and none is empty', () => {
+  for (let i = 0; i < FRAME_COUNT; i++) {
+    const mask = frameMask(i);
     assert.equal(mask.length, WIDTH * HEIGHT);
-    assert.ok(mask.some((on) => on), `stage ${i + 1} drew nothing`);
+    assert.ok(mask.some((on) => on), `frame ${i + 1} drew nothing`);
   }
 });
 
-test('stages spread over a frame count without ever going backwards', () => {
-  for (const count of [1, 4, STAGE_COUNT, 12, 40]) {
-    const sequence = stageSequence(count);
+test('the traced frames still hold the ink they were cut from the screenshot with', () => {
+  // The strip's five strokes, in the order they play. Guards the run data
+  // against an edit that silently drops or duplicates part of a frame.
+  const ink = frameMasks().map((mask) => mask.reduce((total, on) => total + on, 0));
+  assert.deepEqual(ink, [382, 819, 1222, 704, 259]);
+  assert.equal(ink.reduce((a, b) => a + b, 0), 3386);
+});
+
+test('frames spread over a sheet without ever going backwards', () => {
+  for (const count of [1, 4, FRAME_COUNT, 12, 40]) {
+    const sequence = frameSequence(count);
     assert.equal(sequence.length, count);
     assert.equal(sequence[0], 0);
-    assert.equal(sequence[count - 1], count === 1 ? 0 : STAGE_COUNT - 1);
+    assert.equal(sequence[count - 1], count === 1 ? 0 : FRAME_COUNT - 1);
     for (let i = 1; i < sequence.length; i++) {
-      assert.ok(sequence[i] >= sequence[i - 1], 'stage order went backwards');
+      assert.ok(sequence[i] >= sequence[i - 1], 'frame order went backwards');
     }
   }
 });
@@ -124,17 +132,49 @@ test('reading order and an explicit order override the heuristic', () => {
   assert.throws(() => orderFrames(frames, [1, 2]), /lists 2 frames/);
 });
 
+test('touching blobs are split by their frame centres, not by bridging', () => {
+  // Two blobs close enough that any bridging distance merges them.
+  const sheet = canvas(600, 300, 255);
+  blob(sheet, 180, 150, 90, 1);
+  blob(sheet, 330, 150, 90, 1);
+  assert.equal(detectFrames(sheet).frames.length, 1, 'fixture should defeat the bridging clusterer');
+
+  const { frames } = partitionFrames(sheet, [[180, 150], [330, 150]]);
+  assert.equal(frames.length, 2);
+  assert.ok(Math.abs(frames[0].cx - 180) < 25 && Math.abs(frames[1].cx - 330) < 25);
+  assert.ok(frames[0].x1 < frames[1].x0 + 40, 'the split should fall between the blobs');
+});
+
+test('a frame box ignores a stray speck from its neighbour', () => {
+  const sheet = canvas(600, 300, 255);
+  blob(sheet, 300, 150, 70, 1);
+  disc(sheet, 560, 40, 3, [90, 200, 90]); // bleed: far away, and tiny
+  const [loose] = partitionFrames(sheet, [[300, 150]], { trim: 0 }).frames;
+  const [tight] = partitionFrames(sheet, [[300, 150]]).frames;
+  assert.ok(loose.x1 > 500, 'an untrimmed box should stretch to the speck');
+  assert.ok(tight.x1 < 400, 'the trimmed box should stay on the blob');
+});
+
+test('a grid of frame centres covers the sheet evenly', () => {
+  const seeds = gridSeeds({ width: 600, height: 400 }, 3, 2);
+  assert.deepEqual(seeds, [[100, 100], [300, 100], [500, 100], [100, 300], [300, 300], [500, 300]]);
+});
+
 test('the rebuilt sheet keeps its size and puts a slash on every frame', () => {
-  const sheet = canvas(900, 300, 255);
-  const centres = [[150, 150], [450, 150], [750, 150]];
-  centres.forEach(([cx, cy], i) => blob(sheet, cx, cy, 70, i === 0 ? 1 : 0));
+  const sheet = canvas(1200, 700, 255);
+  const centres = [[200, 350], [600, 350], [1000, 350]];
+  centres.forEach(([cx, cy], i) => blob(sheet, cx, cy, 120, i === 0 ? 1 : 0));
 
   const { frames } = detectFrames(sheet);
   const ordered = orderFrames(frames);
+  assert.equal(ordered.length, centres.length);
+
   const scale = 4;
+  const art = frameMasks();
+  const playing = frameSequence(ordered.length);
   const out = canvas(sheet.width, sheet.height, 255);
   ordered.forEach((frame, i) => {
-    const mask = stageMasks()[stageSequence(ordered.length)[i]];
+    const mask = art[playing[i]];
     const left = Math.round(frame.cx - (WIDTH * scale) / 2);
     const top = Math.round(frame.cy - (HEIGHT * scale) / 2);
     for (let row = 0; row < HEIGHT; row++) {
@@ -143,9 +183,9 @@ test('the rebuilt sheet keeps its size and puts a slash on every frame', () => {
         for (let dy = 0; dy < scale; dy++) {
           for (let dx = 0; dx < scale; dx++) {
             const at = ((top + row * scale + dy) * out.width + left + col * scale + dx) * 4;
-            out.data[at] = 0xf9;
-            out.data[at + 1] = 0x56;
-            out.data[at + 2] = 0x6c;
+            out.data[at] = 0xfd;
+            out.data[at + 1] = 0x64;
+            out.data[at + 2] = 0x81;
             out.data[at + 3] = 0xff;
           }
         }
@@ -156,9 +196,10 @@ test('the rebuilt sheet keeps its size and puts a slash on every frame', () => {
   const back = decodePng(encodePng(out));
   assert.equal(back.width, sheet.width);
   assert.equal(back.height, sheet.height);
-  const drawn = detectFrames(back);
-  assert.equal(drawn.frames.length, centres.length);
-  for (const [cx] of centres) {
-    assert.ok(drawn.frames.some((f) => Math.abs(f.cx - cx) < WIDTH * scale), `nothing drawn near x=${cx}`);
-  }
+  const drawn = partitionFrames(back, centres).frames;
+  assert.equal(drawn.length, centres.length);
+  drawn.forEach((frame, i) => {
+    assert.ok(frame.ink > 0, `nothing drawn near ${centres[i]}`);
+    assert.ok(Math.abs(frame.cx - centres[i][0]) < WIDTH * scale, 'slash drifted off its blob');
+  });
 });

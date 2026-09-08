@@ -1,108 +1,79 @@
 /**
- * The slash effect, drawn as pixel art.
+ * The slash animation, traced from the reference screenshot.
  *
- * The reference screenshot shows one moment of the effect: four vertical
- * streaks of increasing length (the blade trail), a hook curling to the right
- * below the fourth streak, and a small chevron of specks trailing off to the
- * upper right. Every stage below is built from those same elements at the same
- * columns, so the sequence reads as one effect: the streaks stab in and grow,
- * reach the pose in the screenshot, then tear loose from the top and fall away
- * until only a few specks are left.
+ * The screenshot is a filmstrip: five red strokes side by side, one per frame,
+ * playing left to right. The stroke stabs in short, draws out longer over the
+ * next two frames, curls into a hook, then breaks apart into specks.
  *
- * Art is stored as vertical runs `[column, topRow, bottomRow]` on a fixed
- * WIDTH x HEIGHT grid; a single-pixel dot is a run whose rows are equal. The
- * grid is fixed rather than trimmed per stage so the effect does not jitter
- * when the frames are centred on the explosion sheet.
+ * The art here is not a redrawing of that -- it is the screenshot's own
+ * silhouettes. Each frame was cut out of the strip at full resolution and
+ * stored verbatim as vertical runs `[column, topRow, bottomRow]` on a shared
+ * WIDTH x HEIGHT grid, so what plays back is exactly what was drawn.
+ *
+ * Frames keep the top edge they had in the strip -- they all hang from the
+ * same blade edge, and frames 4 and 5 start lower than the rest because that
+ * is how they were drawn -- and are centred horizontally in the grid.
  */
 
-/** Grid the art is authored on, in art pixels. */
-export const WIDTH = 28;
-export const HEIGHT = 22;
+/** Grid the frames were traced onto, one cell per screenshot pixel. */
+export const WIDTH = 33;
+export const HEIGHT = 148;
 
-/** Flat rose-pink of the reference screenshot; the art uses no other colour. */
-export const COLOR = { r: 0xf9, g: 0x56, b: 0x6c, a: 0xff };
+/** The stroke's colour, sampled from the middle of the strokes themselves. */
+export const COLOR = { r: 0xfd, g: 0x64, b: 0x81, a: 0xff };
 
-/**
- * Stages of the effect, first to last. Stage 4 is the pose in the screenshot.
- */
-const STAGES = [
-  // 1. The blade lands: four short nubs and the chevron's inner pair.
+/** The five frames of the animation, first to last. */
+const FRAMES = [
+  // Frame 1
   [
-    [0, 0, 0],
-    [4, 0, 1],
-    [9, 0, 2],
-    [15, 0, 0],
-    [23, 0, 0], [24, 0, 0],
+    [12, 14, 50], [13, 14, 50], [14, 14, 50], [15, 14, 50], [16, 13, 50], [17, 1, 50], [18, 1, 36],
+    [19, 0, 36], [20, 0, 36], [21, 1, 36],
   ],
-  // 2. Streaks draw downward; the hook starts under the fourth streak.
+  // Frame 2
   [
-    [0, 0, 2],
-    [4, 0, 4],
-    [9, 0, 6],
-    [15, 0, 1], [15, 4, 5],
-    [22, 0, 0], [25, 0, 0], [23, 1, 1], [24, 1, 1],
+    [9, 43, 68], [9, 71, 72], [10, 42, 74], [11, 42, 74], [12, 42, 74], [13, 42, 74], [14, 15, 97],
+    [15, 15, 96], [16, 15, 97], [17, 15, 97], [18, 2, 96], [19, 2, 39], [19, 51, 97], [20, 2, 38],
+    [21, 2, 38], [22, 2, 38], [23, 2, 38],
   ],
-  // 3. Nearly full extension; the chevron opens out.
+  // Frame 3
   [
-    [0, 0, 4],
-    [4, 0, 7],
-    [9, 0, 9],
-    [15, 0, 1], [15, 4, 7],
-    [21, 0, 0], [26, 0, 0], [22, 1, 1], [25, 1, 1], [23, 2, 2],
+    [8, 43, 98], [9, 43, 98], [10, 43, 98], [11, 43, 98], [12, 21, 129], [13, 21, 129],
+    [14, 21, 129], [15, 21, 129], [16, 3, 16], [16, 21, 130], [17, 3, 17], [17, 22, 142],
+    [18, 3, 17], [18, 89, 142], [19, 3, 17], [19, 89, 142], [20, 3, 17], [20, 88, 142],
+    [21, 3, 17], [21, 89, 146], [22, 90, 90], [22, 142, 147], [23, 143, 147], [24, 143, 147],
+    [25, 143, 146],
   ],
-  // 4. The screenshot pose: streaks at full length, hook curled right, chevron
-  //    complete, with the longest streak stepping right as it drips.
+  // Frame 4
   [
-    [0, 0, 5],
-    [4, 0, 10],
-    [9, 0, 11], [10, 11, 18],
-    [15, 0, 1], [15, 4, 9], [16, 9, 10], [17, 10, 10], [19, 10, 10],
-    [21, 0, 0], [26, 0, 0], [22, 1, 1], [25, 1, 1], [23, 2, 2], [24, 2, 2],
+    [0, 23, 25], [0, 30, 50], [0, 52, 53], [1, 23, 54], [2, 23, 55], [3, 23, 55], [4, 23, 55],
+    [5, 10, 10], [5, 12, 14], [5, 23, 68], [6, 9, 14], [6, 31, 68], [7, 9, 14], [7, 32, 68],
+    [8, 9, 14], [8, 31, 68], [9, 9, 15], [9, 32, 69], [10, 9, 14], [10, 32, 77], [11, 49, 77],
+    [12, 49, 77], [13, 49, 77], [14, 49, 77], [15, 51, 55], [15, 67, 77], [16, 67, 77],
+    [17, 67, 77], [18, 67, 77], [19, 67, 81], [20, 71, 81], [21, 72, 81], [22, 72, 81],
+    [23, 72, 79], [24, 72, 78], [25, 72, 77], [26, 72, 76], [27, 71, 76], [28, 68, 73],
+    [28, 75, 75], [29, 68, 72], [30, 68, 72], [31, 68, 72], [32, 69, 72],
   ],
-  // 5. The trail lets go of the blade edge: the whole curtain drops a row and
-  //    the tops start to clear.
+  // Frame 5
   [
-    [0, 3, 6],
-    [4, 3, 11],
-    [9, 3, 12], [10, 12, 19],
-    [15, 2, 2], [15, 7, 10], [16, 10, 11], [17, 11, 11], [19, 11, 11],
-    [21, 1, 1], [26, 1, 1], [22, 2, 2], [25, 2, 2], [23, 3, 3], [24, 3, 3],
-  ],
-  // 6. Falling and eaten away from the top; the hook has lost its stem.
-  [
-    [0, 7, 7],
-    [4, 7, 12],
-    [9, 7, 13], [10, 13, 20],
-    [15, 11, 11], [16, 11, 12], [17, 12, 12], [19, 12, 12],
-    [22, 3, 3], [25, 3, 3], [23, 4, 4], [24, 4, 4],
-  ],
-  // 7. Only the heavy end of each drip is still falling.
-  [
-    [4, 13, 14],
-    [9, 13, 15], [10, 15, 21],
-    [16, 14, 14], [17, 14, 14],
-    [23, 6, 6], [24, 6, 6],
-  ],
-  // 8. Last specks before the effect is gone.
-  [
-    [4, 16, 16],
-    [10, 19, 21],
-    [17, 15, 15],
+    [0, 13, 13], [0, 15, 16], [1, 13, 17], [2, 12, 17], [3, 12, 17], [4, 12, 17], [5, 13, 17],
+    [5, 21, 25], [6, 21, 26], [7, 21, 26], [8, 21, 26], [9, 21, 26], [10, 17, 29], [11, 17, 30],
+    [12, 17, 30], [13, 17, 30], [14, 17, 30], [15, 18, 18], [15, 20, 30], [16, 21, 30],
+    [17, 21, 30], [18, 21, 30], [19, 21, 27], [20, 21, 26], [21, 21, 26], [22, 21, 26],
+    [23, 18, 26], [24, 17, 22], [25, 17, 21], [26, 17, 21], [27, 17, 21], [28, 3, 8], [28, 18, 20],
+    [29, 3, 8], [30, 3, 8], [31, 3, 8], [32, 3, 8],
   ],
 ];
 
-/** Number of authored stages. */
-export const STAGE_COUNT = STAGES.length;
+/** Number of frames in the animation. */
+export const FRAME_COUNT = FRAMES.length;
 
-/**
- * Rasterise stage `index` to a WIDTH x HEIGHT mask of 0/1 bytes.
- */
-export function stageMask(index) {
+/** Rasterise frame `index` to a WIDTH x HEIGHT mask of 0/1 bytes. */
+export function frameMask(index) {
   const mask = new Uint8Array(WIDTH * HEIGHT);
-  for (const [col, top, bottom] of STAGES[index]) {
+  for (const [col, top, bottom] of FRAMES[index]) {
     for (let row = top; row <= bottom; row++) {
       if (col < 0 || col >= WIDTH || row < 0 || row >= HEIGHT) {
-        throw new Error(`slash stage ${index + 1} draws outside the ${WIDTH}x${HEIGHT} grid at ${col},${row}`);
+        throw new Error(`slash frame ${index + 1} draws outside the ${WIDTH}x${HEIGHT} grid at ${col},${row}`);
       }
       mask[row * WIDTH + col] = 1;
     }
@@ -110,25 +81,25 @@ export function stageMask(index) {
   return mask;
 }
 
-/** All stage masks, first to last. */
-export function stageMasks() {
-  return STAGES.map((_, i) => stageMask(i));
+/** All frame masks, first to last. */
+export function frameMasks() {
+  return FRAMES.map((_, i) => frameMask(i));
 }
 
 /**
- * Spread `count` frames over the authored stages, first to last.
+ * Spread the animation over `count` sheet frames, first to last.
  *
- * A sheet usually has more frames than the slash has stages, so stages are
- * held for a frame or more; where a sheet has fewer, stages are dropped
- * evenly. Either way the first frame is stage 1 and the last is the final
- * stage, and the order never goes backwards.
+ * A sheet usually holds more frames than the slash has, so frames are held for
+ * a beat or more; where a sheet holds fewer, frames are dropped evenly. Either
+ * way the first is frame 1, the last is frame 5, and the order never goes
+ * backwards.
  */
-export function stageSequence(count) {
+export function frameSequence(count) {
   if (count <= 0) return [];
   if (count === 1) return [0];
   const out = [];
   for (let i = 0; i < count; i++) {
-    out.push(Math.round((i * (STAGE_COUNT - 1)) / (count - 1)));
+    out.push(Math.round((i * (FRAME_COUNT - 1)) / (count - 1)));
   }
   return out;
 }

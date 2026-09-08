@@ -4,10 +4,16 @@
  *
  * The sheet is not a tidy grid: the blobs sit at irregular spacings, some cells
  * are empty, and each blob is itself a scatter of disconnected chunks and
- * specks. So instead of assuming a grid, this clusters the drawn pixels: it
- * buckets them into coarse cells, spreads each cell outwards far enough to
- * bridge the gaps inside one blob but not the gaps between blobs, and treats
- * each connected island as one frame.
+ * specks. So instead of assuming a grid, `detectFrames` clusters the drawn
+ * pixels: it buckets them into coarse cells, spreads each cell outwards far
+ * enough to bridge the gaps inside one blob but not the gaps between blobs,
+ * and treats each connected island as one frame.
+ *
+ * That works when the blobs are separated. On a tightly packed atlas they are
+ * not: a late frame's dust reaches into its neighbour, and the gaps *inside* a
+ * threadbare ring are as wide as the gaps between frames, so no bridging
+ * distance splits them. For those, `partitionFrames` takes the frame centres
+ * (or a plain grid) and hands every drawn pixel to the nearest one.
  */
 
 /**
@@ -215,6 +221,94 @@ export function detectFrames(img, { gap = 0, minInkFraction = 0.02 } = {}) {
   }
   if (!frames.length) throw new Error('every candidate frame was rejected as noise; try a smaller --gap');
   return { frames, background, cell, radius };
+}
+
+
+/**
+ * Measure one partition's box, ignoring the outermost `trim` of its ink.
+ *
+ * Frames on a packed sheet bleed into each other -- a few of a neighbour's
+ * chunks always land on the wrong side of the split -- and a plain bounding box
+ * stretches to cover them. Clipping the tails keeps the box on the frame's own
+ * body, which matters because the box is what sets both the centre a slash is
+ * stamped on and the density that orders the sheet.
+ */
+function trimmedBox(xs, ys, ink, trim) {
+  const edge = (counts, from) => {
+    const target = ink * trim;
+    let seen = 0;
+    if (from < 0) {
+      for (let i = counts.length - 1; i >= 0; i--) { seen += counts[i]; if (seen > target) return i; }
+      return counts.length - 1;
+    }
+    for (let i = 0; i < counts.length; i++) { seen += counts[i]; if (seen > target) return i; }
+    return 0;
+  };
+  return { x0: edge(xs, 1), x1: edge(xs, -1), y0: edge(ys, 1), y1: edge(ys, -1) };
+}
+
+/** Turn a partition's box and ink count into the frame shape the tool uses. */
+function toFrame({ x0, y0, x1, y1 }, ink) {
+  const w = x1 - x0 + 1;
+  const h = y1 - y0 + 1;
+  return {
+    x0, y0, x1, y1, w, h,
+    cx: (x0 + x1 + 1) / 2,
+    cy: (y0 + y1 + 1) / 2,
+    ink,
+    radius: Math.sqrt(w * h),
+    density: ink / (w * h),
+  };
+}
+
+/**
+ * Split the sheet by handing every drawn pixel to the nearest of `seeds`.
+ *
+ * Seeds are rough frame centres -- they only have to be closer to their own
+ * frame than to any other, so reading them off the sheet by eye is enough.
+ * `trim` is the share of each frame's ink allowed to fall outside its box,
+ * which is what absorbs the bleed at the boundaries.
+ */
+export function partitionFrames(img, seeds, { trim = 0.005 } = {}) {
+  const { width, height } = img;
+  const { mask, background } = inkMask(img);
+  if (!seeds.length) throw new Error('no frame centres given');
+
+  const xs = seeds.map(() => new Int32Array(width));
+  const ys = seeds.map(() => new Int32Array(height));
+  const ink = new Array(seeds.length).fill(0);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!mask[y * width + x]) continue;
+      let best = 0;
+      let bestDistance = Infinity;
+      for (let k = 0; k < seeds.length; k++) {
+        const distance = (x - seeds[k][0]) ** 2 + (y - seeds[k][1]) ** 2;
+        if (distance < bestDistance) { bestDistance = distance; best = k; }
+      }
+      xs[best][x]++;
+      ys[best][y]++;
+      ink[best]++;
+    }
+  }
+
+  const frames = [];
+  seeds.forEach((seed, k) => {
+    if (!ink[k]) throw new Error(`no drawn pixels landed nearest the frame centre at ${seed[0]},${seed[1]}`);
+    frames.push(toFrame(trimmedBox(xs[k], ys[k], ink[k], trim), ink[k]));
+  });
+  return { frames, background };
+}
+
+/** Frame centres for a plain `cols` x `rows` grid over the sheet. */
+export function gridSeeds({ width, height }, cols, rows) {
+  const seeds = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      seeds.push([((c + 0.5) * width) / cols, ((r + 0.5) * height) / rows]);
+    }
+  }
+  return seeds;
 }
 
 /** Reading order: top-to-bottom in rows, left-to-right within each row. */

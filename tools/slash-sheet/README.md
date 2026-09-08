@@ -1,6 +1,6 @@
 # Slash sheet
 
-Rebuilds an explosion sprite sheet with the slash effect in place of the
+Rebuilds an explosion sprite sheet with the slash animation in place of the
 explosion, keeping the sheet's filename, dimensions and frame layout so it can
 be dropped straight back in.
 
@@ -12,36 +12,79 @@ The rebuilt sheet lands in `out/` under the same filename. Add `--in-place` to
 overwrite the original instead (keep a copy first), or `--out DIR` to send it
 somewhere else.
 
-## What it does
+## The art
 
-1. **Finds the frames.** The sheet is not a tidy grid — the blobs sit at
-   irregular spacings, some cells are empty, and each blob is a scatter of
-   chunks and specks. So rather than assuming a grid it clusters the drawn
-   pixels, widening the bridge between them until the island count settles on
-   a plateau. That plateau is the frame count.
-2. **Works out the play order.** A blast starts small and solid and ends wide
-   and threadbare, so frames are sorted by `radius x (1 - density)`: the tight
-   bright ball first, the faint scattered ring last. `--order grid` falls back
-   to plain reading order, and `--order 3,1,2,...` sets it by hand.
-3. **Spreads the slash over those frames.** The slash has eight authored
-   stages; sheets usually have more frames than that, so stages are held for a
-   frame or more (and dropped evenly if a sheet has fewer). The first frame is
-   always stage 1 and the last is always the final stage.
-4. **Stamps each stage** centred on the blob it replaces, nearest-neighbour
-   scaled so the art stays crisp. One fixed scale is used for every frame, so
-   the effect does not pulse as it plays — only its position follows the sheet.
+The reference screenshot is a filmstrip: five red strokes side by side, one per
+frame, playing left to right. The stroke stabs in short, draws out longer over
+the next two frames, curls into a hook, then breaks apart into specks.
+
+`slash.js` is not a redrawing of that — it holds the screenshot's own
+silhouettes. Each frame was cut out of the strip at full resolution and stored
+verbatim as vertical runs on a shared 33x148 grid, in the colour sampled from
+the strokes themselves (`#fd6481`). Rasterising the runs and laying them back
+over the screenshot agrees pixel for pixel: 3386 ink pixels in, 3386 out, no
+pixel in one and not the other. `npm test` pins the per-frame counts so an edit
+to the run data cannot silently drop or duplicate part of a frame.
+
+To look at the frames on their own:
+
+```
+node tools/slash-sheet/build.js explosion.png --preview out/frames.png --dry-run
+```
+
+## Finding the sheet's frames
+
+By default the tool clusters the drawn pixels, widening the bridge between them
+until the island count settles on a plateau — no grid assumption, which suits a
+sheet whose blobs sit at irregular spacings with empty cells between them.
+
+That only works when the blobs are actually separated. On a tightly packed
+atlas they are not: a late frame's dust reaches into its neighbour, and the gaps
+*inside* a threadbare ring are as wide as the gaps between frames, so no
+bridging distance splits them. The tool says so when it comes back with one
+frame. Give it the frame centres instead and it hands every drawn pixel to the
+nearest one:
+
+```
+node tools/slash-sheet/build.js explosion.png --seeds "300,290 930,290 ..."
+node tools/slash-sheet/build.js explosion.png --grid 3x4
+```
+
+Centres only need to be closer to their own frame than to any other, so reading
+them off the sheet by eye is enough. Each frame's box then clips the outermost
+0.5% of its ink, so a few of a neighbour's chunks landing on the wrong side of
+the split cannot stretch the box.
+
+### PlayerExplosion_03-uhd.png
+
+That sheet is 1860x1728 and holds ten frames: a 3x3 grid of 620x576 cells for
+the top two rows, and four sprites packed across the bottom. Its blobs touch,
+so it needs its centres:
+
+```
+node tools/slash-sheet/build.js PlayerExplosion_03-uhd.png --seeds \
+  "300,290 930,290 1550,290 300,865 930,865 1550,865 230,1470 650,1450 960,1390 1560,1460"
+```
+
+## Play order
+
+A blast starts small and solid and ends wide and threadbare, so frames are
+sorted by `radius x (1 - density)`: the tight bright ball first, the faint
+scattered ring last. On the sheet above that puts the clean green sphere first
+and the barely-there ring last, which is the order the explosion plays in.
+
+`--order grid` falls back to plain reading order, `--order grid-reverse`
+reverses it, and `--order 3,1,2,...` sets it by hand.
+
+The five slash frames are then spread over however many frames the sheet has —
+held for a beat or more when there are more, dropped evenly when there are
+fewer — and each is stamped centred on the blob it replaces, nearest-neighbour
+scaled. One fixed scale is used for every frame so the animation does not pulse
+as it plays; only its position follows the sheet.
 
 Nothing is guessed silently: the run prints every frame it found, with its box,
-centre, ink count and density, and which stage was assigned to it. Check that
-table before trusting the output; `--dry-run` prints it without writing.
-
-## Checking the art
-
-```
-node tools/slash-sheet/build.js explosion.png --preview out/stages.png --dry-run
-```
-
-writes a contact sheet of the eight stages on their own.
+centre, ink count and density, and which slash frame was assigned to it. Check
+that table before trusting the output; `--dry-run` prints it without writing.
 
 ## Options
 
@@ -50,21 +93,13 @@ writes a contact sheet of the eight stages on their own.
 | `--out DIR` | Where to write, keeping the source filename (default `out`) |
 | `--in-place` | Overwrite the source sheet |
 | `--order MODE` | `stage` (default), `grid`, `grid-reverse`, or `3,1,2,...` |
-| `--fit FRACTION` | Slash width as a fraction of a frame's width (default `0.9`) |
+| `--fit FRACTION` | Slash size as a fraction of a frame's box (default `0.9`) |
 | `--scale N` | Force N output pixels per art pixel, ignoring `--fit` |
 | `--gap FRACTION` | Force the blob bridging distance (default: worked out from the sheet) |
-| `--preview PATH` | Also write a contact sheet of the stages alone |
+| `--seeds LIST` | Split by nearest frame centre: `"x,y x,y ..."` or a file of the same |
+| `--grid CxR` | Split by a plain C x R grid of frame centres |
+| `--preview PATH` | Also write a contact sheet of the five frames alone |
 | `--dry-run` | Report what was found without writing the sheet |
 
-If two blobs are merged into one frame, lower `--gap`; if one blob is split
-into two, raise it.
-
-## The art
-
-`slash.js` holds the effect as vertical runs on a 28x22 grid, one list per
-stage, in a single flat rose-pink. Stage 4 is the pose from the reference
-screenshot — four streaks of increasing length, a hook curling right, a chevron
-of specks trailing off. The stages before it draw that pose in; the stages
-after it let the curtain drop and eat it away from the top. Edit the run lists
-to change the art; `npm test` checks the stages stay on the grid and that the
-ordering never runs backwards.
+If two blobs are merged into one frame, lower `--gap` or switch to `--seeds`;
+if one blob is split into two, raise `--gap`.
