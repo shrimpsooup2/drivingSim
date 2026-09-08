@@ -85,9 +85,18 @@ reverses it, and `--order 3,1,2,...` sets it by hand.
 
 The five slash frames are then spread over however many frames the sheet has —
 held for a beat or more when there are more, dropped evenly when there are
-fewer — and each is stamped centred on the blob it replaces, nearest-neighbour
-scaled. One fixed scale is used for every frame so the animation does not pulse
-as it plays; only its position follows the sheet.
+fewer — and each is stamped on the blob it replaces, nearest-neighbour scaled.
+
+Every frame lands on one grid. The scale is a whole number of output pixels per
+art pixel and is the same for all frames, so the animation does not pulse as it
+plays; and each frame's corner is snapped to a whole number of art pixels from
+the sheet's origin, so the frames share a phase as well as a block size.
+Without that snap a frame is centred exactly on its blob and lands on a lattice
+of its own — blocks the right size, but offset from its neighbours' by part of
+a block, which is enough to stop the sheet reading as pixel art. Snapping moves
+a frame by less than half a block, nothing against a frame ~500px across.
+`npm test` checks it: on a rebuilt sheet every run of ink both starts and ends
+on the grid.
 
 Nothing is guessed silently: the run prints every frame it found, with its box,
 centre, ink count and density, and which slash frame was assigned to it. Check

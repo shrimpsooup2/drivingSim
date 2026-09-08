@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { decodePng, encodePng } from '../tools/slash-sheet/png.js';
 import { detectFrames, gridSeeds, orderFrames, partitionFrames } from '../tools/slash-sheet/frames.js';
 import { FRAME_COUNT, HEIGHT, WIDTH, frameMask, frameMasks, frameSequence } from '../tools/slash-sheet/slash.js';
+import { blankCanvas, snapCorner, stampFrame } from '../tools/slash-sheet/render.js';
 
 /** A blank RGBA image. */
 function canvas(width, height, fill = 0) {
@@ -174,6 +175,56 @@ test('a grid of frame centres covers the sheet evenly', () => {
   assert.deepEqual(seeds, [[100, 100], [300, 100], [500, 100], [100, 300], [300, 300], [500, 300]]);
 });
 
+test('a frame lands on the sheet grid whatever centre it is given', () => {
+  const scale = 7;
+  for (const cx of [0, 1, 100.5, 617, 1859.5]) {
+    for (const cy of [0, 3, 250.5, 1727]) {
+      const { left, top } = snapCorner(scale, cx, cy);
+      assert.ok(left % scale === 0, `left ${left} is off the grid for centre ${cx},${cy}`);
+      assert.ok(top % scale === 0, `top ${top} is off the grid for centre ${cx},${cy}`);
+      // Snapping must not shove the frame off its blob.
+      assert.ok(Math.abs(left + (WIDTH * scale) / 2 - cx) <= scale / 2);
+      assert.ok(Math.abs(top + (HEIGHT * scale) / 2 - cy) <= scale / 2);
+    }
+  }
+});
+
+test('every block on a rebuilt sheet is one size and one grid', () => {
+  // Centres deliberately off the grid and off each other's phase: before the
+  // corners were snapped, each frame landed on a lattice of its own.
+  const scale = 7;
+  const canvas = blankCanvas(1200, 700, 'alpha');
+  const art = frameMasks();
+  [[201, 353], [604, 348.5], [1002.5, 351]].forEach(([cx, cy], i) => {
+    stampFrame(canvas, art[i], scale, cx, cy);
+  });
+
+  const on = (x, y) => canvas.data[(y * canvas.width + x) * 4 + 3] > 0;
+  const runs = [];
+  for (let y = 0; y < canvas.height; y++) {
+    let start = -1;
+    for (let x = 0; x <= canvas.width; x++) {
+      const ink = x < canvas.width && on(x, y);
+      if (ink && start < 0) start = x;
+      else if (!ink && start >= 0) { runs.push([start, x - start]); start = -1; }
+    }
+  }
+  for (let x = 0; x < canvas.width; x++) {
+    let start = -1;
+    for (let y = 0; y <= canvas.height; y++) {
+      const ink = y < canvas.height && on(x, y);
+      if (ink && start < 0) start = y;
+      else if (!ink && start >= 0) { runs.push([start, y - start]); start = -1; }
+    }
+  }
+
+  assert.ok(runs.length > 50, 'expected the frames to actually draw something');
+  for (const [start, length] of runs) {
+    assert.ok(start % scale === 0, `a run starts at ${start}, off the ${scale}px grid`);
+    assert.ok(length % scale === 0, `a run is ${length}px, not a whole number of blocks`);
+  }
+});
+
 test('the rebuilt sheet keeps its size and puts a slash on every frame', () => {
   const sheet = canvas(1200, 700, 255);
   const centres = [[200, 350], [600, 350], [1000, 350]];
@@ -183,29 +234,10 @@ test('the rebuilt sheet keeps its size and puts a slash on every frame', () => {
   const ordered = orderFrames(frames);
   assert.equal(ordered.length, centres.length);
 
-  const scale = 4;
   const art = frameMasks();
   const playing = frameSequence(ordered.length);
-  const out = canvas(sheet.width, sheet.height, 255);
-  ordered.forEach((frame, i) => {
-    const mask = art[playing[i]];
-    const left = Math.round(frame.cx - (WIDTH * scale) / 2);
-    const top = Math.round(frame.cy - (HEIGHT * scale) / 2);
-    for (let row = 0; row < HEIGHT; row++) {
-      for (let col = 0; col < WIDTH; col++) {
-        if (!mask[row * WIDTH + col]) continue;
-        for (let dy = 0; dy < scale; dy++) {
-          for (let dx = 0; dx < scale; dx++) {
-            const at = ((top + row * scale + dy) * out.width + left + col * scale + dx) * 4;
-            out.data[at] = 0xfd;
-            out.data[at + 1] = 0x64;
-            out.data[at + 2] = 0x81;
-            out.data[at + 3] = 0xff;
-          }
-        }
-      }
-    }
-  });
+  const out = blankCanvas(sheet.width, sheet.height, 'white');
+  ordered.forEach((frame, i) => stampFrame(out, art[playing[i]], 4, frame.cx, frame.cy));
 
   const back = decodePng(encodePng(out));
   assert.equal(back.width, sheet.width);
@@ -214,6 +246,6 @@ test('the rebuilt sheet keeps its size and puts a slash on every frame', () => {
   assert.equal(drawn.length, centres.length);
   drawn.forEach((frame, i) => {
     assert.ok(frame.ink > 0, `nothing drawn near ${centres[i]}`);
-    assert.ok(Math.abs(frame.cx - centres[i][0]) < WIDTH * scale, 'slash drifted off its blob');
+    assert.ok(Math.abs(frame.cx - centres[i][0]) < WIDTH * 4, 'slash drifted off its blob');
   });
 });

@@ -30,7 +30,8 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { decodePng, encodePng } from './png.js';
 import { detectFrames, gridSeeds, orderFrames, partitionFrames } from './frames.js';
-import { COLOR, HEIGHT, WIDTH, FRAME_COUNT, frameMasks, frameSequence } from './slash.js';
+import { HEIGHT, WIDTH, FRAME_COUNT, frameMasks, frameSequence } from './slash.js';
+import { blankCanvas, stampFrame } from './render.js';
 
 function parseArgs(argv) {
   const out = {
@@ -76,37 +77,6 @@ function parseSeeds(value) {
   return seeds;
 }
 
-/** A blank RGBA canvas: transparent, or opaque white to match a flattened sheet. */
-function blankCanvas(width, height, background) {
-  const data = new Uint8Array(width * height * 4);
-  if (background === 'white') data.fill(255);
-  return { width, height, data };
-}
-
-/** Stamp one slash frame, nearest-neighbour scaled, centred on (cx, cy). */
-function stamp(canvas, mask, scale, cx, cy) {
-  const left = Math.round(cx - (WIDTH * scale) / 2);
-  const top = Math.round(cy - (HEIGHT * scale) / 2);
-  for (let row = 0; row < HEIGHT; row++) {
-    for (let col = 0; col < WIDTH; col++) {
-      if (!mask[row * WIDTH + col]) continue;
-      for (let dy = 0; dy < scale; dy++) {
-        const y = top + row * scale + dy;
-        if (y < 0 || y >= canvas.height) continue;
-        for (let dx = 0; dx < scale; dx++) {
-          const x = left + col * scale + dx;
-          if (x < 0 || x >= canvas.width) continue;
-          const at = (y * canvas.width + x) * 4;
-          canvas.data[at] = COLOR.r;
-          canvas.data[at + 1] = COLOR.g;
-          canvas.data[at + 2] = COLOR.b;
-          canvas.data[at + 3] = COLOR.a;
-        }
-      }
-    }
-  }
-}
-
 /** A contact sheet of the slash frames on their own, for eyeballing the art. */
 function previewSheet(scale = 2, pad = 2) {
   const masks = frameMasks();
@@ -114,7 +84,7 @@ function previewSheet(scale = 2, pad = 2) {
   const cellH = (HEIGHT + pad * 2) * scale;
   const canvas = blankCanvas(cellW * masks.length, cellH, 'alpha');
   masks.forEach((mask, i) => {
-    stamp(canvas, mask, scale, i * cellW + cellW / 2, cellH / 2);
+    stampFrame(canvas, mask, scale, i * cellW + cellW / 2, cellH / 2);
   });
   return canvas;
 }
@@ -196,7 +166,7 @@ function main() {
   const canvas = blankCanvas(sheet.width, sheet.height, background);
   const art = frameMasks();
   ordered.forEach((frame, i) => {
-    stamp(canvas, art[playing[i]], scale, frame.cx, frame.cy);
+    stampFrame(canvas, art[playing[i]], scale, frame.cx, frame.cy);
   });
 
   const outPath = opts.inPlace ? inputPath : resolve(opts.out, basename(inputPath));
