@@ -7,12 +7,17 @@
  * specks.
  *
  * Those strokes were traced out of the screenshot first, and this art was then
- * redrawn from the traces by hand on a grid at half their resolution. The
+ * redrawn from the traces by hand, on a grid a sixth of their resolution. The
  * trace itself could not be used as art: the screenshot is a resized JPEG, so
  * its edges carry a pixel of wobble that reads as fuzz rather than as pixel
- * art. Redrawing squares that off -- every frame here is a stack of solid
- * rectangles, so every edge is a clean step and every run is deliberate --
- * while keeping each stroke's silhouette, its steps, and the gaps in it.
+ * art, and its resolution is far finer than pixel art wants. Redrawing on a
+ * coarse grid fixes both -- every frame here is a stack of solid rectangles,
+ * so every edge is a clean step and every run is deliberate -- while keeping
+ * each stroke's silhouette, its steps, and the gaps in it.
+ *
+ * At this size a stroke is one or two pixels wide and a speck is a single
+ * pixel, which is the point: on a sheet frame around 530px across each pixel
+ * lands about 19px square.
  *
  * Frames keep the top edge they had in the strip -- they all hang from the
  * same blade edge, and frames 4 and 5 start lower than the rest because that
@@ -23,8 +28,8 @@
  */
 
 /** Grid the frames are drawn on, in art pixels. */
-export const WIDTH = 17;
-export const HEIGHT = 74;
+export const WIDTH = 6;
+export const HEIGHT = 25;
 
 /** The stroke's colour, sampled from the middle of the strokes themselves. */
 export const COLOR = { r: 0xfd, g: 0x64, b: 0x81, a: 0xff };
@@ -34,53 +39,48 @@ const FRAMES = [
   // 1. The stab: a short stroke that swells in the middle and steps left as it
   //    tapers off.
   [
-    [0, 6, 8, 10],
-    [7, 18, 6, 10],
-    [19, 25, 6, 8],
+    [0, 1, 3, 3],
+    [2, 5, 2, 3],
+    [6, 8, 2, 2],
   ],
   // 2. Drawn out to twice the length, with the same swell and a wider step.
   [
-    [1, 6, 9, 11],
-    [7, 18, 7, 11],
-    [19, 20, 7, 9],
-    [21, 36, 4, 9],
-    [37, 48, 7, 9],
+    [0, 2, 3, 3],
+    [3, 6, 2, 3],
+    [7, 11, 1, 2],
+    [12, 15, 2, 2],
   ],
   // 3. Full length: the tip has torn away from the stroke, which drifts right
   //    down its length and trails off in two steps.
   [
-    [1, 8, 8, 10],
-    [11, 21, 6, 8],
-    [22, 43, 4, 8],
-    [44, 49, 4, 10],
-    [50, 64, 6, 10],
-    [65, 70, 8, 10],
-    [71, 73, 10, 12],
+    [1, 2, 3, 3],
+    [4, 7, 2, 2],
+    [8, 14, 1, 2],
+    [15, 15, 1, 3],
+    [16, 21, 2, 3],
+    [22, 23, 3, 3],
+    [24, 24, 3, 4],
   ],
   // 4. The curl: the stroke thickens, bends right into a hook, and meets a
   //    piece that has broken off ahead of it.
   [
-    [4, 7, 3, 5],
-    [11, 15, 0, 2],
-    [16, 24, 0, 5],
-    [25, 27, 0, 7],
-    [28, 32, 2, 7],
-    [33, 34, 2, 9],
-    [35, 35, 4, 10],
-    [34, 35, 14, 16],
-    [36, 36, 5, 16],
-    [37, 38, 5, 13],
-    [39, 40, 9, 12],
+    [1, 2, 1, 1],
+    [4, 4, 0, 0],
+    [5, 8, 0, 1],
+    [9, 9, 0, 2],
+    [10, 11, 1, 2],
+    [11, 11, 5, 5],
+    [12, 12, 2, 5],
+    [13, 13, 3, 4],
   ],
   // 5. Broken up: specks either side of what is left of the curl.
   [
-    [1, 4, 14, 16],
-    [6, 8, 0, 2],
-    [8, 9, 5, 7],
-    [8, 9, 11, 14],
-    [10, 11, 2, 13],
-    [12, 13, 2, 11],
-    [14, 15, 5, 9],
+    [0, 1, 4, 5],
+    [2, 2, 0, 0],
+    [3, 3, 2, 2],
+    [3, 3, 4, 4],
+    [4, 4, 1, 4],
+    [5, 5, 2, 3],
   ],
 ];
 

@@ -58,22 +58,34 @@ test('the drawn frames hold the ink they were drawn with', () => {
   // The strip's five strokes, in the order they play. Guards the rectangles
   // against an edit that silently drops or duplicates part of a frame.
   const ink = frameMasks().map((mask) => mask.reduce((total, on) => total + on, 0));
-  assert.deepEqual(ink, [102, 216, 311, 202, 89]);
+  assert.deepEqual(ink, [13, 25, 39, 25, 13]);
 });
 
-test('every frame is drawn as clean rectangles, with no stray single pixels', () => {
-  // Pixel art, not a trace: every run is at least two wide and two tall, so no
-  // edge can carry the single-pixel wobble the screenshot's JPEG edges had.
-  frameMasks().forEach((mask, frame) => {
+test('the art has exactly the lone pixels it means to have', () => {
+  // The grid is coarse enough that a stroke is one or two pixels wide, so a
+  // pixel standing alone is no longer proof of a stray -- frame 5 breaks up
+  // into specks and one of them is meant to be a single pixel. Pinning the
+  // count per frame still catches a stray introduced by an edit.
+  const lone = frameMasks().map((mask) => {
     const on = (x, y) => (x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT ? 0 : mask[y * WIDTH + x]);
+    let count = 0;
     for (let y = 0; y < HEIGHT; y++) {
       for (let x = 0; x < WIDTH; x++) {
         if (!on(x, y)) continue;
-        assert.ok(on(x - 1, y) || on(x + 1, y), `frame ${frame + 1}: lone pixel column at ${x},${y}`);
-        assert.ok(on(x, y - 1) || on(x, y + 1), `frame ${frame + 1}: lone pixel row at ${x},${y}`);
+        if (!on(x - 1, y) && !on(x + 1, y) && !on(x, y - 1) && !on(x, y + 1)) count++;
       }
     }
+    return count;
   });
+  assert.deepEqual(lone, [0, 0, 0, 0, 1]);
+});
+
+test('the grid is coarse enough that a sheet frame gets big blocks', () => {
+  // What makes it read as pixel art: on a frame the size of the ones on
+  // PlayerExplosion_03-uhd.png, one art pixel is a chunky block, not a speck.
+  const frameSize = 530;
+  const scale = Math.floor((0.9 * frameSize) / HEIGHT);
+  assert.ok(scale >= 15, `art pixels would land at only ${scale}px on a ${frameSize}px frame`);
 });
 
 test('frames spread over a sheet without ever going backwards', () => {

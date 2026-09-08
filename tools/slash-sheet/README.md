@@ -19,17 +19,23 @@ frame, playing left to right. The stroke stabs in short, draws out longer over
 the next two frames, curls into a hook, then breaks apart into specks.
 
 Those strokes were traced out of the screenshot first, and `slash.js` was then
-redrawn from the traces by hand on a grid at half their resolution, 17x74. The
-trace itself could not be used as art: the screenshot is a resized JPEG, so its
-edges carry a pixel of wobble that reads as fuzz rather than as pixel art.
-Redrawing squares that off — every frame is a stack of solid rectangles, so
-every edge is a clean step and every run is deliberate — while keeping each
-stroke's silhouette, its steps, and the gaps in it. Against the trace the
-redraw scores 0.91 IoU, the difference being tapers squared off to the grid.
+redrawn from the traces by hand on a 6x25 grid, a sixth of their resolution.
+The trace itself could not be used as art on two counts: the screenshot is a
+resized JPEG, so its edges carry a pixel of wobble that reads as fuzz, and its
+resolution is far finer than pixel art wants. Redrawing on a coarse grid fixes
+both — every frame is a stack of solid rectangles, so every edge is a clean
+step and every run is deliberate — while keeping each stroke's silhouette, its
+steps and its gaps.
+
+At this size a stroke is one or two pixels wide and a speck is a single pixel,
+which is the point: on a sheet frame around 530px across, one art pixel lands
+about 19px square.
 
 `npm test` pins the per-frame ink counts, so an edit to the rectangles cannot
-silently drop or duplicate part of a frame, and checks that no pixel stands
-alone in its row or column — the property that makes the art crisp.
+silently drop or duplicate part of a frame; pins how many pixels stand alone
+(frame 5 breaks into specks and one is meant to be a single pixel, so a stray
+elsewhere shows up as a change); and checks the grid stays coarse enough for
+blocks this size.
 
 Colour is `#fd6481`, sampled from the middle of the strokes.
 
