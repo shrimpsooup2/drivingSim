@@ -45,39 +45,61 @@ To look at the frames on their own:
 node tools/slash-sheet/build.js explosion.png --preview out/frames.png --dry-run
 ```
 
-## Finding the sheet's frames
+## Use the plist if there is one
 
-By default the tool clusters the drawn pixels, widening the bridge between them
-until the island count settles on a plateau — no grid assumption, which suits a
-sheet whose blobs sit at irregular spacings with empty cells between them.
-
-That only works when the blobs are actually separated. On a tightly packed
-atlas they are not: a late frame's dust reaches into its neighbour, and the gaps
-*inside* a threadbare ring are as wide as the gaps between frames, so no
-bridging distance splits them. The tool says so when it comes back with one
-frame. Give it the frame centres instead and it hands every drawn pixel to the
-nearest one:
+A packed sheet normally ships with a `.plist` beside it, and it settles by
+itself everything the pixels only hint at:
 
 ```
-node tools/slash-sheet/build.js explosion.png --seeds "300,290 930,290 ..."
-node tools/slash-sheet/build.js explosion.png --grid 3x4
+node tools/slash-sheet/build.js PlayerExplosion_03-uhd.png \
+  --plist PlayerExplosion_03-uhd.plist --repack
 ```
 
-Centres only need to be closer to their own frame than to any other, so reading
-them off the sheet by eye is enough. Each frame's box then clips the outermost
-0.5% of its ink, so a few of a neighbour's chunks landing on the wrong side of
-the split cannot stretch the box.
+It names every frame (so their order is the packer's counter, not a guess),
+gives each one's rectangle, and records two things no amount of looking at the
+PNG will tell you:
 
-### PlayerExplosion_03-uhd.png
+- **Rotation.** To save space the packer stores some sprites turned 90 degrees
+  clockwise, flagged `textureRotated`, and the engine turns them back when it
+  draws. A frame's `spriteSize` is always the upright size, so a rotated frame
+  occupies *height by width* in the texture. Art written into one of those
+  slots without being turned clockwise on the way in comes out on its side in
+  game — half the frames of `PlayerExplosion_03-uhd` are packed this way.
+- **Trimming.** Each sprite was cropped to its own drawn pixels, so the frames
+  are different sizes; `spriteSourceSize` is the untrimmed size they share and
+  `spriteOffset` says where the crop sat inside it. That untrimmed canvas, not
+  the texture, is the space the animation plays in, so it is the space to lay
+  art out in.
 
-That sheet is 1860x1728 and holds ten frames: a 3x3 grid of 620x576 cells for
-the top two rows, and four sprites packed across the bottom. Its blobs touch,
-so it needs its centres:
+`--repack` rewrites the plist as well as the sheet: it lays every frame out
+fresh, upright and trimmed to the slash instead of to the blast it replaces.
+That is worth doing on both counts. Nothing is rotated, so there is no rotation
+left to get the wrong way round; and the art is no longer capped by the
+smallest of the old crops, which on this sheet is a 254x250 rectangle that
+would have held the art to 16px pixels. Repacked, they are 25px.
+
+What `--repack` does not change is what the engine keys off: the frame names,
+their order, the untrimmed canvas size and the sheet's dimensions. Each frame's
+`spriteOffset` is recomputed so it still lands where it should.
+
+Without `--repack` the existing rectangles and rotation flags are honoured
+exactly, which is the safer choice if something else depends on the current
+layout.
+
+### Checking it
 
 ```
-node tools/slash-sheet/build.js PlayerExplosion_03-uhd.png --seeds \
-  "300,290 930,290 1550,290 300,865 930,865 1550,865 230,1470 650,1450 960,1390 1560,1460"
+--verify out/ingame.png
 ```
+
+writes a filmstrip of the frames rebuilt the way the engine will rebuild them:
+rotation undone, each dropped back onto its untrimmed canvas. It is the only
+view in which a frame stored the wrong way round, or clipped by its own crop,
+is obvious. Run it against the *original* sheet and you should get a clean
+animation — on `PlayerExplosion_03-uhd` a green ball that bursts, throws debris
+and fades. If that comes out right, the geometry is right.
+
+## Finding the frames without a plist
 
 ## Play order
 
@@ -118,6 +140,9 @@ that table before trusting the output; `--dry-run` prints it without writing.
 | `--fit FRACTION` | Slash size as a fraction of a frame's box (default `0.9`) |
 | `--scale N` | Force N output pixels per art pixel, ignoring `--fit` |
 | `--gap FRACTION` | Force the blob bridging distance (default: worked out from the sheet) |
+| `--plist FILE` | Take frame order, rectangles and rotation from the sheet's plist |
+| `--repack` | Rewrite the plist too: frames laid out fresh, upright, trimmed to the art |
+| `--verify PATH` | Write a filmstrip of the frames as the engine will rebuild them |
 | `--seeds LIST` | Split by nearest frame centre: `"x,y x,y ..."` or a file of the same |
 | `--grid CxR` | Split by a plain C x R grid of frame centres |
 | `--preview PATH` | Also write a contact sheet of the five frames alone |

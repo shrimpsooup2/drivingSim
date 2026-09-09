@@ -50,3 +50,74 @@ export function stampFrame(canvas, mask, scale, cx, cy) {
     }
   }
 }
+
+/**
+ * Turn a sprite 90 degrees clockwise, the way a packer stores a rotated frame.
+ *
+ * The engine turns it back counter-clockwise on the way out, so art has to go
+ * in this way round to come out upright.
+ */
+export function rotateClockwise({ width, height, data }) {
+  const out = { width: height, height: width, data: new Uint8Array(width * height * 4) };
+  for (let y = 0; y < out.height; y++) {
+    for (let x = 0; x < out.width; x++) {
+      const from = ((height - 1 - x) * width + y) * 4;
+      const to = (y * out.width + x) * 4;
+      out.data[to] = data[from];
+      out.data[to + 1] = data[from + 1];
+      out.data[to + 2] = data[from + 2];
+      out.data[to + 3] = data[from + 3];
+    }
+  }
+  return out;
+}
+
+/** Turn a stored frame back: the counter-clockwise move the engine makes. */
+export function rotateCounterClockwise({ width, height, data }) {
+  const out = { width: height, height: width, data: new Uint8Array(width * height * 4) };
+  for (let y = 0; y < out.height; y++) {
+    for (let x = 0; x < out.width; x++) {
+      const from = (x * width + (width - 1 - y)) * 4;
+      const to = (y * out.width + x) * 4;
+      out.data[to] = data[from];
+      out.data[to + 1] = data[from + 1];
+      out.data[to + 2] = data[from + 2];
+      out.data[to + 3] = data[from + 3];
+    }
+  }
+  return out;
+}
+
+/** Copy `src` into `dest` with its top-left corner at (x, y). */
+export function blit(dest, src, x, y) {
+  for (let sy = 0; sy < src.height; sy++) {
+    const dy = y + sy;
+    if (dy < 0 || dy >= dest.height) continue;
+    for (let sx = 0; sx < src.width; sx++) {
+      const dx = x + sx;
+      if (dx < 0 || dx >= dest.width) continue;
+      const from = (sy * src.width + sx) * 4;
+      const to = (dy * dest.width + dx) * 4;
+      dest.data[to] = src.data[from];
+      dest.data[to + 1] = src.data[from + 1];
+      dest.data[to + 2] = src.data[from + 2];
+      dest.data[to + 3] = src.data[from + 3];
+    }
+  }
+}
+
+/** Cut a rectangle out of an image. */
+export function crop(src, { x, y, w, h }) {
+  const out = { width: w, height: h, data: new Uint8Array(w * h * 4) };
+  for (let sy = 0; sy < h; sy++) {
+    for (let sx = 0; sx < w; sx++) {
+      const from = ((y + sy) * src.width + x + sx) * 4;
+      const to = (sy * w + sx) * 4;
+      out.data[to] = src.data[from];
+      out.data[to + 1] = src.data[from + 1];
+      out.data[to + 2] = src.data[from + 2];
+      out.data[to + 3] = src.data[from + 3];
+    }
+  }
+  return out;
+}
