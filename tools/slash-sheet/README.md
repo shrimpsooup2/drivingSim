@@ -37,7 +37,10 @@ silently drop or duplicate part of a frame; pins how many pixels stand alone
 elsewhere shows up as a change); and checks the grid stays coarse enough for
 blocks this size.
 
-Colour is `#fd6481`, sampled from the middle of the strokes.
+Colour is `#d60029`. The screenshot's own strokes sample at `#fd6481`, the same
+hue but pale — at 69% lightness it reads pink rather than red — so the shipped
+colour keeps that hue and drops the lightness to 42% at full saturation, which
+takes the chroma from 0.60 to 0.84.
 
 To look at the frames on their own:
 
@@ -78,9 +81,16 @@ left to get the wrong way round; and the art is no longer capped by the
 smallest of the old crops, which on this sheet is a 254x250 rectangle that
 would have held the art to 16px pixels. Repacked, they are 25px.
 
+`--once` goes with it. The slash has five frames; a sheet built for a ten-frame
+explosion holds each of them for two, so add `--once` to emit five frames
+instead and let the animation play straight through at twice the speed. Frames
+are renumbered `_001`..`_005`, keeping the original prefix and zero padding.
+
 What `--repack` does not change is what the engine keys off: the frame names,
 their order, the untrimmed canvas size and the sheet's dimensions. Each frame's
-`spriteOffset` is recomputed so it still lands where it should.
+`spriteOffset` is recomputed so it still lands where it should. Note that
+`--once` does change the frame *count*, so anything that expects ten named
+frames needs to cope with five.
 
 Without `--repack` the existing rectangles and rotation flags are honoured
 exactly, which is the safer choice if something else depends on the current
@@ -142,6 +152,7 @@ that table before trusting the output; `--dry-run` prints it without writing.
 | `--gap FRACTION` | Force the blob bridging distance (default: worked out from the sheet) |
 | `--plist FILE` | Take frame order, rectangles and rotation from the sheet's plist |
 | `--repack` | Rewrite the plist too: frames laid out fresh, upright, trimmed to the art |
+| `--once` | With `--repack`, one sheet frame per slash frame, so it plays through once |
 | `--verify PATH` | Write a filmstrip of the frames as the engine will rebuild them |
 | `--seeds LIST` | Split by nearest frame centre: `"x,y x,y ..."` or a file of the same |
 | `--grid CxR` | Split by a plain C x R grid of frame centres |

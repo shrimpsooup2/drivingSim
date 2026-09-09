@@ -28,6 +28,9 @@
  *   --repack         rewrite the plist too: lay the frames out fresh, upright
  *                    and trimmed to the art, instead of reusing the old
  *                    rectangles. Bigger pixels, and no rotation to get wrong
+ *   --once           with --repack, emit one sheet frame per slash frame
+ *                    instead of spreading five over the sheet's ten, so the
+ *                    animation plays through once and runs twice as fast
  *   --verify PATH    write a filmstrip of the frames as the engine will
  *                    rebuild them, to check orientation and placement
  *   --preview PATH   also write a contact sheet of the slash frames alone
@@ -45,7 +48,7 @@ function parseArgs(argv) {
   const out = {
     input: null, out: 'out', inPlace: false, order: 'stage',
     fit: 0.9, scale: 0, gap: 0, preview: null, dryRun: false, seeds: null, grid: null,
-    plist: null, verify: null, repack: false, fitGiven: false,
+    plist: null, verify: null, repack: false, fitGiven: false, once: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -66,6 +69,7 @@ function parseArgs(argv) {
     else if (arg === '--grid') out.grid = value();
     else if (arg === '--plist') out.plist = value();
     else if (arg === '--repack') out.repack = true;
+    else if (arg === '--once') out.once = true;
     else if (arg === '--verify') out.verify = value();
     else if (arg === '--preview') out.preview = value();
     else if (arg === '--dry-run') out.dryRun = true;
@@ -104,6 +108,14 @@ function previewSheet(scale = 2, pad = 2) {
 function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[sorted.length >> 1];
+}
+
+/** Renumber a frame name, keeping its prefix, zero padding and extension. */
+function renumber(name, index) {
+  const parts = name.match(/^(.*?)(\d+)(\D*)$/);
+  if (!parts) throw new Error(`frame name "${name}" has no counter to renumber`);
+  const [, prefix, digits, suffix] = parts;
+  return prefix + String(index + 1).padStart(digits.length, '0') + suffix;
 }
 
 /** The cells a frame's art actually covers. */
@@ -158,9 +170,14 @@ function filmstrip(atlas, frames) {
  * that canvas.
  */
 function repackFromPlist(sheet, opts, inputPath) {
-  const frames = parsePlist(readFileSync(resolve(opts.plist), 'utf8'));
+  const source = parsePlist(readFileSync(resolve(opts.plist), 'utf8'));
   const art = frameMasks();
-  const playing = frameSequence(frames.length);
+  // --once drops the sheet down to one frame per slash frame: the animation
+  // stops holding each one for two beats, so it plays through in half the time.
+  const frames = opts.once
+    ? art.map((_, i) => ({ ...source[0], name: renumber(source[0].name, i) }))
+    : source;
+  const playing = opts.once ? art.map((_, i) => i) : frameSequence(frames.length);
   const { sourceW, sourceH } = frames[0];
 
   // Without --fit, take the largest pixel the untrimmed canvas will hold.
@@ -208,7 +225,9 @@ function repackFromPlist(sheet, opts, inputPath) {
   });
 
   console.log(`${basename(inputPath)}: ${sheet.width}x${sheet.height}`);
-  console.log(`repacking ${frames.length} frames upright (was ${frames.filter((f) => f.rotated).length} rotated)`);
+  console.log(`repacking ${frames.length} frames upright`
+    + `${opts.once ? `, one per slash frame (was ${source.length} on the sheet)` : ''}`
+    + ` (was ${source.filter((f) => f.rotated).length} rotated)`);
   console.log(`untrimmed canvas ${sourceW}x${sourceH}, slash art ${WIDTH}x${HEIGHT} at ${scale}x `
     + `= ${WIDTH * scale}x${HEIGHT * scale} from ${originX},${originY}`);
   console.log('');

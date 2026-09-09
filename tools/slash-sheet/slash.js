@@ -31,8 +31,15 @@
 export const WIDTH = 6;
 export const HEIGHT = 25;
 
-/** The stroke's colour, sampled from the middle of the strokes themselves. */
-export const COLOR = { r: 0xfd, g: 0x64, b: 0x81, a: 0xff };
+/**
+ * The stroke's colour: a dark, fully saturated red.
+ *
+ * The screenshot's own strokes sample at #fd6481, which is the same hue but
+ * pale -- 69% lightness makes it read pink rather than red. This keeps that
+ * hue and takes the lightness down to 42% at full saturation, which lifts the
+ * chroma from 0.60 to 0.84.
+ */
+export const COLOR = { r: 0xd6, g: 0x00, b: 0x29, a: 0xff };
 
 /** The five frames of the animation, first to last. */
 const FRAMES = [

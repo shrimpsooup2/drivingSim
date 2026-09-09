@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { decodePng, encodePng } from '../tools/slash-sheet/png.js';
 import { detectFrames, gridSeeds, orderFrames, partitionFrames } from '../tools/slash-sheet/frames.js';
-import { FRAME_COUNT, HEIGHT, WIDTH, frameMask, frameMasks, frameSequence } from '../tools/slash-sheet/slash.js';
+import { COLOR, FRAME_COUNT, HEIGHT, WIDTH, frameMask, frameMasks, frameSequence } from '../tools/slash-sheet/slash.js';
 import { blankCanvas, snapCorner, stampFrame } from '../tools/slash-sheet/render.js';
 
 /** A blank RGBA image. */
@@ -78,6 +78,20 @@ test('the art has exactly the lone pixels it means to have', () => {
     return count;
   });
   assert.deepEqual(lone, [0, 0, 0, 0, 2]);
+});
+
+test('the stroke colour is a dark, saturated red', () => {
+  const { r, g, b } = COLOR;
+  const max = Math.max(r, g, b) / 255;
+  const min = Math.min(r, g, b) / 255;
+  const lightness = (max + min) / 2;
+  const chroma = max - min;
+  assert.equal(max, r / 255, 'red should be the dominant channel');
+  assert.ok(lightness < 0.5, `lightness ${lightness.toFixed(2)} is too pale for a dark red`);
+  assert.ok(chroma > 0.75, `chroma ${chroma.toFixed(2)} is not saturated enough`);
+  // Hue stays where the screenshot's strokes sat, just deeper.
+  const hue = ((60 * (((g - b) / 255 / chroma) % 6)) + 360) % 360;
+  assert.ok(hue > 330 || hue < 15, `hue ${hue.toFixed(0)} has drifted out of red`);
 });
 
 test('the grid is coarse enough that a sheet frame gets big blocks', () => {

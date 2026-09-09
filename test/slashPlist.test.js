@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { atlasRegion, parsePlist, planLayout, shelfPack, sourceRect, writePlist } from '../tools/slash-sheet/plist.js';
+import { FRAME_COUNT } from '../tools/slash-sheet/slash.js';
 import { blankCanvas, blit, crop, rotateClockwise, rotateCounterClockwise } from '../tools/slash-sheet/render.js';
 
 /** A frame dict in the format TexturePacker writes. */
@@ -142,11 +143,11 @@ test('the layout planner never lets a frame spill outside its own crop', () => {
   });
 });
 
-test('the shipped sheet rebuilds into ten upright slash frames', () => {
-  // Guards the real deliverable: read the plist we ship, rebuild each frame the
-  // way the engine will, and check it is the slash the right way up.
+test('the shipped sheet is one frame per slash frame, upright, none repeated', () => {
+  // Guards the real deliverable: the plist we ship should play the animation
+  // straight through once, with nothing rotated and nothing held twice.
   const frames = parsePlist(readFileSync(new URL('../PlayerExplosion_03-uhd.plist', import.meta.url), 'utf8'));
-  assert.equal(frames.length, 10);
+  assert.equal(frames.length, FRAME_COUNT);
   assert.ok(frames.every((f) => !f.rotated), 'the repack should leave nothing rotated');
   assert.ok(frames.every((f) => f.sourceW === 648 && f.sourceH === 632), 'untrimmed canvas must not change');
 
@@ -156,10 +157,11 @@ test('the shipped sheet rebuilds into ten upright slash frames', () => {
     assert.ok(rect.right <= frame.sourceW && rect.bottom <= frame.sourceH, `${frame.name} runs past the canvas`);
   }
 
-  // Frames sharing a slash frame must land identically on the canvas: that is
-  // what stops the animation jumping.
-  for (let i = 0; i < frames.length; i += 2) {
-    assert.deepEqual(sourceRect(frames[i]), sourceRect(frames[i + 1]),
-      `${frames[i].name} and ${frames[i + 1].name} should sit in the same place`);
-  }
+  // No two frames may be the same drawing: that is what "plays once" means.
+  const seen = new Set(frames.map((f) => `${f.w}x${f.h}@${JSON.stringify(sourceRect(f))}`));
+  assert.equal(seen.size, frames.length, 'two frames are the same size in the same place');
+
+  // Counter runs 001..00N with no gaps, so the engine finds every frame.
+  assert.deepEqual(frames.map((f) => f.name),
+    frames.map((_, i) => `playerExplosion_03_00${i + 1}.png`));
 });

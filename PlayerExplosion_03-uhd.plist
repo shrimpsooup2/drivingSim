@@ -15,7 +15,7 @@
                 <key>spriteSourceSize</key>
                 <string>{648,632}</string>
                 <key>textureRect</key>
-                <string>{{662,0},{50,225}}</string>
+                <string>{{331,0},{50,225}}</string>
                 <key>textureRotated</key>
                 <false/>
             </dict>
@@ -24,47 +24,17 @@
                 <key>aliases</key>
                 <array/>
                 <key>spriteOffset</key>
-                <string>{0,200}</string>
+                <string>{-12,112}</string>
                 <key>spriteSize</key>
-                <string>{50,225}</string>
+                <string>{75,400}</string>
                 <key>spriteSourceSize</key>
                 <string>{648,632}</string>
                 <key>textureRect</key>
-                <string>{{714,0},{50,225}}</string>
+                <string>{{102,0},{75,400}}</string>
                 <key>textureRotated</key>
                 <false/>
             </dict>
             <key>playerExplosion_03_003.png</key>
-            <dict>
-                <key>aliases</key>
-                <array/>
-                <key>spriteOffset</key>
-                <string>{-12,112}</string>
-                <key>spriteSize</key>
-                <string>{75,400}</string>
-                <key>spriteSourceSize</key>
-                <string>{648,632}</string>
-                <key>textureRect</key>
-                <string>{{204,0},{75,400}}</string>
-                <key>textureRotated</key>
-                <false/>
-            </dict>
-            <key>playerExplosion_03_004.png</key>
-            <dict>
-                <key>aliases</key>
-                <array/>
-                <key>spriteOffset</key>
-                <string>{-12,112}</string>
-                <key>spriteSize</key>
-                <string>{75,400}</string>
-                <key>spriteSourceSize</key>
-                <string>{648,632}</string>
-                <key>textureRect</key>
-                <string>{{281,0},{75,400}}</string>
-                <key>textureRotated</key>
-                <false/>
-            </dict>
-            <key>playerExplosion_03_005.png</key>
             <dict>
                 <key>aliases</key>
                 <array/>
@@ -79,22 +49,7 @@
                 <key>textureRotated</key>
                 <false/>
             </dict>
-            <key>playerExplosion_03_006.png</key>
-            <dict>
-                <key>aliases</key>
-                <array/>
-                <key>spriteOffset</key>
-                <string>{0,-13}</string>
-                <key>spriteSize</key>
-                <string>{100,600}</string>
-                <key>spriteSourceSize</key>
-                <string>{648,632}</string>
-                <key>textureRect</key>
-                <string>{{102,0},{100,600}}</string>
-                <key>textureRotated</key>
-                <false/>
-            </dict>
-            <key>playerExplosion_03_007.png</key>
+            <key>playerExplosion_03_004.png</key>
             <dict>
                 <key>aliases</key>
                 <array/>
@@ -105,26 +60,11 @@
                 <key>spriteSourceSize</key>
                 <string>{648,632}</string>
                 <key>textureRect</key>
-                <string>{{358,0},{150,325}}</string>
+                <string>{{179,0},{150,325}}</string>
                 <key>textureRotated</key>
                 <false/>
             </dict>
-            <key>playerExplosion_03_008.png</key>
-            <dict>
-                <key>aliases</key>
-                <array/>
-                <key>spriteOffset</key>
-                <string>{0,125}</string>
-                <key>spriteSize</key>
-                <string>{150,325}</string>
-                <key>spriteSourceSize</key>
-                <string>{648,632}</string>
-                <key>textureRect</key>
-                <string>{{510,0},{150,325}}</string>
-                <key>textureRotated</key>
-                <false/>
-            </dict>
-            <key>playerExplosion_03_009.png</key>
+            <key>playerExplosion_03_005.png</key>
             <dict>
                 <key>aliases</key>
                 <array/>
@@ -135,22 +75,7 @@
                 <key>spriteSourceSize</key>
                 <string>{648,632}</string>
                 <key>textureRect</key>
-                <string>{{766,0},{150,125}}</string>
-                <key>textureRotated</key>
-                <false/>
-            </dict>
-            <key>playerExplosion_03_010.png</key>
-            <dict>
-                <key>aliases</key>
-                <array/>
-                <key>spriteOffset</key>
-                <string>{0,225}</string>
-                <key>spriteSize</key>
-                <string>{150,125}</string>
-                <key>spriteSourceSize</key>
-                <string>{648,632}</string>
-                <key>textureRect</key>
-                <string>{{918,0},{150,125}}</string>
+                <string>{{383,0},{150,125}}</string>
                 <key>textureRotated</key>
                 <false/>
             </dict>
