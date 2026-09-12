@@ -9,17 +9,29 @@ import { Flower } from '../src/field/biobuzz/Flower.js';
 import { BiobuzzField } from '../src/field/biobuzz/BiobuzzField.js';
 import { buildZones, gardenStagingPositions } from '../src/field/biobuzz/zones.js';
 import {
+  BLUE_START_UP,
+  CELL_REST_HEIGHT,
+  CELL_REST_OFFSET,
   CELL_START_NECTAR,
+  FIELD_INNER_HALF,
+  FLOWER_ALONG_WALL,
+  FLOWER_AXIS_OFFSET,
   FLOWER_RETRIEVAL_HEIGHT,
+  FLOWER_SCORING_BOTTOM,
+  FLOWER_SCORING_TOP,
+  FLOWER_STAGED_HEIGHTS,
   GARDEN_START_POLLEN,
   HALF_FIELD,
-  NECTAR_DIAMETER,
+  HIVE_PIVOT_HEIGHT,
+  HIVE_PIVOT_X,
   NECTAR_MASS,
   NECTAR_PER_ALLIANCE,
+  NECTAR_RADIUS,
   POLLEN_COUNT,
-  POLLEN_DIAMETER,
   POLLEN_MASS,
+  POLLEN_RADIUS,
   POINTS,
+  RED_START_UP,
 } from '../src/field/biobuzz/constants.js';
 import { INCH } from '../src/math/MathUtil.js';
 
@@ -28,7 +40,7 @@ const pollen = () =>
   new Ball({
     id: `p${nextId++}`,
     kind: 'pollen',
-    radius: POLLEN_DIAMETER / 2,
+    radius: POLLEN_RADIUS,
     mass: POLLEN_MASS,
   });
 const nectar = (alliance) =>
@@ -36,7 +48,7 @@ const nectar = (alliance) =>
     id: `n${nextId++}`,
     kind: 'nectar',
     alliance,
-    radius: NECTAR_DIAMETER / 2,
+    radius: NECTAR_RADIUS,
     mass: NECTAR_MASS,
   });
 const newFlower = () =>
@@ -144,7 +156,7 @@ test('a FLOWER fills up and then refuses more', () => {
 
 test('G418: only POLLEN comes out of the bottom, so a low NECTAR plugs the FLOWER', () => {
   assert.ok(
-    NECTAR_DIAMETER > FLOWER_RETRIEVAL_HEIGHT,
+    NECTAR_RADIUS * 2 > FLOWER_RETRIEVAL_HEIGHT,
     'the geometry itself is what enforces G418',
   );
   const flower = newFlower();
@@ -223,36 +235,50 @@ test('a rising ball is not captured by a FLOWER', () => {
 
 // ------------------------------------------------------------------ zones
 
-test('the taped zones are the size the manual gives and sit in opposite corners', () => {
+test('the taped zones match the field CAD, including the LOADING ZONE not being in a corner', () => {
   const zones = buildZones();
-  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  const near = (a, b, tol = 1e-9) => Math.abs(a - b) < tol;
 
+  // Sizes: the manual rounds these to 23 x 11 and 23 x 2.
   for (const zone of [zones.redLoading, zones.blueLoading]) {
-    assert.ok(near(zone.width, 11 * INCH) && near(zone.depth, 23 * INCH));
+    assert.ok(near(zone.depth, 22.69 * INCH, 1e-6), 'LOADING ZONE is 22.69 in along its wall');
   }
   for (const zone of [zones.redGarden, zones.blueGarden]) {
-    assert.ok(near(zone.width, 23 * INCH) && near(zone.depth, 2 * INCH));
+    assert.ok(near(zone.width, 22.69 * INCH, 1e-6));
+    assert.ok(near(zone.depth, 2 * INCH, 1e-6));
   }
 
-  // Every zone is in a corner, against two walls.
-  for (const zone of zones.all) {
-    const onX = near(Math.abs(zone.minX), HALF_FIELD) || near(Math.abs(zone.maxX), HALF_FIELD);
-    const onY = near(Math.abs(zone.minY), HALF_FIELD) || near(Math.abs(zone.maxY), HALF_FIELD);
+  // The LOADING ZONE touches exactly one wall -- its own ALLIANCE wall -- and
+  // is clear of both end walls. Parking means the middle of your wall.
+  assert.ok(near(zones.redLoading.minX, -FIELD_INNER_HALF));
+  assert.ok(zones.redLoading.minY > -FIELD_INNER_HALF + 20 * INCH);
+  assert.ok(zones.redLoading.maxY < FIELD_INNER_HALF - 20 * INCH);
+  assert.ok(near(zones.blueLoading.maxX, FIELD_INNER_HALF));
+
+  // GARDENS are in a corner, against two walls, and diagonally opposite.
+  for (const zone of [zones.redGarden, zones.blueGarden]) {
+    const onX = near(Math.abs(zone.minX), 70.1 * INCH) || near(Math.abs(zone.maxX), 70.1 * INCH);
+    const onY = near(Math.abs(zone.minY), 70.1 * INCH) || near(Math.abs(zone.maxY), 70.1 * INCH);
     assert.ok(onX && onY, `${zone.label} is in a corner`);
   }
-
-  // "GARDENS ... in opposite corners of the FIELD" (Section 9.3).
   assert.ok(zones.redGarden.centerX * zones.blueGarden.centerX < 0);
   assert.ok(zones.redGarden.centerY * zones.blueGarden.centerY < 0);
-  // Each ALLIANCE's two zones are on its own side of the FIELD.
-  assert.ok(zones.redLoading.centerX < 0 && zones.redGarden.centerX < 0);
-  assert.ok(zones.blueLoading.centerX > 0 && zones.blueGarden.centerX > 0);
+
+  // Red's GARDEN is against the audience wall, its LOADING ZONE toward the rear.
+  assert.ok(zones.redGarden.centerY < 0, "red's GARDEN is on the audience wall");
+  assert.ok(zones.redLoading.centerY > 0, "red's LOADING ZONE is toward the rear");
+
+  // The whole layout is 180 degrees rotationally symmetric.
+  const mirrored = (a, b) =>
+    near(a.minX, -b.maxX, 1e-9) && near(a.minY, -b.maxY, 1e-9);
+  assert.ok(mirrored(zones.redLoading, zones.blueLoading));
+  assert.ok(mirrored(zones.redGarden, zones.blueGarden));
 });
 
 test('zone overlap is "at least partially in", for balls and for robots', () => {
   const zones = buildZones();
   const zone = zones.redLoading;
-  const r = POLLEN_DIAMETER / 2;
+  const r = POLLEN_RADIUS;
 
   assert.ok(zone.overlapsCircle(zone.centerX, zone.centerY, r));
   assert.ok(
@@ -276,10 +302,10 @@ test('zone overlap is "at least partially in", for balls and for robots', () => 
 test('GARDEN staging puts all four POLLEN on the strip, starting by the ALLIANCE AREA', () => {
   const zones = buildZones();
   for (const zone of [zones.redGarden, zones.blueGarden]) {
-    const spots = gardenStagingPositions(zone, GARDEN_START_POLLEN, POLLEN_DIAMETER / 2);
+    const spots = gardenStagingPositions(zone);
     assert.equal(spots.length, GARDEN_START_POLLEN);
     for (const spot of spots) {
-      assert.ok(zone.overlapsCircle(spot.x, spot.y, POLLEN_DIAMETER / 2));
+      assert.ok(zone.overlapsCircle(spot.x, spot.y, POLLEN_RADIUS));
     }
     // The line starts in the corner closest to the ALLIANCE AREA (Section 10.3.1).
     const outer = zone.centerX < 0 ? zone.minX : zone.maxX;
@@ -393,5 +419,96 @@ test('the score at setup is only what is already staged on the FIELD', () => {
     assert.equal(score[alliance].flower, 0, 'no NECTAR in a FLOWER means no owner');
     assert.equal(score[alliance].bottomNectar, 0);
     assert.equal(score[alliance].tips, 0);
+  }
+});
+
+// --------------------------------------------------------------- field CAD
+
+test('the four FLOWERS sit one per wall, as the field CAD places them', () => {
+  const field = new Field(new Config().values);
+  const bb = new BiobuzzField({ field });
+  assert.equal(bb.flowers.length, 4);
+
+  // One against each of the four walls, 68.04 in out and 23.39 in along.
+  const walls = new Set();
+  for (const flower of bb.flowers) {
+    const out = Math.max(Math.abs(flower.x), Math.abs(flower.y));
+    const along = Math.min(Math.abs(flower.x), Math.abs(flower.y));
+    assert.ok(Math.abs(out - FLOWER_AXIS_OFFSET) < 1e-9);
+    assert.ok(Math.abs(along - FLOWER_ALONG_WALL) < 1e-9);
+    walls.add(
+      Math.abs(flower.x) > Math.abs(flower.y)
+        ? (flower.x < 0 ? 'red' : 'blue')
+        : (flower.y < 0 ? 'audience' : 'rear'),
+    );
+    // `facing` points from the wall into the FIELD.
+    const inward = -(flower.x * Math.cos(flower.facing) + flower.y * Math.sin(flower.facing));
+    assert.ok(inward > 0, `${flower.id} faces into the field`);
+  }
+  assert.equal(walls.size, 4, 'one FLOWER per wall');
+
+  // 180 degree rotational symmetry: every FLOWER has an opposite.
+  for (const flower of bb.flowers) {
+    assert.ok(
+      bb.flowers.some(
+        (o) => Math.abs(o.x + flower.x) < 1e-9 && Math.abs(o.y + flower.y) < 1e-9,
+      ),
+    );
+  }
+});
+
+test('the FLOWER scoring volume is the span of the pipes, and the staged POLLEN straddle its floor', () => {
+  const flower = newFlower();
+  assert.equal(flower.scoringBottom, FLOWER_SCORING_BOTTOM);
+  assert.equal(flower.scoringTop, FLOWER_SCORING_TOP);
+
+  // The CAD stages four POLLEN per FLOWER. The bottom one tops out below the
+  // scoring floor, so it is the retrievable one; the other three score.
+  const scoring = FLOWER_STAGED_HEIGHTS.filter(
+    (z) => z + POLLEN_RADIUS > FLOWER_SCORING_BOTTOM,
+  );
+  assert.equal(scoring.length, 3);
+  assert.ok(FLOWER_STAGED_HEIGHTS[0] + POLLEN_RADIUS < FLOWER_SCORING_BOTTOM);
+});
+
+test('the up CELL sits where the CAD stages its NECTAR', () => {
+  const field = new Field(new Config().values);
+  const bb = new BiobuzzField({ field });
+
+  const red = bb.hiveTarget('red');
+  const blue = bb.hiveTarget('blue');
+  const close = (a, b) => Math.abs(a - b) < 1e-9;
+
+  assert.ok(close(Math.abs(red.x), HIVE_PIVOT_X));
+  assert.ok(close(red.z, CELL_REST_HEIGHT), 'up CELL is 50.2 in above the tiles');
+  assert.ok(close(Math.abs(red.y), CELL_REST_OFFSET), '9.4 in from the pivot');
+
+  // Red's audience-side CELL is up, blue's rear-side one is.
+  assert.equal(bb.hives.red.up, RED_START_UP);
+  assert.equal(bb.hives.blue.up, BLUE_START_UP);
+  assert.ok(red.y < 0, "red's up CELL is on the audience side");
+  assert.ok(blue.y > 0, "blue's up CELL is on the rear side");
+
+  // The down CELL mirrors through the pivot.
+  const down = bb.hives.red.cellOpening(RED_START_UP === 'fore' ? 'aft' : 'fore');
+  assert.ok(close(down.z, 2 * HIVE_PIVOT_HEIGHT - CELL_REST_HEIGHT));
+});
+
+test("each HIVE's down CELL faces the FLOWER on its own half of the field", () => {
+  // Section 10.3.1: "the CELL which points at a FLOWER should be the one tilted
+  // down". With one FLOWER per wall this is what that resolves to.
+  const field = new Field(new Config().values);
+  const bb = new BiobuzzField({ field });
+
+  for (const alliance of ['red', 'blue']) {
+    const hive = bb.hives[alliance];
+    const down = hive.cellOpening(hive.up === 'fore' ? 'aft' : 'fore');
+    const wallY = Math.sign(down.y) * FLOWER_AXIS_OFFSET;
+    const flower = bb.flowers.find((f) => Math.abs(f.y - wallY) < 1e-9);
+    assert.ok(flower, `a FLOWER on the wall ${alliance}'s down CELL faces`);
+    assert.ok(
+      Math.sign(flower.x) === Math.sign(hive.pivotX),
+      `${alliance}'s down CELL faces the FLOWER on its own half`,
+    );
   }
 });

@@ -3,12 +3,25 @@ import {
   CELL_DEPTH,
   CELL_OPENING_HEIGHT,
   CELL_OPENING_WIDTH,
-  CELL_SPACING,
+  CELL_REST_HEIGHT,
+  CELL_REST_OFFSET,
   HIVE_PIVOT_HEIGHT,
-  HIVE_TILT,
   INFERRED,
   NECTAR_MASS,
 } from './constants.js';
+
+/**
+ * Distance from the pivot to where SCORING ELEMENTS come to rest in a CELL,
+ * and the angle of that line above horizontal. Both follow from the two
+ * numbers the field CAD gives directly: 9.4 in out and 50.2 in up.
+ *
+ * This is a little steeper than the 30 degrees the HIVE structure itself rests
+ * at, because elements sit on the CELL floor rather than on the arm's centre
+ * line. It is the ball's position that a LAUNCHER has to hit, so it is the one
+ * modelled here.
+ */
+const ARM_RADIUS = Math.hypot(CELL_REST_OFFSET, CELL_REST_HEIGHT - HIVE_PIVOT_HEIGHT);
+const ARM_ANGLE = Math.atan2(CELL_REST_HEIGHT - HIVE_PIVOT_HEIGHT, CELL_REST_OFFSET);
 
 /**
  * One ALLIANCE's HIVE: a bi-stable see-saw with a CELL at each end.
@@ -44,7 +57,7 @@ export class Hive {
   constructor(opts) {
     this.alliance = opts.alliance;
     this.pivotX = opts.pivotX;
-    this.tilt = opts.tilt ?? HIVE_TILT;
+    this.tilt = opts.tilt ?? ARM_ANGLE;
     /**
      * Contained mass that tips the HIVE. Three NECTAR is 0.255 kg and must
      * hold, so anything at or below that would tip at setup and break the game.
@@ -108,13 +121,13 @@ export class Hive {
    */
   cellOpening(side) {
     const tilt = this.currentTilt;
-    // 'fore' sits at -y of the pivot, 'aft' at +y.
+    // The two CELLS are opposite ends of one arm through the pivot: 'fore' at
+    // -y, 'aft' at +y. A positive tilt means the aft CELL is the raised one.
     const sign = side === 'fore' ? -1 : 1;
-    const arm = CELL_SPACING / 2;
     return {
       x: this.pivotX,
-      y: sign * arm * Math.cos(tilt),
-      z: HIVE_PIVOT_HEIGHT + sign * arm * Math.sin(tilt),
+      y: sign * ARM_RADIUS * Math.cos(tilt),
+      z: HIVE_PIVOT_HEIGHT + sign * ARM_RADIUS * Math.sin(tilt),
     };
   }
 
@@ -179,7 +192,7 @@ export class Hive {
       ball.setPosition(
         opening.x - CELL_OPENING_WIDTH / 2 + spread * (column + 1),
         opening.y + (row % 2 === 0 ? -0.03 : 0.03),
-        opening.z - ball.radius - row * ball.radius * 1.6,
+        opening.z + (row === 0 ? 0 : -row * ball.radius * 1.6),
       );
       ball.stop();
     });

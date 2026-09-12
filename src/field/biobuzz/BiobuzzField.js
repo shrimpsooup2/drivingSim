@@ -7,32 +7,31 @@ import { Hive } from './Hive.js';
 import { Flower } from './Flower.js';
 import { buildZones, gardenStagingPositions } from './zones.js';
 import {
-  ALLIANCE_AREA_NECTAR,
+  BLUE_START_UP,
   CELL_START_NECTAR,
-  FLOWER_BACKSTOP_HEIGHT,
-  FLOWER_OPENING_DIAMETER,
-  FLOWER_OPENING_HEIGHT,
+  FLOWER_ALONG_WALL,
+  FLOWER_AXIS_OFFSET,
+  FLOWER_BACKSTOP_TOP,
   FLOWER_START_POLLEN,
-  FRAME_DEPTH,
-  FRAME_WIDTH,
+  FLOWER_TUBE_RADIUS,
+  FRAME_HALF_DEPTH,
+  FRAME_HALF_WIDTH,
   GARDEN_START_POLLEN,
-  HALF_FIELD,
   HIVE_PIVOT_HEIGHT,
-  INFERRED,
-  NECTAR_DIAMETER,
+  HIVE_PIVOT_X,
   NECTAR_MASS,
   NECTAR_PER_ALLIANCE,
+  NECTAR_RADIUS,
   POINTS,
   POLLEN_COUNT,
-  POLLEN_DIAMETER,
   POLLEN_MASS,
+  POLLEN_RADIUS,
   PRELOAD_POLLEN,
+  RED_START_UP,
 } from './constants.js';
 
-/** Thickness of one frame triangle where a bumper meets it. INFERRED. */
+/** Thickness of one frame leg where a bumper meets it. */
 const FRAME_LEG_THICKNESS = 3 * INCH;
-/** How far a FLOWER's axis stands off the perimeter wall. INFERRED. */
-const FLOWER_WALL_OFFSET = 2.5 * INCH;
 
 /**
  * The BIOBUZZ FIELD: the HIVE structure, four FLOWERS, the taped zones, and all
@@ -65,38 +64,44 @@ export class BiobuzzField {
   constructor(opts) {
     this.field = opts.field;
 
-    const pivotX = INFERRED.hivePivotX;
     /**
-     * Red's HIVE sits on the red side of the crossbar. Section 10.3.1 stages
-     * each HIVE with one CELL down; the two ALLIANCES are staged opposite each
-     * other so the FIELD has the usual 180 degree rotational symmetry.
+     * Red's HIVE sits on the red half of the crossbar, blue's on the blue half,
+     * each on its own bearing at its own centre. Section 10.3.1 stages each
+     * HIVE with one CELL down, opposite ways round, and the CAD says which:
+     * red's audience-side CELL is up and blue's rear-side CELL is up.
      */
     this.hives = {
       red: new Hive({
         alliance: 'red',
-        pivotX: -pivotX,
-        startUp: 'aft',
+        pivotX: -HIVE_PIVOT_X,
+        startUp: RED_START_UP,
         tipMassThreshold: opts.hiveTipMass,
       }),
       blue: new Hive({
         alliance: 'blue',
-        pivotX: pivotX,
-        startUp: 'fore',
+        pivotX: HIVE_PIVOT_X,
+        startUp: BLUE_START_UP,
         tipMassThreshold: opts.hiveTipMass,
       }),
     };
 
     /**
-     * Four FLOWERS on the perimeter wall (Section 9.7), placed in line with the
-     * HIVES because Section 10.3.1 says the down-tilted CELL "points at" one.
-     * INFERRED -- see the docs.
+     * Four FLOWERS, **one per wall** -- measured from the CAD, not the two per
+     * ALLIANCE side this file assumed from the manual's text alone. Each sits
+     * 68.04 in from centre along its wall's normal and 23.39 in off that wall's
+     * centre line, laid out with 180 degree rotational symmetry.
+     *
+     * That layout is what makes the Section 10.3.1 mnemonic work: each HIVE's
+     * *down* CELL faces the wall whose FLOWER is on that HIVE's own half of the
+     * FIELD.
      */
-    const fy = HALF_FIELD - FLOWER_WALL_OFFSET;
+    const a = FLOWER_AXIS_OFFSET;
+    const b = FLOWER_ALONG_WALL;
     this.flowers = [
-      new Flower({ id: 'flowerRedFore', x: -pivotX, y: -fy, facing: Math.PI / 2 }),
-      new Flower({ id: 'flowerRedAft', x: -pivotX, y: fy, facing: -Math.PI / 2 }),
-      new Flower({ id: 'flowerBlueFore', x: pivotX, y: -fy, facing: Math.PI / 2 }),
-      new Flower({ id: 'flowerBlueAft', x: pivotX, y: fy, facing: -Math.PI / 2 }),
+      new Flower({ id: 'flowerAudience', x: b, y: -a, facing: Math.PI / 2 }),
+      new Flower({ id: 'flowerRear', x: -b, y: a, facing: -Math.PI / 2 }),
+      new Flower({ id: 'flowerRedWall', x: -a, y: -b, facing: 0 }),
+      new Flower({ id: 'flowerBlueWall', x: a, y: b, facing: Math.PI }),
     ];
 
     this.zones = buildZones();
@@ -111,7 +116,7 @@ export class BiobuzzField {
           id: `pollen${i}`,
           kind: 'pollen',
           alliance: 'neutral',
-          radius: POLLEN_DIAMETER / 2,
+          radius: POLLEN_RADIUS,
           mass: POLLEN_MASS,
         }),
       );
@@ -123,7 +128,7 @@ export class BiobuzzField {
             id: `nectar-${alliance}${i}`,
             kind: 'nectar',
             alliance,
-            radius: NECTAR_DIAMETER / 2,
+            radius: NECTAR_RADIUS,
             mass: NECTAR_MASS,
           }),
         );
@@ -174,27 +179,28 @@ export class BiobuzzField {
    * nose an inch or two further under the slope than this allows.
    */
   _buildObstacles() {
-    const legX = FRAME_WIDTH / 2 - FRAME_LEG_THICKNESS / 2;
+    const legX = FRAME_HALF_WIDTH - FRAME_LEG_THICKNESS / 2;
     for (const sign of [-1, 1]) {
       this.obstacles.push(
         new Obstacle({
           id: `hiveFrameLeg${sign < 0 ? 'Red' : 'Blue'}`,
           position: new Vec2(sign * legX, 0),
-          size: new Vec2(FRAME_LEG_THICKNESS, FRAME_DEPTH),
+          size: new Vec2(FRAME_LEG_THICKNESS, FRAME_HALF_DEPTH * 2),
           height: HIVE_PIVOT_HEIGHT,
           color: [0.35, 0.36, 0.4, 1],
         }),
       );
     }
 
-    const tube = FLOWER_OPENING_DIAMETER + 1 * INCH;
+    // The four pipes stand on a square; a robot meets the square, not a circle.
+    const tube = 2 * (FLOWER_TUBE_RADIUS + 0.5 * INCH);
     for (const flower of this.flowers) {
       this.obstacles.push(
         new Obstacle({
           id: `${flower.id}Tube`,
           position: new Vec2(flower.x, flower.y),
           size: new Vec2(tube, tube),
-          height: FLOWER_OPENING_HEIGHT + FLOWER_BACKSTOP_HEIGHT,
+          height: FLOWER_BACKSTOP_TOP,
           color: [0.2, 0.6, 0.3, 1],
         }),
       );
@@ -213,8 +219,8 @@ export class BiobuzzField {
    */
   setup() {
     for (const flower of this.flowers) flower.clear();
-    this.hives.red.reset('aft');
-    this.hives.blue.reset('fore');
+    this.hives.red.reset(RED_START_UP);
+    this.hives.blue.reset(BLUE_START_UP);
     for (const ball of this.allBalls) {
       ball.release();
       ball.outOfBounds = false;
@@ -230,7 +236,7 @@ export class BiobuzzField {
     }
 
     for (const zone of [this.zones.redGarden, this.zones.blueGarden]) {
-      const spots = gardenStagingPositions(zone, GARDEN_START_POLLEN, POLLEN_DIAMETER / 2);
+      const spots = gardenStagingPositions(zone).slice(0, GARDEN_START_POLLEN);
       for (const spot of spots) {
         const ball = take();
         ball.setPosition(spot.x, spot.y, ball.radius);

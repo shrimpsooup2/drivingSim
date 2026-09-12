@@ -5,3 +5,6 @@ node_modules/
 /.cache/
 /screenshots/
 .cache/
+
+# Extracted CAD (the zip is the tracked copy)
+field-cad-step.txt

@@ -1,11 +1,11 @@
 import { INCH } from '../../math/MathUtil.js';
 import {
-  GARDEN_LENGTH,
-  GARDEN_WIDTH,
-  HALF_FIELD,
-  INFERRED,
-  LOADING_ZONE_DEPTH,
-  LOADING_ZONE_WIDTH,
+  POLLEN_RADIUS,
+  RED_ALLIANCE_AREA,
+  RED_GARDEN,
+  RED_GARDEN_POLLEN,
+  RED_LOADING_ZONE,
+  mirrorToBlue,
 } from './constants.js';
 
 /**
@@ -86,101 +86,64 @@ export class GameZone {
 }
 
 /**
- * The four taped zones, two per ALLIANCE.
+ * The taped zones, measured from the sixteen gaffer tape pieces in the field
+ * CAD rather than guessed from the manual's prose.
  *
- * ## Placement is inferred
+ * Two of those measurements contradict what the text alone suggested, and both
+ * matter to a driver:
  *
- * The manual gives the sizes but puts the positions only in figures. Three
- * statements in the text pin them down between them (Section 9.3 and 10.3.1):
+ *  - the **LOADING ZONE is not in a corner**. "Bounded by red or blue tape and
+ *    the adjoining FIELD perimeters" (Section 9.3) reads like a corner, but the
+ *    tape is three sides of a rectangle against the middle of each ALLIANCE
+ *    wall -- red spans y 23.91 to 46.60 in, offset toward the rear. PARKING
+ *    means getting to the middle of your own wall, not diving into a corner.
+ *  - the **GARDENS sit diagonally opposite** as the manual says, but red's is
+ *    against the *audience* wall on the red side.
  *
- *  - the LOADING ZONE is "bounded by red or blue tape and the adjoining FIELD
- *    perimeters" -- two walls, so a corner -- and "belongs to the ALLIANCE with
- *    the adjacent ALLIANCE AREA", which puts it against the wall the DRIVE TEAM
- *    stands behind. The 23 in runs along that wall, within reach of a human
- *    handing NECTAR over it, and the 11 in reaches into the FIELD.
- *  - GARDENS sit "in opposite corners of the FIELD".
- *  - GARDEN POLLEN is "placed in a line starting in the corner closest to the
- *    ALLIANCE AREA and contacting the audience or rear perimeter wall", so the
- *    23 in strip runs along an audience or rear wall, 2 in deep.
- *
- * All three hold together under the 180 degree rotational symmetry every FTC
- * field has: each ALLIANCE gets a LOADING ZONE in one of its two corners and a
- * GARDEN in the other, and the two GARDENS end up diagonally opposite. Which of
- * the two corners takes which is `INFERRED.redLoadingZoneCorner`.
+ * The whole layout is 180 degree rotationally symmetric, so blue is red
+ * mirrored through the origin and only red's numbers are stored.
  *
  * @returns {{
  *   redLoading: GameZone, blueLoading: GameZone,
  *   redGarden: GameZone, blueGarden: GameZone,
- *   all: GameZone[],
+ *   redAllianceArea: GameZone, blueAllianceArea: GameZone,
+ *   all: GameZone[], scoring: GameZone[],
  * }}
  */
 export function buildZones() {
-  // Red's ALLIANCE AREA is on -x ("the red ALLIANCE AREA is located on the
-  // left from the primary audience viewing direction", Section 9.5).
-  const loadingSignY = INFERRED.redLoadingZoneCorner === 'audience' ? -1 : 1;
+  const make = (id, label, alliance, rect) => new GameZone({ id, label, alliance, ...rect });
 
-  /** LOADING ZONE: against the ALLIANCE AREA wall, in one end corner. */
-  const loading = (id, alliance, signX, signY) => {
-    const xInner = signX * (HALF_FIELD - LOADING_ZONE_DEPTH);
-    const yInner = signY * (HALF_FIELD - LOADING_ZONE_WIDTH);
-    return new GameZone({
-      id,
-      label: `${alliance} LOADING ZONE`,
-      alliance,
-      minX: Math.min(signX * HALF_FIELD, xInner),
-      maxX: Math.max(signX * HALF_FIELD, xInner),
-      minY: Math.min(signY * HALF_FIELD, yInner),
-      maxY: Math.max(signY * HALF_FIELD, yInner),
-    });
-  };
-
-  /** GARDEN: a strip along an audience or rear wall, in the other corner. */
-  const garden = (id, alliance, signX, signY) => {
-    const xInner = signX * (HALF_FIELD - GARDEN_LENGTH);
-    const yInner = signY * (HALF_FIELD - GARDEN_WIDTH);
-    return new GameZone({
-      id,
-      label: `${alliance} GARDEN`,
-      alliance,
-      minX: Math.min(signX * HALF_FIELD, xInner),
-      maxX: Math.max(signX * HALF_FIELD, xInner),
-      minY: Math.min(signY * HALF_FIELD, yInner),
-      maxY: Math.max(signY * HALF_FIELD, yInner),
-    });
-  };
-
-  const redLoading = loading('redLoading', 'red', -1, loadingSignY);
-  const blueLoading = loading('blueLoading', 'blue', 1, -loadingSignY);
-  const redGarden = garden('redGarden', 'red', -1, -loadingSignY);
-  const blueGarden = garden('blueGarden', 'blue', 1, loadingSignY);
+  const redLoading = make('redLoading', 'red LOADING ZONE', 'red', RED_LOADING_ZONE);
+  const blueLoading = make('blueLoading', 'blue LOADING ZONE', 'blue', mirrorToBlue(RED_LOADING_ZONE));
+  const redGarden = make('redGarden', 'red GARDEN', 'red', RED_GARDEN);
+  const blueGarden = make('blueGarden', 'blue GARDEN', 'blue', mirrorToBlue(RED_GARDEN));
+  const redAllianceArea = make('redAllianceArea', 'red ALLIANCE AREA', 'red', RED_ALLIANCE_AREA);
+  const blueAllianceArea = make('blueAllianceArea', 'blue ALLIANCE AREA', 'blue', mirrorToBlue(RED_ALLIANCE_AREA));
 
   return {
     redLoading,
     blueLoading,
     redGarden,
     blueGarden,
+    redAllianceArea,
+    blueAllianceArea,
     all: [redLoading, blueLoading, redGarden, blueGarden],
+    scoring: [redGarden, blueGarden],
   };
 }
 
 /**
- * Where the setup POLLEN sit in a GARDEN: "placed in a line starting in the
- * corner closest to the ALLIANCE AREA and contacting the audience or rear
- * perimeter wall" (Section 10.3.1). The strip is only 2 in deep and POLLEN are
- * 2.8 in across, so they sit on the strip's centre line, overhanging it.
+ * Where the setup POLLEN sit in a GARDEN. The CAD stages four of them along
+ * the wall 2.89 in apart, starting hard in the corner closest to the ALLIANCE
+ * AREA, exactly as Section 10.3.1 describes.
  *
  * @param {GameZone} zone
- * @param {number} count
- * @param {number} radius
  * @returns {{x: number, y: number}[]}
  */
-export function gardenStagingPositions(zone, count, radius) {
-  const y = zone.centerY;
-  // The corner closest to the ALLIANCE AREA is the outer end in x.
-  const fromNegX = zone.minX < 0;
-  const start = fromNegX ? zone.minX + radius : zone.maxX - radius;
-  const step = (fromNegX ? 1 : -1) * (2 * radius + 0.1 * INCH);
-  const out = [];
-  for (let i = 0; i < count; i++) out.push({ x: start + i * step, y });
-  return out;
+export function gardenStagingPositions(zone) {
+  const red = zone.centerX < 0;
+  return RED_GARDEN_POLLEN.map((p) => (red ? { ...p } : { x: -p.x, y: -p.y }));
 }
+
+/** Radius of a staged GARDEN POLLEN, for callers placing them. */
+export const GARDEN_POLLEN_RADIUS = POLLEN_RADIUS;

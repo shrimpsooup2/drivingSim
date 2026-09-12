@@ -1,12 +1,12 @@
 import { INCH } from '../../math/MathUtil.js';
 import {
-  FLOWER_BACKSTOP_HEIGHT,
-  FLOWER_LOWER_RING_HEIGHT,
-  FLOWER_OPENING_DIAMETER,
-  FLOWER_OPENING_HEIGHT,
+  FLOWER_BACKSTOP_TOP,
   FLOWER_RETRIEVAL_HEIGHT,
+  FLOWER_SCORING_BOTTOM,
+  FLOWER_SCORING_TOP,
+  FLOWER_TUBE_RADIUS,
   POINTS,
-  POLLEN_DIAMETER,
+  POLLEN_RADIUS,
 } from './constants.js';
 
 /**
@@ -45,16 +45,18 @@ import {
  * the tube plugs it, and everything above is stuck there for the rest of the
  * MATCH.
  *
- * ## What is inferred
+ * ## Measured, not guessed
  *
- * The middle ring height is not stated. The scoring volume is "between the top
- * ring and the middle ring", and the retrieval opening spans from the top of
- * the lower ring to the middle ring, so the middle ring sits at lower ring
- * height + retrieval height -- 3.95 in. That makes the bottom-most POLLEN the
- * retrievable one and everything above it scoring, which is exactly the
- * behaviour Section 8 describes ("ROBOTS can use sensors to collect POLLEN from
- * FLOWERS"). The tube's inside diameter is likewise not stated and is taken
- * from the 4 in top opening.
+ * The scoring volume is 4.25 in to 21.25 in above the TILES. That is not a
+ * derivation -- it is the span of the four HIPS pipes in the field CAD, which
+ * run from the middle ring to the top ring and so *are* the volume.
+ *
+ * It lands exactly where the game wants it. The CAD stages four POLLEN in every
+ * FLOWER at 1.40, 4.29, 7.18 and 10.07 in. The bottom one tops out at 2.80 in,
+ * under the 4.25 in floor, so it does not score and it is the one a ROBOT pulls
+ * from the retrieval opening; the three above it all score. Collecting from a
+ * FLOWER therefore costs the owner nothing until the stack drops.
+ *
  */
 export class Flower {
   /**
@@ -63,9 +65,9 @@ export class Flower {
    *   x: number,
    *   y: number,
    *   facing: number,
-   *   tubeDiameter?: number,
-   *   openingHeight?: number,
-   *   middleRingHeight?: number,
+   *   tubeRadius?: number,
+   *   scoringTop?: number,
+   *   scoringBottom?: number,
    * }} opts `facing` is the heading pointing from the wall into the FIELD, so
    *   a ROBOT shoots along `facing + PI` and the backstop is behind the tube.
    */
@@ -75,13 +77,15 @@ export class Flower {
     this.y = opts.y;
     this.facing = opts.facing;
 
-    /** INFERRED: taken from the 4 in top opening (Section 9.7). */
-    this.tubeDiameter = opts.tubeDiameter ?? FLOWER_OPENING_DIAMETER;
-    /** MANUAL, Section 9.7. */
-    this.openingHeight = opts.openingHeight ?? FLOWER_OPENING_HEIGHT;
-    /** INFERRED: top of the lower ring plus the retrieval opening. */
-    this.middleRingHeight =
-      opts.middleRingHeight ?? FLOWER_LOWER_RING_HEIGHT + FLOWER_RETRIEVAL_HEIGHT;
+    /**
+     * Clear radius inside the tube: the circle inscribed between the four HIPS
+     * pipes, 2.0 in, which is where the manual's "approximately 4 in" opening
+     * comes from.
+     */
+    this.tubeRadius = opts.tubeRadius ?? FLOWER_TUBE_RADIUS;
+    /** Top and bottom of the scoring volume, spanned by the pipes. */
+    this.openingHeight = opts.scoringTop ?? FLOWER_SCORING_TOP;
+    this.middleRingHeight = opts.scoringBottom ?? FLOWER_SCORING_BOTTOM;
 
     /**
      * Bottom-to-top. Index 0 rests on the TILE inside the lower ring and is
@@ -114,7 +118,12 @@ export class Flower {
 
   /** Height of the top of the backstop, for rendering and for shot planning. */
   get backstopTop() {
-    return this.openingHeight + FLOWER_BACKSTOP_HEIGHT;
+    return FLOWER_BACKSTOP_TOP;
+  }
+
+  /** Diameter of the clear opening, for callers that want it. */
+  get tubeDiameter() {
+    return this.tubeRadius * 2;
   }
 
   /**
@@ -126,6 +135,13 @@ export class Flower {
    * of the diameters. With 2.8 in POLLEN in a 4 in tube the pitch is 2.53 in
    * rather than 2.8 in, which fits one more POLLEN in the tube than a naive
    * column would. 3.6 in NECTAR barely fits and stacks almost straight.
+   *
+   * The CAD lays its staged POLLEN out at a flat 2.89 in, which is *wider* than
+   * a POLLEN -- those balls are not touching, so that is a nominal drawing
+   * layout rather than a settled stack. The real pitch is somewhere between
+   * 2.53 and 2.80 depending on how each ball happens to fall. It makes no
+   * difference to scoring: either way the bottom ball stays under the 4.25 in
+   * floor and everything above it scores.
    */
   _restack() {
     let z = 0;
@@ -141,7 +157,7 @@ export class Flower {
         // Widest the two centres can be apart across the tube.
         const lateral = Math.max(
           0,
-          Math.min(reach, this.tubeDiameter - below.radius - ball.radius),
+          Math.min(reach, 2 * this.tubeRadius - below.radius - ball.radius),
         );
         z += Math.sqrt(Math.max(0, reach * reach - lateral * lateral));
       }
@@ -161,7 +177,7 @@ export class Flower {
     const reach = below.radius + radius;
     const lateral = Math.max(
       0,
-      Math.min(reach, this.tubeDiameter - below.radius - radius),
+      Math.min(reach, 2 * this.tubeRadius - below.radius - radius),
     );
     const z = below.z + Math.sqrt(Math.max(0, reach * reach - lateral * lateral));
     return z > this.openingHeight ? null : z;
@@ -172,7 +188,7 @@ export class Flower {
    * opening. A FLOWER can be full for NECTAR while still taking POLLEN.
    */
   get full() {
-    return this.restHeightFor(POLLEN_DIAMETER / 2) === null;
+    return this.restHeightFor(POLLEN_RADIUS) === null;
   }
 
   /**
@@ -213,7 +229,7 @@ export class Flower {
     // suggests -- 0.6 in for POLLEN, 0.2 in for NECTAR. The margins widen that
     // to cover a ball that clips the rim and rattles in, and the backstop
     // widens it further on the wall side only.
-    const clearance = Math.max(0, this.tubeDiameter / 2 - ball.radius);
+    const clearance = Math.max(0, this.tubeRadius - ball.radius);
     const alongLimit =
       clearance + (into < 0 ? this.backstopMargin : this.captureMargin);
     const acrossLimit = clearance + this.captureMargin;
