@@ -1,3 +1,4 @@
+import { BiobuzzGame } from './BiobuzzGame.js';
 import { ChallengeRunner } from '../challenges/ChallengeRunner.js';
 import { Opponent } from '../ai/Opponent.js';
 import { resolveDynamicPair } from '../physics/collision.js';
@@ -61,6 +62,13 @@ export class Simulation {
     /** Driving drills. Null active challenge means free driving. */
     this.challenges = new ChallengeRunner(this);
 
+    /**
+     * The BIOBUZZ game, when it is switched on. Null means a bare field, which
+     * is what the drills and free driving use.
+     * @type {BiobuzzGame|null}
+     */
+    this.game = null;
+
     /** @type {Opponent[]} AI robots sharing the field. */
     this.opponents = [];
     /**
@@ -99,6 +107,30 @@ export class Simulation {
       this.config = this.configStore.values;
       this.input.setLatency(this.config.control.inputLatencyMs / 1000);
     });
+  }
+
+  /**
+   * Switch BIOBUZZ on. Returns the game so callers can start a MATCH.
+   * @param {{alliance?: 'red'|'blue'}} [opts]
+   */
+  enableGame(opts = {}) {
+    if (this.game) return this.game;
+    // A drill owns the obstacles and opponents it placed, so drop it -- but
+    // only if one is running. `challenges.clear()` also clears opponents, and
+    // opponents the user added by hand are theirs to keep.
+    if (this.challenges.active) this.challenges.clear();
+    this.game = new BiobuzzGame(this, opts);
+    this.events.emit('gameEnabled', this.game);
+    return this.game;
+  }
+
+  /** Switch it back off, leaving a bare field behind. */
+  disableGame() {
+    if (!this.game) return null;
+    this.game.dispose();
+    this.game = null;
+    this.events.emit('gameDisabled');
+    return null;
   }
 
   /** Swap in a different op-mode: an autonomous routine, a test, a drill. */
@@ -205,6 +237,10 @@ export class Simulation {
     const advanced = substeps * h;
 
     this.substepsLastFrame = substeps;
+    // The game runs on the time the physics actually covered, not the frame
+    // time, so the MATCH clock cannot drift away from the world when the
+    // browser stutters or a substep budget is hit.
+    this.game?.update(advanced);
     this.field.update(advanced);
     this.robot.updateStats(advanced);
     this.challenges.update(advanced);

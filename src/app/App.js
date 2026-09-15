@@ -2,6 +2,7 @@ import { Config } from '../config/Config.js';
 import { Simulation } from './Simulation.js';
 import { Renderer } from '../render/Renderer.js';
 import { Hud } from '../ui/Hud.js';
+import { MatchPanel } from '../ui/MatchPanel.js';
 import { ParamPanel } from '../ui/ParamPanel.js';
 import { ChallengePanel } from '../ui/ChallengePanel.js';
 import { InputManager } from '../input/InputManager.js';
@@ -44,6 +45,7 @@ export class App {
     this.renderer = new Renderer(this.canvas);
     this.overlay = new Overlay2d(this.labelCanvas);
     this.hud = new Hud(this.hudRoot);
+    this.matchPanel = new MatchPanel(this.viewport);
     this.panel = new ParamPanel(this.panelRoot, this.config);
     this.drills = new ChallengePanel(this.viewport, this.sim.challenges);
 
@@ -130,6 +132,14 @@ export class App {
       this.hud.clearGraphs();
     });
     keyboard.on('KeyN', () => this.drills.toggle());
+    keyboard.on('KeyG', () => this._toggleGame());
+    keyboard.on('KeyM', () => {
+      // Restart the MATCH from setup. Only meaningful with the game running.
+      if (this.sim.game) {
+        this.sim.game.start();
+        this.hud.clearGraphs();
+      }
+    });
     keyboard.on('KeyB', () => this._resetCamera());
     keyboard.on('KeyC', () => this._cycleCamera());
     keyboard.on('KeyF', () => {
@@ -146,6 +156,20 @@ export class App {
       this.toggleHelp(false);
       this.drills.toggle(false);
     });
+  }
+
+  /**
+   * Turn BIOBUZZ on or off. Off leaves a bare field, which is what the drills
+   * and free driving want.
+   */
+  _toggleGame() {
+    if (this.sim.game) {
+      this.sim.disableGame();
+    } else {
+      this.sim.enableGame({ alliance: 'red' }).start();
+    }
+    this.hud.clearGraphs();
+    return this.sim.game;
   }
 
   _cycleCamera() {
@@ -245,6 +269,7 @@ export class App {
       const view = this.config.values.view;
       this.hud.setVisible(view.showHud, view.showGraphs);
       if (view.showHud || view.showGraphs) this.hud.update(this.sim, dt);
+      this.matchPanel.update(view.showHud ? this.sim.game : null);
     } catch (err) {
       this.running = false;
       console.error('[App] frame failed:', err);

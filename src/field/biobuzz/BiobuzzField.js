@@ -188,6 +188,7 @@ export class BiobuzzField {
           size: new Vec2(FRAME_LEG_THICKNESS, FRAME_HALF_DEPTH * 2),
           height: HIVE_PIVOT_HEIGHT,
           color: [0.35, 0.36, 0.4, 1],
+          visible: false,
         }),
       );
     }
@@ -202,6 +203,7 @@ export class BiobuzzField {
           size: new Vec2(tube, tube),
           height: FLOWER_BACKSTOP_TOP,
           color: [0.2, 0.6, 0.3, 1],
+          visible: false,
         }),
       );
     }

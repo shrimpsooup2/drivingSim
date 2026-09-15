@@ -74,6 +74,19 @@ export class Intake extends Subsystem {
     return this.held.length >= this.capacity;
   }
 
+  /**
+   * Fold the carried elements back into the robot's mass and centre of gravity.
+   *
+   * `massContribution` is only read when the robot recomputes, and nothing else
+   * knows the intake's contents just changed -- so without this a full magazine
+   * weighed nothing and shifted nothing. Four POLLEN is only 0.18 kg on an 18 kg
+   * robot, but it sits forward of centre, and that is where a tippy robot
+   * notices it.
+   */
+  _contentsChanged() {
+    this.robot?.updateMassProperties();
+  }
+
   get count() {
     return this.held.length;
   }
@@ -128,6 +141,7 @@ export class Intake extends Subsystem {
 
   _collect() {
     if (this.full || !this.robot) return;
+    let changed = false;
     const { x, y, cos, sin, vx, vy } = this.pose;
     const mouthX = x + cos * this.robot.halfLength;
     const mouthY = y + sin * this.robot.halfLength;
@@ -153,6 +167,7 @@ export class Intake extends Subsystem {
         if (rel > this.captureSpeed) continue;
 
         this.held.push(ball.attachTo('intake', this));
+        changed = true;
       }
     }
 
@@ -167,8 +182,13 @@ export class Intake extends Subsystem {
       if (ahead < 0 || ahead > this.reach + 3 * INCH) continue;
       if (Math.abs(lateral) > 3 * INCH) continue;
       const taken = flower.removeBottom();
-      if (taken) this.held.push(taken.attachTo('intake', this));
+      if (taken) {
+        this.held.push(taken.attachTo('intake', this));
+        changed = true;
+      }
     }
+
+    if (changed) this._contentsChanged();
   }
 
   /** Spit the front element out onto the tiles, one at a time. */
@@ -180,6 +200,7 @@ export class Intake extends Subsystem {
     ball.setPosition(x + cos * d, y + sin * d, ball.radius);
     ball.release(vx + cos * 1.2, vy + sin * 1.2, 0);
     this._ejectCooldown = 0.25;
+    this._contentsChanged();
   }
 
   /**
@@ -188,7 +209,10 @@ export class Intake extends Subsystem {
    */
   detachBall(ball) {
     const i = this.held.indexOf(ball);
-    if (i >= 0) this.held.splice(i, 1);
+    if (i >= 0) {
+      this.held.splice(i, 1);
+      this._contentsChanged();
+    }
   }
 
   /**
@@ -196,13 +220,16 @@ export class Intake extends Subsystem {
    * @returns {import('../../physics/Ball.js').Ball|null}
    */
   take() {
-    return this.held.shift() ?? null;
+    const ball = this.held.shift() ?? null;
+    if (ball) this._contentsChanged();
+    return ball;
   }
 
   /** Put an element back at the front of the queue. */
   give(ball) {
     if (this.full) return false;
     this.held.unshift(ball.attachTo('intake', this));
+    this._contentsChanged();
     return true;
   }
 
@@ -234,11 +261,13 @@ export class Intake extends Subsystem {
   }
 
   reset() {
-    for (const ball of this.held) ball.release();
+    // release() asks this intake to drop each ball, so take a copy first.
+    for (const ball of this.held.slice()) ball.release();
     this.held.length = 0;
     this.command = 0;
     this.power = 0;
     this.current = 0;
     this._ejectCooldown = 0;
+    this._contentsChanged();
   }
 }

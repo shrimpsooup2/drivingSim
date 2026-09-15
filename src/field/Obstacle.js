@@ -29,6 +29,15 @@ export class Obstacle extends FieldElement {
     this.size = opts.size;
     this.height = opts.height ?? 0.3;
     this.color = opts.color ?? [0.85, 0.45, 0.18, 1];
+    /**
+     * Whether the generic box renderer should draw this.
+     *
+     * Game structures are solid boxes for collision but nothing like boxes to
+     * look at -- the HIVE frame is two open A-frames a robot drives between,
+     * and drawing its collider would put a wall across the middle of the
+     * field. Those set this false and draw themselves properly.
+     */
+    this.visible = opts.visible ?? true;
     /** Set by the collision pass whenever the robot is touching this. */
     this.touched = false;
   }

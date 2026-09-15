@@ -432,3 +432,99 @@ select { width: 100%; }
 .drill-toast.gold { border-color: #d9a441; color: #f0c674; }
 .drill-toast.silver { border-color: #b9c0c9; color: #d8dee6; }
 .drill-toast.bronze { border-color: #b1764a; color: #d79a6e; }
+
+/* ---------------------------------------------------------- MATCH panel */
+
+.match-panel {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 218px;
+  padding: 7px 10px 8px;
+  border-radius: 9px;
+  background: rgba(14, 17, 23, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(6px);
+  font: 10px/1.3 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: #e6e8ec;
+  pointer-events: none;
+  z-index: 6;
+}
+.match-panel.hidden { display: none; }
+
+.match-clock {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.match-clock.urgent { color: #ff6b5e; }
+
+.match-phase {
+  text-align: center;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  opacity: 0.62;
+  margin-bottom: 6px;
+}
+
+.match-score {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-bottom: 6px;
+}
+.match-total {
+  flex: 1;
+  text-align: center;
+  padding: 3px 0;
+  border-radius: 5px;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.72;
+}
+.match-total.red { background: rgba(200, 52, 56, 0.24); color: #ff8e8a; }
+.match-total.blue { background: rgba(44, 92, 200, 0.24); color: #86b4ff; }
+.match-total.leading { opacity: 1; box-shadow: inset 0 0 0 1px currentColor; }
+
+.match-breakdown {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9px;
+}
+.match-breakdown th {
+  font-size: 7px;
+  letter-spacing: 0.1em;
+  opacity: 0.5;
+  font-weight: 500;
+  text-align: right;
+  padding-bottom: 2px;
+}
+.match-breakdown th.red { color: #ff8e8a; }
+.match-breakdown th.blue { color: #86b4ff; }
+.match-breakdown td.label { opacity: 0.55; padding-right: 6px; }
+.match-breakdown td.num {
+  text-align: right;
+  width: 30px;
+  font-variant-numeric: tabular-nums;
+}
+
+.match-shooter { margin-top: 6px; }
+.match-shooter-text {
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+.match-shooter-text.ready { color: #47d18a; opacity: 1; }
+
+.match-notes {
+  margin-top: 5px;
+  font-size: 8px;
+  line-height: 1.35;
+  opacity: 0.5;
+  text-align: center;
+}

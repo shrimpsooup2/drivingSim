@@ -130,3 +130,37 @@ export function discMesh(segments = 32) {
   for (let i = 0; i < segments; i++) idx.push(0, 1 + i, 2 + i);
   return { vertices: new Float32Array(v), indices: new Uint16Array(idx) };
 }
+
+/**
+ * Unit sphere of radius 1, for POLLEN and NECTAR.
+ *
+ * Latitude/longitude tessellation, which is the cheapest thing that shades
+ * smoothly -- on a unit sphere the normal at a vertex is just its position.
+ *
+ * @param {number} [segments] divisions around the equator
+ * @param {number} [rings] divisions from pole to pole
+ */
+export function sphereMesh(segments = 16, rings = 10) {
+  const v = [];
+  const idx = [];
+  for (let r = 0; r <= rings; r++) {
+    const phi = (r / rings) * Math.PI;
+    const z = Math.cos(phi);
+    const ringRadius = Math.sin(phi);
+    for (let s = 0; s <= segments; s++) {
+      const theta = (s / segments) * Math.PI * 2;
+      const x = ringRadius * Math.cos(theta);
+      const y = ringRadius * Math.sin(theta);
+      v.push(x, y, z, x, y, z, s / segments, r / rings);
+    }
+  }
+  const stride = segments + 1;
+  for (let r = 0; r < rings; r++) {
+    for (let s = 0; s < segments; s++) {
+      const a = r * stride + s;
+      const b = a + stride;
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  return { vertices: new Float32Array(v), indices: new Uint16Array(idx) };
+}

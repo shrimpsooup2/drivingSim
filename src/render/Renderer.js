@@ -1,10 +1,29 @@
 import * as mat4 from './mat4.js';
-import { arrowMesh, boxMesh, cylinderMesh, discMesh, planeMesh } from './geometry.js';
+import {
+  arrowMesh,
+  boxMesh,
+  cylinderMesh,
+  discMesh,
+  planeMesh,
+  sphereMesh,
+} from './geometry.js';
 import { createCanvasTexture, createLineBatch, createMesh, createProgram, createWhiteTexture } from './gl.js';
 import { LINE_FRAGMENT, LINE_VERTEX, LIT_FRAGMENT, LIT_VERTEX } from './shaders.js';
 import { drawMecanumTread, drawPlate, drawTile, drawTractionTread } from './textures.js';
 import { CameraRig } from './Camera.js';
 import { clamp } from '../math/MathUtil.js';
+import {
+  CELL_DEPTH,
+  CELL_OPENING_WIDTH,
+  CELL_REST_HEIGHT,
+  CELL_REST_OFFSET,
+  FLOWER_BACKSTOP_HEIGHT,
+  FLOWER_PIPE_OFFSET,
+  FLOWER_PIPE_RADIUS,
+  FRAME_HALF_DEPTH,
+  FRAME_HALF_WIDTH,
+  HIVE_PIVOT_HEIGHT,
+} from '../field/biobuzz/constants.js';
 
 const ACCENT = [0.16, 0.62, 0.86, 1];
 const GATE_POST_HEIGHT = 0.34;
@@ -55,6 +74,7 @@ export class Renderer {
       tiles: createMesh(gl, planeMesh(6), this.lit.attributes),
       arrow: createMesh(gl, arrowMesh(), this.lit.attributes),
       disc: createMesh(gl, discMesh(40), this.lit.attributes),
+      sphere: createMesh(gl, sphereMesh(16, 10), this.lit.attributes),
     };
 
     this.textures = {
@@ -130,10 +150,12 @@ export class Renderer {
 
     this._drawField(sim);
     this._drawChallengeSolids(sim);
+    if (sim.game) this._drawGame(sim.game);
     this._drawRobot(sim);
 
     this.lines.reset();
     this._buildChallengeLines(sim);
+    if (sim.game) this._buildGameLines(sim.game);
     this._buildOverlays(sim);
     this._drawLines();
   }
@@ -302,6 +324,7 @@ export class Renderer {
     this._draw(this.meshes.box, m, [0.24, 0.52, 0.92, 1], this.textures.white, 0.35);
 
     for (const element of field.elements) {
+      if (element.visible === false) continue;
       const d = element.describe?.();
       if (!d) continue;
       const c = Math.cos(d.heading ?? 0);
@@ -311,6 +334,208 @@ export class Renderer {
       mat4.composeZ(m, d.position.x, d.position.y, height / 2, c, s, size.x, size.y, height);
       this._draw(this.meshes.box, m, d.color ?? [0.8, 0.6, 0.2, 1], this.textures.white);
     }
+  }
+
+  /**
+   * The BIOBUZZ game: the HIVE, the FLOWERS and every SCORING ELEMENT.
+   *
+   * Everything here is drawn from the same state the physics reads, so what a
+   * driver sees is what the scorer sees -- a ball rendered inside a CELL really
+   * is in that CELL as far as the score is concerned.
+   *
+   * @param {import('../app/BiobuzzGame.js').BiobuzzGame} game
+   */
+  _drawGame(game) {
+    const m = this._model;
+
+    // --- The A-frame. Two open triangles at the ends of a crossbar, which is
+    // the point: a ROBOT drives straight between them under the apex, and
+    // drawing the collider box instead would put a wall across the field.
+    const legHalf = FRAME_HALF_DEPTH;
+    const apex = HIVE_PIVOT_HEIGHT;
+    const frameMetal = [0.44, 0.46, 0.5, 1];
+    for (const sx of [-1, 1]) {
+      const x = sx * FRAME_HALF_WIDTH;
+      for (const sy of [-1, 1]) {
+        // One sloping leg, from (y = sy*legHalf, z = 0) up to (0, apex).
+        const len = Math.hypot(legHalf, apex);
+        const cos = apex / len;
+        const sin = (-sy * legHalf) / len;
+        this._legMatrix(m, x, (sy * legHalf) / 2, apex / 2, cos, sin, len, 0.045);
+        this._draw(this.meshes.box, m, frameMetal, this.textures.white);
+      }
+      mat4.composeZ(m, x, 0, apex, 1, 0, 0.07, 0.12, 0.07);
+      this._draw(this.meshes.box, m, frameMetal, this.textures.white);
+    }
+    // Crossbar joining the two apexes.
+    mat4.composeZ(m, 0, 0, apex, 1, 0, FRAME_HALF_WIDTH * 2, 0.05, 0.05);
+    this._draw(this.meshes.box, m, frameMetal, this.textures.white);
+
+    // --- HIVE: two arms on a shared crossbar, each with a CELL at both ends.
+    for (const alliance of ['red', 'blue']) {
+      const hive = game.field.hives[alliance];
+      const tint = alliance === 'red' ? [0.82, 0.24, 0.26, 1] : [0.2, 0.42, 0.85, 1];
+      const tilt = hive.currentTilt;
+
+      // The arm itself, a bar through the pivot.
+      const reach = Math.hypot(CELL_REST_OFFSET, CELL_REST_HEIGHT - HIVE_PIVOT_HEIGHT);
+      const armLen = reach * 2;
+      mat4.composeZ(m, hive.pivotX, 0, HIVE_PIVOT_HEIGHT, 1, 0, 0.05, 0.05, 0.05);
+      this._draw(this.meshes.box, m, [0.3, 0.32, 0.36, 1], this.textures.white);
+      this._armMatrix(m, hive.pivotX, HIVE_PIVOT_HEIGHT, tilt, armLen, 0.05);
+      this._draw(this.meshes.box, m, [0.34, 0.36, 0.4, 1], this.textures.white);
+
+      for (const side of ['fore', 'aft']) {
+        const cell = hive.cellOpening(side);
+        const up = hive.up === side;
+        // A CELL is an open box; drawn as a floor plus three low walls so you
+        // can see what is inside it from the driver's viewpoint.
+        const w = CELL_OPENING_WIDTH;
+        const d = CELL_DEPTH;
+        const wall = 0.03;
+        mat4.composeZ(m, cell.x, cell.y, cell.z - 0.04, 1, 0, w, d, wall);
+        this._draw(this.meshes.box, m, tint, this.textures.plate, up ? 0.22 : 0.05);
+        for (const [ox, oy, sx, sy] of [
+          [-w / 2, 0, wall, d],
+          [w / 2, 0, wall, d],
+          [0, (cell.y < 0 ? -1 : 1) * (d / 2), w, wall],
+        ]) {
+          mat4.composeZ(m, cell.x + ox, cell.y + oy, cell.z + 0.06, 1, 0, sx, sy, 0.2);
+          this._draw(this.meshes.box, m, tint, this.textures.white, up ? 0.14 : 0.02);
+        }
+      }
+    }
+
+    // --- FLOWERS: four pipes between the middle and top rings, plus the rings
+    // and the backstop. The gap between middle and top *is* the scoring volume.
+    for (const flower of game.field.flowers) {
+      const c = Math.cos(flower.facing);
+      const s = Math.sin(flower.facing);
+      const volume = flower.scoringTop - flower.scoringBottom;
+      for (const [ox, oy] of [
+        [-FLOWER_PIPE_OFFSET, -FLOWER_PIPE_OFFSET],
+        [FLOWER_PIPE_OFFSET, -FLOWER_PIPE_OFFSET],
+        [-FLOWER_PIPE_OFFSET, FLOWER_PIPE_OFFSET],
+        [FLOWER_PIPE_OFFSET, FLOWER_PIPE_OFFSET],
+      ]) {
+        mat4.composeZ(
+          m,
+          flower.x + ox,
+          flower.y + oy,
+          flower.scoringBottom + volume / 2,
+          1,
+          0,
+          FLOWER_PIPE_RADIUS * 2,
+          FLOWER_PIPE_RADIUS * 2,
+          volume,
+        );
+        this._draw(this.meshes.cylinder, m, [0.88, 0.9, 0.93, 1], this.textures.white);
+      }
+      // The rings sit on the pipe square, so they are barely wider than it --
+      // drawing them much wider turns a slim tube into a stack of plates.
+      const ringRadius = FLOWER_PIPE_OFFSET + FLOWER_PIPE_RADIUS * 1.6;
+      for (const [z, radius, colour] of [
+        [flower.scoringBottom, ringRadius, [0.24, 0.52, 0.3, 1]],
+        [flower.scoringTop, ringRadius, [0.32, 0.66, 0.36, 1]],
+        [0.01, ringRadius * 1.15, [0.22, 0.42, 0.26, 1]],
+      ]) {
+        mat4.composeZ(m, flower.x, flower.y, z, 1, 0, radius * 2, radius * 2, 0.02);
+        this._draw(this.meshes.cylinder, m, colour, this.textures.white);
+      }
+      // Backstop, on the wall side -- the thing that makes a long shot forgiving.
+      mat4.composeZ(
+        m,
+        flower.x - c * (FLOWER_PIPE_OFFSET + 0.012),
+        flower.y - s * (FLOWER_PIPE_OFFSET + 0.012),
+        flower.backstopTop - FLOWER_BACKSTOP_HEIGHT / 2,
+        c,
+        s,
+        0.012,
+        FLOWER_PIPE_OFFSET * 2.4,
+        FLOWER_BACKSTOP_HEIGHT,
+      );
+      this._draw(this.meshes.box, m, [0.95, 0.78, 0.22, 1], this.textures.white, 0.1);
+    }
+
+    // --- SCORING ELEMENTS.
+    for (const ball of game.field.allBalls) {
+      if (ball.container?.kind === 'preload' || ball.container?.kind === 'allianceArea') continue;
+      const colour =
+        ball.kind === 'pollen'
+          ? [0.97, 0.79, 0.18, 1]
+          : ball.alliance === 'red'
+            ? [0.88, 0.22, 0.24, 1]
+            : [0.22, 0.45, 0.9, 1];
+      mat4.composeZ(m, ball.x, ball.y, ball.z, 1, 0, ball.radius, ball.radius, ball.radius);
+      this._draw(this.meshes.sphere, m, colour, this.textures.white, 0.08);
+    }
+  }
+
+  /**
+   * Model matrix for a strut of `length` and square `thickness` whose long
+   * axis is tilted in the y-z plane, given the cosine and sine of that tilt
+   * measured from vertical. Centred on (x, y, z).
+   */
+  _legMatrix(out, x, y, z, cos, sin, length, thickness) {
+    out[0] = thickness; out[1] = 0; out[2] = 0; out[3] = 0;
+    out[4] = 0; out[5] = sin * length; out[6] = cos * length; out[7] = 0;
+    out[8] = 0; out[9] = cos * thickness; out[10] = -sin * thickness; out[11] = 0;
+    out[12] = x; out[13] = y; out[14] = z; out[15] = 1;
+    return out;
+  }
+
+  /**
+   * Compose the model matrix for a HIVE arm: a bar of `length` through the
+   * pivot, rotated `tilt` above horizontal in the y-z plane.
+   */
+  _armMatrix(out, x, pivotZ, tilt, length, thickness) {
+    const c = Math.cos(tilt);
+    const s = Math.sin(tilt);
+    // Columns are the rotated basis; the arm runs along local y.
+    out[0] = thickness; out[1] = 0; out[2] = 0; out[3] = 0;
+    out[4] = 0; out[5] = c * length; out[6] = s * length; out[7] = 0;
+    out[8] = 0; out[9] = -s * thickness; out[10] = c * thickness; out[11] = 0;
+    out[12] = x; out[13] = 0; out[14] = pivotZ; out[15] = 1;
+    return out;
+  }
+
+  /**
+   * Taped zones and the shooting hint, as lines on the floor.
+   * @param {import('../app/BiobuzzGame.js').BiobuzzGame} game
+   */
+  _buildGameLines(game) {
+    for (const zone of game.field.zones.all) {
+      const colour = zone.alliance === 'red' ? [0.92, 0.28, 0.3] : [0.28, 0.5, 0.95];
+      const [r, g, b] = colour;
+      const z = 0.004;
+      const corners = [
+        [zone.minX, zone.minY],
+        [zone.maxX, zone.minY],
+        [zone.maxX, zone.maxY],
+        [zone.minX, zone.maxY],
+      ];
+      for (let i = 0; i < 4; i++) {
+        const [ax, ay] = corners[i];
+        const [bx, by] = corners[(i + 1) % 4];
+        this.lines.line(ax, ay, z, bx, by, z, r, g, b, 1);
+      }
+    }
+
+    // A ring under the HIVE the player is shooting at, so the target is
+    // findable from any camera angle.
+    const target = game.field.hiveTarget(game.alliance);
+    const ready = game.launcher.ready;
+    this._circle(
+      target.x,
+      target.y,
+      0.006,
+      0.35,
+      ready ? 0.3 : 0.95,
+      ready ? 0.9 : 0.75,
+      ready ? 0.4 : 0.2,
+      0.9,
+      32,
+    );
   }
 
   _drawRobot(sim) {

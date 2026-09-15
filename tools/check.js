@@ -441,7 +441,25 @@ async function main() {
       app.renderer.camera.orbitTarget = [0, 0, 0.1];
       app.input.keyboardSource.keys.add('KeyW');
       app.input.keyboardSource.active = true;
-      for (let i = 0; i < 240; i++) app.sim.step(1 / 60);
+      // Watch how far each opponent travels rather than reading its speed at
+      // one instant: a camper legitimately sits still between moves, so a
+      // single sample makes this check flaky.
+      const travelled = new Map(app.sim.opponents.map((o) => [o.id, 0]));
+      const last = new Map(
+        app.sim.opponents.map((o) => [o.id, { x: o.robot.body.position.x, y: o.robot.body.position.y }]),
+      );
+      for (let i = 0; i < 240; i++) {
+        app.sim.step(1 / 60);
+        for (const o of app.sim.opponents) {
+          const p = last.get(o.id);
+          travelled.set(
+            o.id,
+            travelled.get(o.id) + Math.hypot(o.robot.body.position.x - p.x, o.robot.body.position.y - p.y),
+          );
+          p.x = o.robot.body.position.x;
+          p.y = o.robot.body.position.y;
+        }
+      }
       app.input.keyboardSource.keys.clear();
       return {
         opponents: app.sim.opponents.map((o) => ({
@@ -449,7 +467,8 @@ async function main() {
           mass: o.robot.body.mass,
           x: +o.robot.body.position.x.toFixed(2),
           y: +o.robot.body.position.y.toFixed(2),
-          moving: o.robot.body.speed > 0.05,
+          travelled: +travelled.get(o.id).toFixed(2),
+          moving: travelled.get(o.id) > 0.1,
         })),
         obstacles: app.sim.field.elements.length,
         completions: app.sim.challenges.active.completions,
@@ -457,7 +476,7 @@ async function main() {
     })()`);
     console.log(`  Contested drill: ${contested.opponents.length} opponents, ${contested.obstacles} obstacles`);
     for (const o of contested.opponents) {
-      console.log(`    ${o.id} ${o.mass} kg at (${o.x}, ${o.y})${o.moving ? ' moving' : ' stationary'}`);
+      console.log(`    ${o.id} ${o.mass} kg at (${o.x}, ${o.y}), travelled ${o.travelled} m${o.moving ? '' : ' (held position)'}`);
     }
     if (contested.opponents.length !== 2) failures.push('match simulation should spawn two opponents');
     if (!contested.opponents.some((o) => o.moving)) failures.push('opponents never moved');
@@ -466,6 +485,143 @@ async function main() {
     const contestedPath = shotPath.replace(/\.png$/, '-contested.png');
     await writeFile(contestedPath, Buffer.from(shot5.data, 'base64'));
     console.log(`  Screenshot: ${contestedPath}`);
+
+    // --- BIOBUZZ: turn the game on and make sure a MATCH runs and renders.
+    const game = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.sim.challenges.clear();
+      app.sim.clearOpponents();
+      const g = app._toggleGame();
+      g.start();
+      const staged = g.participants.map((p) => ({
+        id: p.id,
+        alliance: p.alliance,
+        held: p.intake.count,
+        legal: g.match.checkStartingPosition(p.robot, p.alliance).legal,
+      }));
+      return {
+        staged,
+        balls: g.field.allBalls.length,
+        flowers: g.field.flowers.length,
+        inFlowers: g.field.flowers.reduce((n, f) => n + f.stack.length, 0),
+        inCells: ['red', 'blue'].reduce(
+          (n, a) => n + g.field.hives[a].foreBalls.length + g.field.hives[a].aftBalls.length, 0),
+        obstacles: app.sim.field.elements.length,
+        phase: g.match.phase,
+      };
+    })()`);
+    console.log(`  BIOBUZZ: ${game.balls} elements, ${game.flowers} flowers (${game.inFlowers} POLLEN), ${game.inCells} NECTAR in cells, ${game.obstacles} solids`);
+    for (const p of game.staged) {
+      console.log(`    ${p.id} (${p.alliance}) preload ${p.held}, G304 legal: ${p.legal}`);
+    }
+    if (game.balls !== 56) failures.push(`expected 56 scoring elements, got ${game.balls}`);
+    if (game.flowers !== 4) failures.push(`expected 4 flowers, got ${game.flowers}`);
+    if (game.inFlowers !== 16) failures.push(`expected 16 staged flower POLLEN, got ${game.inFlowers}`);
+    if (game.inCells !== 6) failures.push(`expected 6 staged cell NECTAR, got ${game.inCells}`);
+    if (!game.staged.every((p) => p.legal)) failures.push('a robot was staged illegally');
+    if (game.obstacles !== 6) failures.push(`expected 6 game solids, got ${game.obstacles}`);
+
+    // Shoot into the CELL through the real renderer/physics loop.
+    const launched = await cdp.evaluate(`(() => {
+      const g = globalThis.ftcSim.sim.game;
+      const target = g.field.hiveTarget(g.alliance);
+      const robot = g.sim.robot;
+      robot.reset(target.x, target.y - 1.5, Math.PI / 2);
+      robot.body.velocity.set(0, 0);
+      const aimed = g.aimAtHive();
+      g.launcher.spinning = true;
+      g.launcher.omega = (g.launcher.targetRpm * 2 * Math.PI) / 60;
+      const before = g.field.hives[g.alliance].elementsInUpCell();
+      // robot.reset() resets its subsystems, which releases whatever the intake
+      // was holding -- so pick a ball up after moving, not before.
+      const ball = g.field.pollen.find(
+        (b) => b.free || (b.container && b.container.kind === 'preload'),
+      );
+      if (ball) ball.release();
+      const fired = ball ? Boolean(g.launcher.launch(ball)) : false;
+      for (let i = 0; i < 1500; i++) {
+        g.update(1 / 500);
+        if (ball && ball.container && ball.container.kind === 'cell') break;
+      }
+      return {
+        aimed,
+        fired,
+        landedIn: ball && ball.container ? ball.container.kind : null,
+        cellBefore: before,
+        cellAfter: g.field.hives[g.alliance].elementsInUpCell(),
+        rpm: Math.round(g.launcher.targetRpm),
+        hood: Math.round((g.launcher.hoodAngle * 180) / Math.PI),
+      };
+    })()`);
+    console.log(`  Shot: aim ${launched.rpm} rpm at ${launched.hood} deg -> ${launched.landedIn}; cell ${launched.cellBefore} -> ${launched.cellAfter}`);
+    if (!launched.aimed) failures.push('launcher could not solve a 1.5 m shot at the cell');
+    if (launched.landedIn !== 'cell') failures.push(`shot did not land in the cell (got ${launched.landedIn})`);
+
+    // Run the clock forward and confirm the panel and score keep up.
+    const played = await cdp.evaluate(`(() => {
+      const g = globalThis.ftcSim.sim.game;
+      for (let i = 0; i < 60 * 40; i++) g.update(1 / 60);
+      const panel = document.querySelector('.match-panel');
+      globalThis.ftcSim.matchPanel.update(g);
+      return {
+        phase: g.match.phase,
+        clock: +g.match.matchClock.toFixed(1),
+        panelVisible: panel && !panel.classList.contains('hidden'),
+        clockText: document.querySelector('.match-clock').textContent,
+        phaseText: document.querySelector('.match-phase').textContent,
+        redTotal: document.querySelector('.match-total.red').textContent,
+        blueTotal: document.querySelector('.match-total.blue').textContent,
+        rows: document.querySelectorAll('.match-breakdown tr').length,
+      };
+    })()`);
+    console.log(`  Match panel: ${played.clockText} ${played.phaseText}, red ${played.redTotal} - blue ${played.blueTotal}, ${played.rows} rows`);
+    if (!played.panelVisible) failures.push('match panel is not visible with the game running');
+    if (played.phase !== 'teleop') failures.push(`expected teleop after 40 s, got ${played.phase}`);
+    if (!/^\d:\d\d$/.test(played.clockText)) failures.push(`clock did not render: ${played.clockText}`);
+    if (Number(played.redTotal) <= 0) failures.push('red total did not score');
+
+    await sleep(700);
+    const shot6 = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const gamePath = shotPath.replace(/\.png$/, '-biobuzz.png');
+    await writeFile(gamePath, Buffer.from(shot6.data, 'base64'));
+    console.log(`  Screenshot: ${gamePath}`);
+
+    // A second angle with the panels hidden, so the field geometry itself can
+    // be eyeballed rather than guessed at through a HUD.
+    await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.config.set('view.showHud', false);
+      app.config.set('view.showGraphs', false);
+      app.config.set('view.camera', 'driverStation');
+      app.sim.robot.reset(-1.2, -0.6, 0.4);
+      return true;
+    })()`);
+    await sleep(700);
+    const shot7 = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const anglePath = shotPath.replace(/\.png$/, '-biobuzz-field.png');
+    await writeFile(anglePath, Buffer.from(shot7.data, 'base64'));
+    console.log(`  Screenshot: ${anglePath}`);
+    await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.config.set('view.showHud', true);
+      app.config.set('view.showGraphs', true);
+      return true;
+    })()`);
+
+    // And that it comes back off cleanly.
+    const off = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app._toggleGame();
+      return {
+        game: app.sim.game,
+        elements: app.sim.field.elements.length,
+        subsystems: app.sim.robot.subsystems.length,
+      };
+    })()`);
+    if (off.game !== null) failures.push('the game did not switch off');
+    if (off.elements !== 0) failures.push(`${off.elements} field elements left behind`);
+    if (off.subsystems !== 0) failures.push(`${off.subsystems} subsystems left behind`);
+    console.log('  Game off: field and robot back to bare');
 
     if (consoleErrors.length) {
       failures.push(`${consoleErrors.length} console error(s): ${consoleErrors[0]}`);
