@@ -183,6 +183,15 @@ export class Intake extends Subsystem {
   }
 
   /**
+   * Drop a ball, because something else has taken it.
+   * @param {import('../../physics/Ball.js').Ball} ball
+   */
+  detachBall(ball) {
+    const i = this.held.indexOf(ball);
+    if (i >= 0) this.held.splice(i, 1);
+  }
+
+  /**
    * Hand the front element to something else -- a launcher or a placer.
    * @returns {import('../../physics/Ball.js').Ball|null}
    */

@@ -92,18 +92,45 @@ export class Ball {
   }
 
   /** Hand the ball to a container, which becomes responsible for its position. */
+  /**
+   * Hand this ball to a container -- an intake, a CELL, a FLOWER.
+   *
+   * The previous container is told to let go first. Without that a ball ends up
+   * in two containers at once and both keep writing its position every step,
+   * so whichever runs last wins and the other silently loses its contents.
+   *
+   * @param {string} kind
+   * @param {{detachBall?: (ball: Ball) => void}|null} ref
+   */
   attachTo(kind, ref) {
+    this._leaveContainer(ref);
     this.container = { kind, ref };
     this.stop();
+    this.onFloor = false;
     return this;
   }
 
-  /** Return the ball to free physics, optionally with a velocity. */
+  /** Tell the current container to drop this ball, unless it is `keeping` it. */
+  _leaveContainer(keeping = null) {
+    const previous = this.container?.ref;
+    if (previous && previous !== keeping && typeof previous.detachBall === 'function') {
+      previous.detachBall(this);
+    }
+  }
+
+  /**
+   * Turn this ball loose with a velocity, letting its container know.
+   * @param {number} [vx]
+   * @param {number} [vy]
+   * @param {number} [vz]
+   */
   release(vx = 0, vy = 0, vz = 0) {
+    this._leaveContainer();
     this.container = null;
     this.vx = vx;
     this.vy = vy;
     this.vz = vz;
+    this.onFloor = false;
     return this;
   }
 

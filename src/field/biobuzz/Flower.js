@@ -312,6 +312,18 @@ export class Flower {
     return out;
   }
 
+  /**
+   * Drop a ball, because something else has taken it, and let the rest of the
+   * column settle into the gap.
+   * @param {import('../../physics/Ball.js').Ball} ball
+   */
+  detachBall(ball) {
+    const i = this.stack.indexOf(ball);
+    if (i < 0) return;
+    this.stack.splice(i, 1);
+    this._restack();
+  }
+
   /** Everything in the tube, released. Used when resetting a MATCH. */
   clear() {
     const taken = this.stack.slice();

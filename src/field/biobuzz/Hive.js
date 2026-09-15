@@ -180,6 +180,18 @@ export class Hive {
     return ball;
   }
 
+  /**
+   * Drop a ball, because something else has taken it. Called by the ball, so a
+   * CELL never keeps restacking an element that has gone elsewhere.
+   * @param {import('../../physics/Ball.js').Ball} ball
+   */
+  detachBall(ball) {
+    for (const list of [this.foreBalls, this.aftBalls, this.spilled]) {
+      const i = list.indexOf(ball);
+      if (i >= 0) list.splice(i, 1);
+    }
+  }
+
   /** Lay the contained balls out inside the CELL so they render sensibly. */
   _restackCell() {
     const opening = this.target;
@@ -221,7 +233,10 @@ export class Hive {
   }
 
   _completeTip(inAuto) {
-    const spilling = this.upBalls;
+    // Snapshot first: `release` tells this CELL to drop each ball, which
+    // splices the live array out from under the loop and would leave half the
+    // contents behind.
+    const spilling = this.upBalls.slice();
     // The CELL that was up is now down, so its contents fall out. This is the
     // mechanism that makes the loop repeatable: the newly-upward CELL arrives
     // empty every time.
@@ -239,7 +254,7 @@ export class Hive {
       );
       this.spilled.push(ball);
     }
-    spilling.length = 0;
+    this.upBalls.length = 0;
 
     this.up = this.up === 'fore' ? 'aft' : 'fore';
     this.tipping = false;
