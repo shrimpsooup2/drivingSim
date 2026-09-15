@@ -24,6 +24,32 @@ export class Subsystem {
   init() {}
 
   /**
+   * The robot's pose and velocity, flattened.
+   *
+   * `RigidBody2d` stores these as `position`, `rotation` and `velocity`
+   * objects. Mechanisms want plain numbers and a heading's cosine and sine,
+   * and reading them straight off the body is easy to get wrong -- a typo like
+   * `body.x` is `undefined` rather than an error, which silently turns every
+   * comparison downstream into a `NaN` that fails open. Going through here
+   * keeps the mapping in one place.
+   *
+   * @returns {{x:number, y:number, cos:number, sin:number, vx:number, vy:number, omega:number}}
+   */
+  get pose() {
+    const body = this.robot?.body;
+    if (!body) return { x: 0, y: 0, cos: 1, sin: 0, vx: 0, vy: 0, omega: 0 };
+    return {
+      x: body.position.x,
+      y: body.position.y,
+      cos: body.rotation.cos,
+      sin: body.rotation.sin,
+      vx: body.velocity.x,
+      vy: body.velocity.y,
+      omega: body.angularVelocity,
+    };
+  }
+
+  /**
    * Op-mode rate update: read the gamepad, run controllers, set targets.
    * @param {number} _dt seconds
    * @param {import('../input/FtcGamepad.js').FtcGamepad} _gamepad

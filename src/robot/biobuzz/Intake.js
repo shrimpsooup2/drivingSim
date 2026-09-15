@@ -91,8 +91,8 @@ export class Intake extends Subsystem {
    */
   updateControl(dt, gamepad) {
     if (!gamepad) return;
-    const intake = gamepad.rightBumper || gamepad.right_bumper;
-    const eject = gamepad.leftBumper || gamepad.left_bumper;
+    const intake = gamepad.right_bumper;
+    const eject = gamepad.left_bumper;
     this.command = intake ? 1 : eject ? -1 : 0;
   }
 
@@ -128,11 +128,9 @@ export class Intake extends Subsystem {
 
   _collect() {
     if (this.full || !this.robot) return;
-    const body = this.robot.body;
-    const cos = Math.cos(body.heading);
-    const sin = Math.sin(body.heading);
-    const mouthX = body.x + cos * this.robot.halfLength;
-    const mouthY = body.y + sin * this.robot.halfLength;
+    const { x, y, cos, sin, vx, vy } = this.pose;
+    const mouthX = x + cos * this.robot.halfLength;
+    const mouthY = y + sin * this.robot.halfLength;
 
     if (this.ballWorld) {
       for (const ball of this.ballWorld.balls) {
@@ -151,7 +149,7 @@ export class Intake extends Subsystem {
         }
 
         // Closing speed along the mouth axis. Backing away loses the element.
-        const rel = (ball.vx - body.vx) * cos + (ball.vy - body.vy) * sin;
+        const rel = (ball.vx - vx) * cos + (ball.vy - vy) * sin;
         if (rel > this.captureSpeed) continue;
 
         this.held.push(ball.attachTo('intake', this));
@@ -177,12 +175,10 @@ export class Intake extends Subsystem {
   _eject() {
     if (this.held.length === 0 || this._ejectCooldown > 0 || !this.robot) return;
     const ball = this.held.shift();
-    const body = this.robot.body;
-    const cos = Math.cos(body.heading);
-    const sin = Math.sin(body.heading);
+    const { x, y, cos, sin, vx, vy } = this.pose;
     const d = this.robot.halfLength + ball.radius + 1 * INCH;
-    ball.setPosition(body.x + cos * d, body.y + sin * d, ball.radius);
-    ball.release(body.vx + cos * 1.2, body.vy + sin * 1.2, 0);
+    ball.setPosition(x + cos * d, y + sin * d, ball.radius);
+    ball.release(vx + cos * 1.2, vy + sin * 1.2, 0);
     this._ejectCooldown = 0.25;
   }
 
@@ -212,12 +208,10 @@ export class Intake extends Subsystem {
   /** Keep carried elements pinned to the robot so the renderer draws them. */
   syncCarried() {
     if (!this.robot) return;
-    const body = this.robot.body;
-    const cos = Math.cos(body.heading);
-    const sin = Math.sin(body.heading);
+    const { x, y, cos, sin } = this.pose;
     this.held.forEach((ball, i) => {
       const back = this.robot.halfLength * 0.4 - i * ball.radius * 1.8;
-      ball.setPosition(body.x + cos * back, body.y + sin * back, 5 * INCH);
+      ball.setPosition(x + cos * back, y + sin * back, 5 * INCH);
       ball.stop();
     });
   }
