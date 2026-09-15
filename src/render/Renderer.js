@@ -162,7 +162,7 @@ export class Renderer {
 
     this.lines.reset();
     this._buildChallengeLines(sim);
-    if (sim.game) this._buildGameLines(sim.game);
+    if (sim.game) this._buildGameLines(sim.game, config.view);
     this._buildOverlays(sim);
     this._drawLines();
   }
@@ -594,8 +594,9 @@ export class Renderer {
   /**
    * Taped zones and the shooting hint, as lines on the floor.
    * @param {import('../app/BiobuzzGame.js').BiobuzzGame} game
+   * @param {import('../config/schema.js').SimConfig['view']} view
    */
-  _buildGameLines(game) {
+  _buildGameLines(game, view) {
     for (const zone of game.field.zones.all) {
       const colour = zone.alliance === 'red' ? [0.92, 0.28, 0.3] : [0.28, 0.5, 0.95];
       const [r, g, b] = colour;
@@ -650,6 +651,8 @@ export class Renderer {
       }
     }
 
+    if (view?.showTrajectory) this._buildTrajectory(game, view.trajectoryMode);
+
     // A ring under the HIVE the player is shooting at, so the target is
     // findable from any camera angle.
     const target = game.field.hiveTarget(game.alliance);
@@ -665,6 +668,66 @@ export class Renderer {
       0.9,
       32,
     );
+  }
+
+  /**
+   * The aiming guide: the arc a shot would fly, and where it would arrive.
+   *
+   * Drawn from `game.shotPreview`, which runs the launcher's own closed-form
+   * trajectory and then asks the HIVE the same aperture question the capture
+   * test asks -- so the colour is a real prediction, not a hint. Green means
+   * this shot scores; amber means it does not, and the arc shows you why.
+   *
+   * @param {import('../app/BiobuzzGame.js').BiobuzzGame} game
+   * @param {'live'|'solution'|'both'} [mode]
+   */
+  _buildTrajectory(game, mode = 'live') {
+    for (const arc of game.shotPreview(mode)) {
+      const points = arc.points;
+      if (points.length < 2) continue;
+      const live = arc.kind === 'live';
+      const [r, g, b] = live
+        ? arc.hit
+          ? [0.28, 0.92, 0.5]
+          : [0.98, 0.62, 0.2]
+        : [0.34, 0.7, 1];
+
+      for (let i = 1; i < points.length; i++) {
+        // The solved arc is dashed, so when both are on you can tell which is
+        // the shot you would get and which is the shot you want.
+        if (!live && i % 2 === 0) continue;
+        const a = points[i - 1];
+        const c = points[i];
+        this.lines.line(a.x, a.y, a.z, c.x, c.y, c.z, r, g, b, live ? 0.95 : 0.55);
+      }
+
+      if (live) {
+        // Ground track. Height in a perspective view reads as distance, so
+        // without a shadow on the tiles an arc that falls short looks the same
+        // as one that goes long.
+        for (let i = 1; i < points.length; i += 2) {
+          const a = points[i - 1];
+          const c = points[i];
+          this.lines.line(a.x, a.y, 0.004, c.x, c.y, 0.004, r, g, b, 0.28);
+        }
+      }
+
+      if (arc.entry) {
+        this._crossMarker(arc.entry.x, arc.entry.y, arc.entry.z, 0.09, r, g, b, 1);
+      } else if (live) {
+        // Where it lands instead, which is the useful number when it misses.
+        const last = points[points.length - 1];
+        this._circle(last.x, last.y, 0.005, 0.1, r, g, b, 0.8, 18);
+      }
+    }
+  }
+
+  /** A small three-axis cross in space, for marking a point. */
+  _crossMarker(x, y, z, size, r, g, b, a) {
+    this.lines.line(x - size, y, z, x + size, y, z, r, g, b, a);
+    this.lines.line(x, y - size, z, x, y + size, z, r, g, b, a);
+    this.lines.line(x, y, z - size, x, y, z + size, r, g, b, a);
+    return this;
   }
 
   _drawRobot(sim) {

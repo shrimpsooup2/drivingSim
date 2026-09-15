@@ -8,7 +8,11 @@ import { ChallengePanel } from '../ui/ChallengePanel.js';
 import { InputManager } from '../input/InputManager.js';
 import { Overlay2d } from '../render/Overlay2d.js';
 import { defaultConfig } from '../config/schema.js';
-import { KEYBOARD_HELP } from '../input/KeyboardSource.js';
+import {
+  KEYBOARD_HELP,
+  assertNoKeyboardCollisions,
+  keyFor,
+} from '../input/KeyboardSource.js';
 import { INCH } from '../math/MathUtil.js';
 
 /**
@@ -59,7 +63,10 @@ export class App {
     // on this season's game. The simulator underneath does not require it --
     // `Simulation` starts bare and the drills switch it off -- so everything
     // that came before still works, and G puts it away.
-    this.sim.enableGame({ alliance: 'red' }).start();
+    //
+    // No alliance is passed: the game reads it, and the match periods, from the
+    // settings panel's own config, so a saved choice survives a reload.
+    this.sim.enableGame().start();
     this._bindMouse();
 
     this.lastFrame = 0;
@@ -89,16 +96,16 @@ export class App {
          Xbox pad) and press a button on it to wake it up, or drive with the keyboard.</p>
 
       <h3>Scoring &mdash; how to shoot</h3>
+      <p>Both names are given: the controller button first, then the key that stands in
+         for it. The on-screen prompt shows whichever one you are actually using.</p>
       <div class="keys">
-        <kbd>Right bumper</kbd><span>Run the intake &mdash; drive over a POLLEN to pick it up</span>
-        <kbd>Y</kbd><span>Spin the flywheel up (leave it running)</span>
-        <kbd>Right trigger</kbd><span>Fire into your HIVE's raised CELL</span>
-        <kbd>Left bumper</kbd><span>Spit the front element back out</span>
-        <kbd>D-pad &uarr;&darr;</kbd><span>Trim the hood angle</span>
-        <kbd>D-pad &larr;&rarr;</kbd><span>Trim the target RPM</span>
+        ${GAME_CONTROLS.map(
+          ([pad, control, what]) =>
+            `<kbd>${pad}</kbd><span><span class="alt-key">${keyFor(control) ?? ''}</span>${what}</span>`,
+        ).join('')}
       </div>
-      <p>The panel at the top of the screen tells you what to press next, and shows the
-         flywheel's recovery bar. Three things catch everyone:</p>
+      <p>The match panel down the side of the screen tells you what to press next, and
+         shows the flywheel's recovery bar. Three things catch everyone:</p>
       <ul>
         <li><strong>Wait for the wheel.</strong> The ball leaves at whatever speed the
             flywheel is actually doing, so firing early throws the shot short.</li>
@@ -114,14 +121,14 @@ export class App {
         <kbd>Left stick</kbd><span>Drive and strafe</span>
         <kbd>Right stick X</kbd><span>Rotate</span>
         <kbd>Left trigger</kbd><span>Precision mode (analogue)</span>
+        <kbd>X</kbd><span>Toggle field centric</span>
+        <kbd>A</kbd><span>Reset the IMU heading</span>
+        <kbd>B</kbd><span>Burst: bypass the acceleration ramp</span>
         <kbd>Back</kbd><span>Reset robot position</span>
       </div>
       <h3>Keyboard</h3>
       <div class="keys">
         ${KEYBOARD_HELP.map(([k, d]) => `<kbd>${k}</kbd><span>${d}</span>`).join('')}
-        <kbd>G</kbd><span>Put the game away / bring it back</span>
-        <kbd>M</kbd><span>Restart the match</span>
-        <kbd>P</kbd><span>Pause</span>
         <kbd>?</kbd><span>Show this help</span>
       </div>
       <h3>Reading the field</h3>
@@ -169,11 +176,10 @@ export class App {
     });
     keyboard.on('KeyB', () => this._resetCamera());
     keyboard.on('KeyC', () => this._cycleCamera());
-    keyboard.on('KeyF', () => {
-      const opMode = /** @type {any} */ (this.sim.opMode);
-      opMode.driver?.toggleFieldCentric?.();
+    keyboard.on('KeyT', () => {
+      const view = this.config.values.view;
+      this.config.set('view.showTrajectory', !view.showTrajectory);
     });
-    keyboard.on('KeyH', () => this.sim.robot.imu.resetYaw(this.sim.robot.body.rotation.radians));
     keyboard.on('KeyP', () => {
       this.sim.paused = !this.sim.paused;
     });
@@ -183,6 +189,13 @@ export class App {
       this.toggleHelp(false);
       this.drills.toggle(false);
     });
+
+    // Field centric and the heading reset are deliberately not here. They are
+    // op-mode bindings on X and A, which the keyboard reaches as X and Z --
+    // giving them app shortcuts as well was what made them fire twice per
+    // press and appear dead. `on()` throws on a collision with a pad key; this
+    // says so out loud for the whole set.
+    assertNoKeyboardCollisions(keyboard.actions.keys());
   }
 
   /**
@@ -193,7 +206,7 @@ export class App {
     if (this.sim.game) {
       this.sim.disableGame();
     } else {
-      this.sim.enableGame({ alliance: 'red' }).start();
+      this.sim.enableGame().start();
     }
     this.hud.clearGraphs();
     return this.sim.game;
@@ -296,7 +309,7 @@ export class App {
       const view = this.config.values.view;
       this.hud.setVisible(view.showHud, view.showGraphs);
       if (view.showHud || view.showGraphs) this.hud.update(this.sim, dt);
-      this.matchPanel.update(view.showHud ? this.sim.game : null);
+      this.matchPanel.update(view.showHud ? this.sim.game : null, this.input.activeSource);
     } catch (err) {
       this.running = false;
       console.error('[App] frame failed:', err);
@@ -304,6 +317,21 @@ export class App {
     }
   }
 }
+
+/**
+ * The game's own controls, named the way the controller names them, paired with
+ * the gamepad field each one reads. The keyboard's stand-in key comes from
+ * `keyFor`, so the help overlay and the in-match prompt cannot drift apart from
+ * the actual mapping.
+ */
+const GAME_CONTROLS = [
+  ['Right bumper', 'right_bumper', 'Run the intake &mdash; drive over a POLLEN to pick it up'],
+  ['Y', 'y', 'Spin the flywheel up (leave it running)'],
+  ['Right trigger', 'right_trigger', "Fire into your HIVE's raised CELL"],
+  ['Left bumper', 'left_bumper', 'Spit the front element back out'],
+  ['D-pad &uarr;&darr;', 'dpad_up', 'Trim the hood angle'],
+  ['D-pad &larr;&rarr;', 'dpad_right', 'Trim the target RPM'],
+];
 
 /** Render a readable message instead of a blank canvas when something fails. */
 export function showFatal(container, err) {

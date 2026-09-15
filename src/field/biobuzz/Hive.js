@@ -308,17 +308,20 @@ export class Hive {
   /**
    * The opening's in-plane "up": from its lower edge toward the pentagon's apex.
    *
-   * This is body-frame `(0, 1)` for *both* CELLS, because they are mirror
-   * images and each opens upward when its own end is raised. It cannot be
-   * recovered from the normal alone -- turning the normal a quarter turn gives
-   * the right answer for one CELL and the upside-down one for the other, which
-   * draws that CELL mirrored through its own opening.
+   * This is body-frame `(0, 1)` for *both* CELLS -- across the arm, away from
+   * the tiles -- so it takes no side sign. The two CELLS are mirror images
+   * through the pivot, but "up" is not mirrored: both pentagons stand on their
+   * 20 in base with the apex above it, whichever end of the arm is raised.
+   *
+   * It cannot be recovered from the normal alone. Turning the normal a quarter
+   * turn gives the right answer for one CELL and the upside-down one for the
+   * other, which draws that CELL mirrored through its own opening; multiplying
+   * by the side sign does the same thing, just to the other CELL.
    *
    * @param {'fore'|'aft'} side
    */
   openingUp(side) {
-    const sign = this._sideSign(side);
-    return { y: -sign * Math.sin(this.angle), z: sign * Math.cos(this.angle) };
+    return { y: -Math.sin(this.angle), z: Math.cos(this.angle) };
   }
 
   /**
@@ -367,6 +370,54 @@ export class Hive {
   }
 
   /**
+   * Signed distance from a point to a CELL's opening plane, positive outside.
+   * @param {'fore'|'aft'} side
+   */
+  openingDepth(side, x, y, z) {
+    const opening = this.cellOpening(side);
+    const normal = this.openingNormal(side);
+    return (y - opening.y) * normal.y + (z - opening.z) * normal.z;
+  }
+
+  /**
+   * Whether a point is inside a CELL's mouth: through the opening plane, within
+   * the pentagon, and not past the back wall.
+   *
+   * Split out of `interactBall` so the aiming guide can ask the same question
+   * the capture test asks. Two separate copies of "is this in the CELL" is how
+   * a guide ends up drawing a hit on a shot the HIVE then refuses.
+   *
+   * @param {'fore'|'aft'} side
+   * @param {{margin?: number, outward?: number}} [opts] `margin` is slack on the
+   *   pentagon outline; `outward` is how far in front of the opening plane the
+   *   point may still be. They are separate because a sphere counts as arriving
+   *   as soon as it *touches* the plane -- so `outward` is its radius -- but its
+   *   centre still has to be inside the outline, or it hits the rib instead.
+   */
+  openingContains(side, x, y, z, opts = {}) {
+    const margin = opts.margin ?? 0;
+    const outward = opts.outward ?? margin;
+    const opening = this.cellOpening(side);
+    const normal = this.openingNormal(side);
+    const dy = y - opening.y;
+    const dz = z - opening.z;
+
+    // Distance through the opening plane, positive outside the CELL.
+    const through = dy * normal.y + dz * normal.z;
+    if (through < -CELL_DEPTH || through > outward) return false;
+
+    // Height up the opening, measured in its own plane.
+    const upVec = this.openingUp(side);
+    const v = dy * upVec.y + dz * upVec.z + CELL_OPENING_HEIGHT / 2;
+    if (v < -margin || v > CELL_OPENING_HEIGHT + margin) return false;
+
+    // And within the pentagon at that height, which is narrower than the full
+    // 20 in once you are above the shoulder.
+    const halfWidth = openingHalfWidth(Math.min(Math.max(v, 0), CELL_OPENING_HEIGHT));
+    return Math.abs(x - opening.x) <= halfWidth + margin;
+  }
+
+  /**
    * Try to capture a free ball into the upward-facing CELL.
    *
    * The capture volume is the CELL's mouth, inflated slightly, and the ball
@@ -380,29 +431,20 @@ export class Hive {
     // A CELL whose mouth has rolled to horizontal cannot take anything.
     if (this.openingUpwardness(side) < 0.1) return false;
 
-    const opening = this.cellOpening(side);
     const normal = this.openingNormal(side);
-    const margin = INFERRED.cellCaptureMargin;
-
     // The ball has to be heading *into* the opening, not drifting back out.
     const closing = -(ball.vy * normal.y + ball.vz * normal.z);
     if (closing <= 0) return false;
 
-    const dy = ball.y - opening.y;
-    const dz = ball.z - opening.z;
-    // Distance through the opening plane, positive outside the CELL.
-    const through = dy * normal.y + dz * normal.z;
-    if (through < -CELL_DEPTH || through > ball.radius + margin) return false;
-
-    // Height up the opening, measured in its own plane.
-    const upVec = this.openingUp(side);
-    const v = dy * upVec.y + dz * upVec.z + CELL_OPENING_HEIGHT / 2;
-    if (v < -margin || v > CELL_OPENING_HEIGHT + margin) return false;
-
-    // And within the pentagon at that height, which is narrower than the full
-    // 20 in once you are above the shoulder.
-    const halfWidth = openingHalfWidth(Math.min(Math.max(v, 0), CELL_OPENING_HEIGHT));
-    if (Math.abs(ball.x - opening.x) > halfWidth + margin) return false;
+    const margin = INFERRED.cellCaptureMargin;
+    if (
+      !this.openingContains(side, ball.x, ball.y, ball.z, {
+        margin,
+        outward: ball.radius + margin,
+      })
+    ) {
+      return false;
+    }
 
     this.upBalls.push(ball);
     ball.attachTo('cell', this);

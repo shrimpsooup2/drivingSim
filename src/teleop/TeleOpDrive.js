@@ -12,10 +12,16 @@ import { radPerSecToRpm } from '../math/MathUtil.js';
  *   Left stick      drive and strafe
  *   Right stick X   rotate
  *   Left trigger    precision mode (analogue)
- *   Right trigger   override the acceleration ramp for a burst of full power
- *   Y / triangle    toggle field centric
- *   B / circle      reset the IMU heading to the current pose
+ *   X / square      toggle field centric
+ *   A / cross       reset the IMU heading to the current pose
+ *   B / circle      override the acceleration ramp for a burst of full power
  *   Back            reset the robot to its starting position
+ *
+ * The driver aids deliberately keep off Y, the bumpers and the right trigger.
+ * Those are the game's: Y spins the flywheel, the bumpers run the intake and
+ * the right trigger fires. Sharing the right trigger between "fire" and
+ * "burst" meant every shot also broke the wheels loose, and sharing Y meant
+ * field centric toggled twice per press and appeared dead.
  */
 export class TeleOpDrive extends OpMode {
   /**
@@ -51,8 +57,8 @@ export class TeleOpDrive extends OpMode {
     if (!robot) return;
     this.runtime += dt;
 
-    if (gamepad1.justPressed('y')) this.driver.toggleFieldCentric();
-    if (gamepad1.justPressed('b')) robot.imu.resetYaw(robot.body.rotation.radians);
+    if (gamepad1.justPressed('x')) this.driver.toggleFieldCentric();
+    if (gamepad1.justPressed('a')) robot.imu.resetYaw(robot.body.rotation.radians);
     if (gamepad1.justPressed('back')) this.sim?.resetRobot();
 
     const command = this.driver.process(
@@ -62,11 +68,12 @@ export class TeleOpDrive extends OpMode {
       dt,
     );
 
-    // Right trigger bypasses the acceleration ramp. Useful for a deliberate
-    // burst, and a good way to feel exactly how much the ramp was protecting
-    // you from breaking the wheels loose.
+    // B bypasses the acceleration ramp. Useful for a deliberate burst, and a
+    // good way to feel exactly how much the ramp was protecting you from
+    // breaking the wheels loose. It used to be the right trigger, which is the
+    // fire button -- so every shot came with a wheelspin.
     let { forward, strafe, turn } = command;
-    if (gamepad1.right_trigger > 0.5) {
+    if (gamepad1.b) {
       const raw = this.driver.rawOutput;
       forward = raw.forward;
       strafe = raw.strafe;

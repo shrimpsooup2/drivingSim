@@ -90,6 +90,7 @@ export class Simulation {
       for (const opponent of this.opponents) opponent.applyBaseConfig(this.config);
       this.field.applySettings(this.config);
       if (this.opMode instanceof TeleOpDrive) this.opMode.applySettings(this.config);
+      this._applyGameSettings();
       this.events.emit('rebuilt');
     });
     this.configStore.on('change', (path) => {
@@ -103,11 +104,32 @@ export class Simulation {
       if (path === 'control.inputLatencyMs') {
         this.input.setLatency(this.config.control.inputLatencyMs / 1000);
       }
+      this._applyGameSettings();
     });
     this.configStore.on('bulk', () => {
       this.config = this.configStore.values;
       this.input.setLatency(this.config.control.inputLatencyMs / 1000);
+      this._applyGameSettings();
     });
+  }
+
+  /**
+   * Push match settings into a running game.
+   *
+   * Switching ALLIANCE is the one change the game cannot absorb in place --
+   * which HIVE and which GARDEN are yours is wired into every participant and
+   * into the MATCH's entries -- so that one rebuilds, restarting the MATCH.
+   * Everything else applies live.
+   */
+  _applyGameSettings() {
+    const game = this.game;
+    if (!game) return null;
+    if (game.allianceChanged(this.config)) {
+      this.disableGame();
+      return this.enableGame().start();
+    }
+    game.applySettings(this.config);
+    return game;
   }
 
   /**

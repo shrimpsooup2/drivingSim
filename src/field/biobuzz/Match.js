@@ -44,6 +44,7 @@ export class Match {
    *   autoSeconds?: number,
    *   transitionSeconds?: number,
    *   teleopSeconds?: number,
+   *   flowerUnlockRemaining?: number,
    * }} opts
    */
   constructor(opts) {
@@ -51,6 +52,8 @@ export class Match {
     this.autoSeconds = opts.autoSeconds ?? AUTO_SECONDS;
     this.transitionSeconds = opts.transitionSeconds ?? TRANSITION_SECONDS;
     this.teleopSeconds = opts.teleopSeconds ?? TELEOP_SECONDS;
+    /** When G410 lifts, in seconds left in TELEOP. */
+    this.flowerUnlockRemaining = opts.flowerUnlockRemaining ?? FLOWER_UNLOCK_REMAINING;
 
     /** @type {{robot: any, alliance: 'red'|'blue', id: string}[]} */
     this.entries = [];
@@ -108,11 +111,44 @@ export class Match {
     return this;
   }
 
-  /** Begin the MATCH. AUTO starts immediately. */
-  start() {
-    this.phase = 'auto';
+  /**
+   * Change the periods without disturbing a MATCH in progress.
+   *
+   * Takes effect immediately, which is the useful behaviour: dragging TELEOP
+   * down to 30 seconds mid-match ends it almost at once, and dragging the
+   * FLOWER unlock up opens them there and then. The phase clock is left alone
+   * -- rewinding it would be a different feature, and a confusing one.
+   *
+   * @param {{autoSeconds?: number, transitionSeconds?: number,
+   *          teleopSeconds?: number, flowerUnlockRemaining?: number}} periods
+   */
+  setPeriods(periods = {}) {
+    if (periods.autoSeconds !== undefined) this.autoSeconds = Math.max(0, periods.autoSeconds);
+    if (periods.transitionSeconds !== undefined) {
+      this.transitionSeconds = Math.max(0, periods.transitionSeconds);
+    }
+    if (periods.teleopSeconds !== undefined) {
+      this.teleopSeconds = Math.max(0, periods.teleopSeconds);
+    }
+    if (periods.flowerUnlockRemaining !== undefined) {
+      this.flowerUnlockRemaining = Math.max(0, periods.flowerUnlockRemaining);
+    }
+    return this;
+  }
+
+  /**
+   * Begin the MATCH.
+   *
+   * @param {{phase?: 'auto'|'teleop'}} [opts] `phase: 'teleop'` starts on the
+   *   sticks, skipping AUTO. The AUTO period is treated as having happened with
+   *   nothing moving, so LEAVE and AUTO PARK go unscored rather than being
+   *   silently awarded -- which is also what the score would read after a
+   *   do-nothing AUTO.
+   */
+  start(opts = {}) {
+    this.phase = opts.phase === 'teleop' ? 'teleop' : 'auto';
     this.phaseClock = 0;
-    this.matchClock = 0;
+    this.matchClock = this.phase === 'teleop' ? this.autoSeconds + this.transitionSeconds : 0;
     // LEAVE means moving off the wall, so note who was on it to begin with.
     // G304.C requires every ROBOT to start touching the perimeter; one staged
     // illegally off the wall has not "left" anything and earns nothing.
@@ -275,7 +311,7 @@ export class Match {
    * still scores and the ALLIANCE takes the violation.
    */
   _checkFlowerLock() {
-    if (this.phase === 'teleop' && this.teleopRemaining <= FLOWER_UNLOCK_REMAINING) {
+    if (this.phase === 'teleop' && this.teleopRemaining <= this.flowerUnlockRemaining) {
       this.flowerUnlocked = true;
       return;
     }

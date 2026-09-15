@@ -2,7 +2,7 @@ import { BiobuzzField } from '../field/biobuzz/BiobuzzField.js';
 import { Match } from '../field/biobuzz/Match.js';
 import { Intake } from '../robot/biobuzz/Intake.js';
 import { Launcher } from '../robot/biobuzz/Launcher.js';
-import { FIELD_INNER_HALF } from '../field/biobuzz/constants.js';
+import { FIELD_INNER_HALF, POLLEN_RADIUS } from '../field/biobuzz/constants.js';
 import { INCH } from '../math/MathUtil.js';
 
 const INCH_TO_M = INCH;
@@ -14,6 +14,25 @@ const INCH_TO_M = INCH;
  * audience half, so the gap between them and the far corner are the openings.
  */
 const STAGING_OFFSETS = [0, -48, -12, 12, 58];
+
+/** Pause at the buzzer before an auto-restart, so the final score is readable. */
+const RESTART_DELAY = 3;
+
+/**
+ * Used when there is no config store -- a bare `new BiobuzzGame(sim)` in a
+ * test. The numbers are the manual's, so a game built without settings is the
+ * game the manual describes.
+ */
+const DEFAULT_MATCH_SETTINGS = {
+  alliance: 'red',
+  startPhase: 'auto',
+  autoRestart: false,
+  autoSeconds: undefined,
+  transitionSeconds: undefined,
+  teleopSeconds: undefined,
+  flowerUnlockRemaining: undefined,
+  moveTolerance: 0.35,
+};
 
 /**
  * Puts BIOBUZZ on the simulator: the field, a MATCH, and a mechanism set on
@@ -32,7 +51,16 @@ export class BiobuzzGame {
    */
   constructor(sim, opts = {}) {
     this.sim = sim;
-    this.alliance = opts.alliance ?? 'red';
+    /**
+     * Match settings, read from the config store so the settings panel drives
+     * them. `opts` still wins, because tests and the drills want to say
+     * "red, full match" without touching the user's saved config.
+     */
+    this.settings = { ...DEFAULT_MATCH_SETTINGS, ...(sim.config?.match ?? {}), ...opts };
+    this.alliance = this.settings.alliance === 'blue' ? 'blue' : 'red';
+
+    /** Seconds since the MATCH ended, for the optional auto-restart. */
+    this._endedFor = 0;
 
     this.field = new BiobuzzField({ field: sim.field });
 
@@ -52,6 +80,10 @@ export class BiobuzzGame {
     this.match = new Match({
       field: this.field,
       robots: [{ robot: sim.robot, alliance: this.alliance, id: 'player' }],
+      autoSeconds: this.settings.autoSeconds,
+      transitionSeconds: this.settings.transitionSeconds,
+      teleopSeconds: this.settings.teleopSeconds,
+      flowerUnlockRemaining: this.settings.flowerUnlockRemaining,
     });
 
     this.attachOpponents();
@@ -140,9 +172,33 @@ export class BiobuzzGame {
     return this;
   }
 
+  /**
+   * Take new match settings from the config store.
+   *
+   * The periods apply to the MATCH already running -- see `Match.setPeriods`.
+   * The ALLIANCE cannot be changed in place, because which HIVE and which
+   * GARDEN are yours is baked into every participant; `Simulation` rebuilds the
+   * game for that, and `allianceChanged` is how it knows to.
+   *
+   * @param {import('../config/schema.js').SimConfig} config
+   */
+  applySettings(config) {
+    const next = { ...this.settings, ...(config?.match ?? {}) };
+    this.settings = next;
+    this.match.setPeriods(next);
+    return this;
+  }
+
+  /** Whether the config now asks for an ALLIANCE this game cannot become. */
+  allianceChanged(config) {
+    const wanted = config?.match?.alliance;
+    return Boolean(wanted) && wanted !== this.alliance;
+  }
+
   start() {
     this.reset();
-    this.match.start();
+    this._endedFor = 0;
+    this.match.start({ phase: this.settings.startPhase });
     return this;
   }
 
@@ -164,12 +220,55 @@ export class BiobuzzGame {
 
     this.match.update(dt, { bodies });
     for (const entry of this.participants) entry.intake.syncCarried();
+
+    // Optional loop: a practice session is one match after another, and having
+    // to reach for a key between them is the part that makes people stop.
+    if (this.match.phase === 'ended') {
+      this._endedFor += dt;
+      if (this.settings.autoRestart && this._endedFor >= RESTART_DELAY) this.start();
+    } else {
+      this._endedFor = 0;
+    }
     return this;
   }
 
   /** Aim the player's launcher at their own HIVE, if the shot can be made. */
   aimAtHive() {
     return this.launcher.aimAt(this.field.hiveTarget(this.alliance));
+  }
+
+  /**
+   * The arc or arcs an aiming guide should draw, with the same pass/fail the
+   * HIVE itself will apply when the ball arrives.
+   *
+   * `live` is the shot you would get by firing now -- current hood angle,
+   * current wheel speed, current ROBOT velocity. `solution` is the shot a
+   * correct setup would fly. Drawing both is the teaching version: the gap
+   * between them is exactly what waiting for the wheel buys you.
+   *
+   * @param {'live'|'solution'|'both'} [mode]
+   * @returns {{kind: 'live'|'solution', points: {x:number,y:number,z:number}[],
+   *            hit: boolean, entry: {x:number,y:number,z:number}|null}[]}
+   */
+  shotPreview(mode = 'live') {
+    const launcher = this.launcher;
+    const hive = this.field.hives[this.alliance];
+    const side = hive.up;
+    const arcs = [];
+
+    const add = (kind, opts) => {
+      const arc = launcher.trajectory(opts);
+      if (!arc) return;
+      const entry = apertureEntry(arc, hive, side);
+      arcs.push({ kind, points: arc.points, hit: Boolean(entry), entry });
+    };
+
+    if (mode !== 'solution') add('live', {});
+    if (mode !== 'live') {
+      const solved = launcher.aimFor(this.field.hiveTarget(this.alliance));
+      if (solved) add('solution', { angle: solved.angle, speed: solved.speed });
+    }
+    return arcs;
   }
 
   /** Everything the HUD needs, in one object. */
@@ -197,9 +296,10 @@ export class BiobuzzGame {
       /**
        * Whether the robot is moving enough to throw a shot off. The opening is
        * 20 in wide, so a little drift survives; this is the point past which it
-       * does not.
+       * does not. Adjustable, because how much drift is survivable depends on
+       * the range, and someone drilling close shots wants a tighter warning.
        */
-      moving: this.sim.robot.body.speed > 0.35,
+      moving: this.sim.robot.body.speed > this.settings.moveTolerance,
       solution: this.launcher.aimFor(this.field.hiveTarget(this.alliance)),
     };
   }
@@ -218,4 +318,42 @@ export class BiobuzzGame {
     this.participants.length = 0;
     return this;
   }
+}
+
+/**
+ * Where an arc first enters a CELL's mouth, or null if it never does.
+ *
+ * Walks the sampled arc for a crossing of the opening plane from outside to
+ * inside, refines it by bisection on the arc's own closed form -- the samples
+ * are for drawing, and a 48-point polyline is far too coarse to decide a 20 in
+ * aperture -- then asks the HIVE whether that point is actually inside the
+ * pentagon. A parabola can cross an infinite plane twice, so every crossing is
+ * tried rather than just the first.
+ *
+ * @param {{points: {x:number,y:number,z:number}[], at: (t:number) => {x:number,y:number,z:number}, flightTime: number}} arc
+ * @param {import('../field/biobuzz/Hive.js').Hive} hive
+ * @param {'fore'|'aft'} side
+ */
+function apertureEntry(arc, hive, side) {
+  const depth = (p) => hive.openingDepth(side, p.x, p.y, p.z);
+  const n = arc.points.length - 1;
+  for (let i = 0; i < n; i++) {
+    const a = depth(arc.points[i]);
+    const b = depth(arc.points[i + 1]);
+    if (a <= 0 || b > 0) continue;
+    let lo = (arc.flightTime * i) / n;
+    let hi = (arc.flightTime * (i + 1)) / n;
+    for (let k = 0; k < 24; k++) {
+      const mid = (lo + hi) / 2;
+      if (depth(arc.at(mid)) > 0) lo = mid;
+      else hi = mid;
+    }
+    const point = arc.at((lo + hi) / 2);
+    // The ball counts as arriving when it touches the plane, and its centre has
+    // to be inside the outline -- the same two allowances the capture test uses.
+    if (hive.openingContains(side, point.x, point.y, point.z, { margin: 0, outward: POLLEN_RADIUS })) {
+      return point;
+    }
+  }
+  return null;
 }

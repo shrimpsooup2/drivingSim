@@ -197,6 +197,69 @@ test('the down CELL cannot hold anything, which is why a tip empties it', () => 
   assert.ok(!hive.interactBall(ball));
 });
 
+test('both CELLS on both HIVES stand on their base, apex up', () => {
+  // The pentagon has a 20 in base and an apex 14 in above it. Which way that
+  // apex points is the difference between a basket and a funnel, and it is not
+  // visible in a span check -- flipping "up" covers the same 53.5-to-65.6 in
+  // interval, just from the other end. So check the direction itself.
+  for (const startUp of ['fore', 'aft']) {
+    const hive = new Hive({ alliance: 'red', pivotX: 0, startUp });
+    for (const side of ['fore', 'aft']) {
+      const up = hive.openingUp(side);
+      const centre = hive.cellOpening(side);
+      const apex = {
+        y: centre.y + up.y * (CELL_OPENING_HEIGHT / 2),
+        z: centre.z + up.z * (CELL_OPENING_HEIGHT / 2),
+      };
+      const base = {
+        y: centre.y - up.y * (CELL_OPENING_HEIGHT / 2),
+        z: centre.z - up.z * (CELL_OPENING_HEIGHT / 2),
+      };
+      assert.ok(
+        apex.z > base.z,
+        `${startUp}-up hive, ${side} CELL: apex at ${apex.z.toFixed(3)} m is below the base at ${base.z.toFixed(3)} m`,
+      );
+      // It is also a unit vector perpendicular to the opening normal, which is
+      // what makes the (normal, up) pair a usable frame for the renderer.
+      const n = hive.openingNormal(side);
+      assert.ok(Math.abs(Math.hypot(up.y, up.z) - 1) < 1e-12);
+      assert.ok(Math.abs(up.y * n.y + up.z * n.z) < 1e-12);
+    }
+  }
+});
+
+test('the pentagon taper is above the shoulder, not below it', () => {
+  // The taper only bites near the apex. Measuring height from the wrong edge
+  // put the narrow part at the bottom, which let a shot into the top corners
+  // through and rejected one along the base -- exactly backwards.
+  for (const side of ['fore', 'aft']) {
+    const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: side });
+    // Derived here from the arm angle rather than read off the HIVE, so that a
+    // flipped `openingUp` moves the measurement without also moving the ball
+    // and cancelling itself out.
+    const up = { y: -Math.sin(hive.angle), z: Math.cos(hive.angle) };
+    const n = hive.openingNormal(side);
+    const centre = hive.cellOpening(side);
+    // A ball entering 1 in below the apex, offset most of the way to the old
+    // 20 in edge: outside the pentagon there, inside it near the base.
+    const nearApex = CELL_OPENING_HEIGHT / 2 - 1 * 0.0254;
+    const nearBase = -CELL_OPENING_HEIGHT / 2 + 1 * 0.0254;
+    const offset = 8 * 0.0254;
+    const shoot = (v) => {
+      const ball = pollen();
+      ball.setPosition(
+        centre.x + offset,
+        centre.y + up.y * v + n.y * 0.01,
+        centre.z + up.z * v + n.z * 0.01,
+      );
+      ball.setVelocity(0, -n.y * 1.5, -n.z * 1.5);
+      return hive.interactBall(ball);
+    };
+    assert.ok(shoot(nearBase), `${side}: a ball along the base should go in`);
+    assert.ok(!shoot(nearApex), `${side}: a ball 8 in off centre at the apex should not`);
+  }
+});
+
 test('the CELL opening is where Figure 9-9 puts it, not where the contents rest', () => {
   const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
   const opening = hive.cellOpening('fore');

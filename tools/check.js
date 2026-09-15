@@ -636,40 +636,65 @@ async function main() {
     const cellDraw = await cdp.evaluate(`(() => {
       const app = globalThis.ftcSim;
       const g = app.sim.game;
-      const hive = g.field.hives[g.alliance];
-      const opening = hive.cellOpening(hive.up);
-      const normal = hive.openingNormal(hive.up);
-      const up = hive.openingUp(hive.up);
-      const m = new Float32Array(16);
-      app.renderer._cellMatrix(m, opening.x, opening.y, opening.z, normal, up);
-      // Mesh z runs 0 at the opening's lower edge to 1 at the apex; mesh y runs
-      // 0 at the opening plane to 1 at the back of the cell.
-      const at = (x, y, z) => [0, 1, 2].map(
-        (i) => m[i] * x + m[4 + i] * y + m[8 + i] * z + m[12 + i],
-      );
       const IN = 0.0254;
-      const lower = at(0, 0, 0);
-      const apex = at(0, 0, 1);
-      const back = at(0, 1, 0);
-      return {
-        lowerZ: lower[2] / IN,
-        apexZ: apex[2] / IN,
-        widthIn: (at(1, 0, 0)[0] - at(-1, 0, 0)[0]) / IN,
-        depthIn: Math.hypot(back[1] - lower[1], back[2] - lower[2]) / IN,
-      };
+      const out = [];
+      for (const alliance of ['red', 'blue']) {
+        const hive = g.field.hives[alliance];
+        for (const side of ['fore', 'aft']) {
+          const opening = hive.cellOpening(side);
+          const normal = hive.openingNormal(side);
+          const up = hive.openingUp(side);
+          const m = new Float32Array(16);
+          app.renderer._cellMatrix(m, opening.x, opening.y, opening.z, normal, up);
+          // Mesh z runs 0 at the opening's lower edge to 1 at the apex; mesh y
+          // runs 0 at the opening plane to 1 at the back of the cell.
+          const at = (x, y, z) => [0, 1, 2].map(
+            (i) => m[i] * x + m[4 + i] * y + m[8 + i] * z + m[12 + i],
+          );
+          const lower = at(0, 0, 0);
+          const apex = at(0, 0, 1);
+          const back = at(0, 1, 0);
+          out.push({
+            alliance,
+            side,
+            raised: hive.up === side,
+            lowerZ: lower[2] / IN,
+            apexZ: apex[2] / IN,
+            widthIn: (at(1, 0, 0)[0] - at(-1, 0, 0)[0]) / IN,
+            depthIn: Math.hypot(back[1] - lower[1], back[2] - lower[2]) / IN,
+          });
+        }
+      }
+      return out;
     })()`);
-    console.log(`  CELL as drawn: opening ${cellDraw.lowerZ.toFixed(1)} to ${cellDraw.apexZ.toFixed(1)} in, ${cellDraw.widthIn.toFixed(1)} in wide, ${cellDraw.depthIn.toFixed(1)} in deep`);
-    if (Math.abs(cellDraw.lowerZ - 53.5) > 0.1) {
-      failures.push(`drawn CELL opening bottom is ${cellDraw.lowerZ.toFixed(2)} in, Figure 9-9 says 53.5`);
-    }
-    if (Math.abs(cellDraw.apexZ - 65.6) > 0.1) {
-      failures.push(`drawn CELL apex is ${cellDraw.apexZ.toFixed(2)} in, Figure 9-9 says 65.6`);
-    }
-    if (Math.abs(cellDraw.widthIn - 20) > 0.1) {
-      failures.push(`drawn CELL is ${cellDraw.widthIn.toFixed(2)} in wide, should be 20`);
-    }
-    if (Math.abs(cellDraw.depthIn - 12) > 0.1) {
-      failures.push(`drawn CELL is ${cellDraw.depthIn.toFixed(2)} in deep, should be 12`);
+    for (const c of cellDraw) {
+      const tag = `${c.alliance} ${c.side}${c.raised ? ' (raised)' : ''}`;
+      console.log(
+        `  CELL as drawn, ${tag}: base ${c.lowerZ.toFixed(1)} in, apex ${c.apexZ.toFixed(1)} in, ` +
+          `${c.widthIn.toFixed(1)} in wide, ${c.depthIn.toFixed(1)} in deep`,
+      );
+      // The apex is the top of the pentagon. Drawing it below the base turns
+      // the basket into a funnel, and it is invisible in a span check because
+      // the flipped cell covers the same interval from the other end.
+      if (c.apexZ <= c.lowerZ) {
+        failures.push(`drawn ${tag} CELL is upside down: apex ${c.apexZ.toFixed(2)} in is below its base ${c.lowerZ.toFixed(2)} in`);
+      }
+      if (Math.abs(c.widthIn - 20) > 0.1) {
+        failures.push(`drawn ${tag} CELL is ${c.widthIn.toFixed(2)} in wide, should be 20`);
+      }
+      if (Math.abs(c.depthIn - 12) > 0.1) {
+        failures.push(`drawn ${tag} CELL is ${c.depthIn.toFixed(2)} in deep, should be 12`);
+      }
+      // Figure 9-9 dimensions the raised CELL. The lowered one is the same
+      // part rotated to the other stop, so its heights differ by design.
+      if (c.raised) {
+        if (Math.abs(c.lowerZ - 53.5) > 0.1) {
+          failures.push(`drawn ${tag} CELL opening bottom is ${c.lowerZ.toFixed(2)} in, Figure 9-9 says 53.5`);
+        }
+        if (Math.abs(c.apexZ - 65.6) > 0.1) {
+          failures.push(`drawn ${tag} CELL apex is ${c.apexZ.toFixed(2)} in, Figure 9-9 says 65.6`);
+        }
+      }
     }
 
     // An overhead plan view with the panels hidden, to put next to the
@@ -690,6 +715,114 @@ async function main() {
     const planPath = shotPath.replace(/\.png$/, '-biobuzz-plan.png');
     await writeFile(planPath, Buffer.from(shotTop.data, 'base64'));
     console.log(`  Screenshot: ${planPath}`);
+
+    // The aiming guide, with the ROBOT lined up on its own raised CELL and the
+    // wheel at speed. Captured from a low orbit so the arc, its ground shadow
+    // and the CELL are all in frame -- a guide is a visual feature and a number
+    // check cannot tell you it looks wrong.
+    const guide = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const g = app.sim.game;
+      const hive = g.field.hives[g.alliance];
+      const target = g.field.hiveTarget(g.alliance);
+      const n = hive.openingNormal(hive.up);
+      // A CELL faces along the arm, so a shot can only arrive from the outside
+      // of its opening plane -- but straight out along that normal at shooting
+      // range is past the perimeter wall. So: back off diagonally, far enough
+      // out that the exit point is still on the outside of the plane, and near
+      // enough in that the ROBOT is on the tiles. Dropped on the floor outside
+      // the wall it gets shoved back in by the physics, and the arc drawn a
+      // frame later is from wherever it ended up.
+      // Inside the wall by the ROBOT's own half-length, or the physics shoves
+      // it back in and the shot is then solved for a range it is no longer at.
+      const limit = app.sim.field.halfSize - app.sim.robot.halfLength - 0.03;
+      const clamp = (v) => Math.max(-limit, Math.min(limit, v));
+      const x = clamp(target.x - Math.sign(target.x || 1) * 1.1);
+      const y = clamp(target.y + Math.sign(n.y) * 1.4);
+      app.sim.robot.reset(x, y, Math.atan2(target.y - y, target.x - x));
+      app.sim.robot.body.velocity.set(0, 0);
+      app.sim.robot.body.angularVelocity = 0;
+      g.loadPreloads();
+      app.config.set('view.showTrajectory', true);
+      app.config.set('view.trajectoryMode', 'both');
+      app.config.set('view.camera', 'orbit');
+      app.config.set('view.orbitPitch', 18);
+      app.config.set('view.orbitYaw', -150);
+      app.config.set('view.orbitDistance', 4.2);
+      app.config.set('view.showHud', false);
+      app.config.set('view.showGraphs', false);
+      return { x, y, range: Math.hypot(target.x - x, target.y - y) };
+    })()`);
+    // Aim *after* the ROBOT has settled, and read the arcs at the same moment
+    // the screenshot is taken. Aimed before settling, the solution is for a
+    // range the ROBOT is no longer at -- which is correct behaviour and a
+    // useless thing to assert on.
+    await sleep(500);
+    const guideArcs = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const g = app.sim.game;
+      const b = app.sim.robot.body;
+      const aimed = g.aimAtHive();
+      g.launcher.spinning = true;
+      g.launcher.omega = (g.launcher.targetRpm * 2 * Math.PI) / 60;
+      return {
+        aimed,
+        hood: (g.launcher.hoodAngle * 180) / Math.PI,
+        rpm: g.launcher.rpm,
+        x: b.position.x,
+        y: b.position.y,
+        speed: b.speed,
+        arcs: g.shotPreview('both').map((a) => ({ kind: a.kind, hit: a.hit, points: a.points.length })),
+      };
+    })()`);
+    console.log(
+      `  Trajectory guide: ${guideArcs.x.toFixed(2)}, ${guideArcs.y.toFixed(2)} at ` +
+        `${guide.range.toFixed(2)} m, hood ${guideArcs.hood.toFixed(0)} deg, ${guideArcs.rpm.toFixed(0)} rpm -> ` +
+        guideArcs.arcs.map((a) => `${a.kind} ${a.hit ? 'HIT' : 'miss'} (${a.points} pts)`).join(', '),
+    );
+    if (!guideArcs.aimed) failures.push('the guide scenario could not be aimed');
+    if (guideArcs.speed > 0.05) {
+      failures.push(`the guide scenario ROBOT is still moving at ${guideArcs.speed.toFixed(2)} m/s`);
+    }
+    if (guideArcs.arcs.length !== 2) {
+      failures.push(`trajectoryMode "both" drew ${guideArcs.arcs.length} arcs`);
+    }
+    for (const a of guideArcs.arcs) {
+      if (!a.hit) failures.push(`the ${a.kind} arc misses a CELL the launcher says it can hit`);
+      if (a.points < 8) failures.push(`the ${a.kind} arc has only ${a.points} points`);
+    }
+    const shotGuide = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const guidePath = shotPath.replace(/\.png$/, '-biobuzz-guide.png');
+    await writeFile(guidePath, Buffer.from(shotGuide.data, 'base64'));
+    console.log(`  Screenshot: ${guidePath}`);
+
+    // A close-up of one HIVE from the side, where an upside-down CELL is
+    // obvious and a pentagon apex is unmistakable.
+    await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.config.set('view.showTrajectory', false);
+      app.config.set('view.orbitPitch', 10);
+      app.config.set('view.orbitYaw', -90);
+      app.config.set('view.orbitDistance', 3.0);
+      app.config.set('view.orbitFollow', false);
+      // The orbit target lives on the camera, not in the config -- panning is a
+      // gesture, not a setting -- so point it at the HIVE directly.
+      const hive = app.sim.game.field.hives[app.sim.game.alliance];
+      app.renderer.camera.orbitTarget[0] = hive.pivotX;
+      app.renderer.camera.orbitTarget[1] = 0;
+      app.renderer.camera.orbitTarget[2] = 1.1;
+      return true;
+    })()`);
+    await sleep(700);
+    const shotHive = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const hivePath = shotPath.replace(/\.png$/, '-biobuzz-hive.png');
+    await writeFile(hivePath, Buffer.from(shotHive.data, 'base64'));
+    console.log(`  Screenshot: ${hivePath}`);
+    await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.config.set('view.orbitFollow', true);
+      return true;
+    })()`);
 
     // A second angle with the panels hidden, so the field geometry itself can
     // be eyeballed rather than guessed at through a HUD.

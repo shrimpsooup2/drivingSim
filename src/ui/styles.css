@@ -435,13 +435,18 @@ select { width: 100%; }
 
 /* ---------------------------------------------------------- MATCH panel */
 
+/* Down the right-hand edge, under the Settings button, not across the top --
+   a block centred at the top sits over the far HIVE, which is the thing you
+   are aiming at. The clock is clickable to collapse the breakdown, so the
+   panel itself takes pointer events while its contents do not. */
 .match-panel {
   position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 218px;
-  padding: 7px 10px 8px;
+  top: 50px;
+  right: 12px;
+  width: 190px;
+  max-height: calc(100% - 74px);
+  overflow-y: auto;
+  padding: 6px 9px 7px;
   border-radius: 9px;
   background: rgba(14, 17, 23, 0.82);
   border: 1px solid rgba(255, 255, 255, 0.09);
@@ -450,8 +455,18 @@ select { width: 100%; }
   color: #e6e8ec;
   pointer-events: none;
   z-index: 6;
+  scrollbar-width: none;
 }
+.match-panel::-webkit-scrollbar { display: none; }
 .match-panel.hidden { display: none; }
+.match-breakdown.hidden { display: none; }
+
+/* Narrow windows have no room for a rail next to the field, so it shrinks
+   rather than eating a third of the view. */
+@media (max-width: 860px) {
+  .match-panel { width: 150px; font-size: 9px; }
+  .match-panel .match-clock { font-size: 18px; }
+}
 
 .match-clock {
   font-size: 22px;
@@ -459,6 +474,8 @@ select { width: 100%; }
   letter-spacing: 0.02em;
   text-align: center;
   font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+  cursor: pointer;
 }
 .match-clock.urgent { color: #ff6b5e; }
 
@@ -540,3 +557,18 @@ select { width: 100%; }
   color: #cfd3da;
 }
 .match-prompt.urgent { color: #f2a33c; background: rgba(242, 163, 60, 0.12); }
+
+/* The keyboard stand-in next to a controller button name in the help overlay. */
+.alt-key {
+  display: inline-block;
+  min-width: 15px;
+  margin-right: 7px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+  color: var(--muted);
+}

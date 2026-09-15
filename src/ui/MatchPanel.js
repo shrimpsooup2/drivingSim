@@ -1,3 +1,5 @@
+import { keyFor } from '../input/KeyboardSource.js';
+
 /**
  * The MATCH panel: clock, phase, live score and the shooter readout.
  *
@@ -6,6 +8,12 @@
  * still on the table. The score is split into its components because the
  * endgame turns on which components can still be taken -- a FLOWER can change
  * hands with one NECTAR and a CELL empties the moment it tips.
+ *
+ * It lives down the right-hand side rather than across the top. A driver looks
+ * at the middle of the field and at their own ROBOT, and a block across the top
+ * centre sat exactly where the far HIVE is drawn -- so the thing you aim at was
+ * behind the thing telling you to aim. The breakdown collapses, because the
+ * component split matters in the last thirty seconds and not before.
  */
 export class MatchPanel {
   /** @param {HTMLElement} parent */
@@ -15,6 +23,11 @@ export class MatchPanel {
     this.clock = el('div', 'match-clock');
     this.phase = el('div', 'match-phase');
     this.element.append(this.clock, this.phase);
+
+    /** Collapsed hides the breakdown table, which is the tall part. */
+    this.collapsed = false;
+    this.clock.addEventListener('click', () => this.setCollapsed(!this.collapsed));
+    this.clock.title = 'Click to show or hide the score breakdown';
 
     this.scoreRow = el('div', 'match-score');
     this.redTotal = el('div', 'match-total red');
@@ -58,8 +71,18 @@ export class MatchPanel {
     this.element.classList.toggle('hidden', !visible);
   }
 
-  /** @param {import('../app/BiobuzzGame.js').BiobuzzGame|null} game */
-  update(game) {
+  setCollapsed(collapsed) {
+    this.collapsed = collapsed;
+    this.breakdown.classList.toggle('hidden', collapsed);
+    return this;
+  }
+
+  /**
+   * @param {import('../app/BiobuzzGame.js').BiobuzzGame|null} game
+   * @param {'gamepad'|'keyboard'|'none'} [source] which input the driver is on,
+   *   so the prompt names a button they actually have
+   */
+  update(game, source = 'gamepad') {
     this.setVisible(Boolean(game));
     if (!game) return;
 
@@ -91,7 +114,7 @@ export class MatchPanel {
     this.shooterBar.style.background = s.ready ? '#47d18a' : '#f2a33c';
 
     // Say what to press next. "How do I shoot" should never need the manual.
-    const step = nextStep(t);
+    const step = nextStep(t, source);
     this.prompt.textContent = step.text;
     this.prompt.classList.toggle('urgent', step.urgent);
 
@@ -115,23 +138,51 @@ export class MatchPanel {
 }
 
 /**
+ * What a gamepad control is called, for whichever thing the driver is holding.
+ *
+ * Telling someone on the keyboard to press RIGHT BUMPER names a button they do
+ * not have, which is the same failure as not saying how to shoot at all.
+ *
+ * @param {string} control a gamepad field name, e.g. 'right_bumper'
+ * @param {'gamepad'|'keyboard'|'none'} source
+ */
+function controlLabel(control, source) {
+  if (source === 'keyboard') {
+    const key = keyFor(control);
+    if (key) return key.toUpperCase();
+  }
+  return PAD_LABEL[control] ?? control.replace(/_/g, ' ').toUpperCase();
+}
+
+const PAD_LABEL = {
+  y: 'Y',
+  right_bumper: 'RIGHT BUMPER',
+  left_bumper: 'LEFT BUMPER',
+  right_trigger: 'RIGHT TRIGGER',
+};
+
+/**
  * The next thing a driver should press, from the state of their own robot.
  *
  * The controls exist in the help overlay, but a driver mid-match is not reading
  * an overlay -- so the panel says which one is useful right now.
  *
  * @param {ReturnType<import('../app/BiobuzzGame.js').BiobuzzGame['telemetry']>} t
+ * @param {'gamepad'|'keyboard'|'none'} [source]
  */
-function nextStep(t) {
+export function nextStep(t, source = 'gamepad') {
+  const name = (control) => controlLabel(control, source);
   if (t.phase === 'ended') return { text: 'MATCH OVER', urgent: false };
-  if (t.held === 0) return { text: 'RIGHT BUMPER  hold to intake', urgent: false };
-  if (!t.shooter.spinning) return { text: 'Y  spin the flywheel up', urgent: false };
+  if (t.held === 0) return { text: `${name('right_bumper')}  hold to intake`, urgent: false };
+  if (!t.shooter.spinning) {
+    return { text: `${name('y')}  spin the flywheel up`, urgent: false };
+  }
   if (!t.solution) {
     return { text: 'no shot from here  -  back away from the HIVE', urgent: true };
   }
   if (!t.shooter.ready) return { text: 'wait for the wheel...', urgent: true };
   if (t.moving) return { text: 'stop moving, then fire', urgent: true };
-  return { text: 'RIGHT TRIGGER  fire', urgent: false };
+  return { text: `${name('right_trigger')}  fire`, urgent: false };
 }
 
 /** Rows of the score breakdown, in the order Table 10-2 lists them. */

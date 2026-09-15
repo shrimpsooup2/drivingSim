@@ -426,6 +426,82 @@ export class Launcher extends Subsystem {
     return true;
   }
 
+  /**
+   * The arc a shot would actually fly from where the ROBOT is standing.
+   *
+   * The ball world integrates flight under gravity alone -- a wiffle ball over
+   * three metres loses little enough to drag that modelling it would be a
+   * guess dressed as a number -- so the arc is an exact parabola and this
+   * closed form *is* the trajectory, not an approximation of it. Which is the
+   * point: a guide that disagrees with the physics teaches the wrong aim.
+   *
+   * Two things make it worth drawing rather than computing in your head. The
+   * launch velocity includes the ROBOT's own, so the arc visibly swings when
+   * you shoot on the move. And the speed is the post-droop exit speed at the
+   * *current* wheel RPM, so firing before the wheel has recovered shows the
+   * arc falling short instead of merely a number being low.
+   *
+   * @param {{
+   *   mass?: number,
+   *   speed?: number,
+   *   angle?: number,
+   *   samples?: number,
+   *   floor?: number,
+   * }} [opts]
+   * @returns {{
+   *   points: {x:number,y:number,z:number}[],
+   *   at: (t:number) => {x:number,y:number,z:number},
+   *   flightTime: number, speed: number, angle: number,
+   *   apex: {x:number,y:number,z:number,t:number},
+   *   origin: {x:number,y:number,z:number},
+   * }|null}
+   */
+  trajectory(opts = {}) {
+    if (!this.robot) return null;
+    const mass = opts.mass ?? POLLEN_MASS;
+    const angle = opts.angle ?? this.hoodAngle;
+    const speed = opts.speed ?? this.exitSpeedFor(mass);
+    const samples = Math.max(2, opts.samples ?? 48);
+    const floor = opts.floor ?? 0;
+
+    const { x, y, cos, sin, vx, vy } = this.pose;
+    // Exactly the launch state `launch()` produces, so the guide and the shot
+    // cannot disagree.
+    const ox = x + cos * this.exitOffset;
+    const oy = y + sin * this.exitOffset;
+    const oz = this.exitHeight;
+    const horizontal = speed * Math.cos(angle);
+    const vx0 = vx + cos * horizontal;
+    const vy0 = vy + sin * horizontal;
+    const vz0 = speed * Math.sin(angle);
+
+    const at = (t) => ({
+      x: ox + vx0 * t,
+      y: oy + vy0 * t,
+      z: oz + vz0 * t - 0.5 * G * t * t,
+    });
+
+    // Time to fall back to `floor`, from the larger root of the height
+    // quadratic. A stationary wheel gives vz0 = 0 and a short drop, not a
+    // divide by zero.
+    const disc = vz0 * vz0 + 2 * G * Math.max(0, oz - floor);
+    const flightTime = disc > 0 ? (vz0 + Math.sqrt(disc)) / G : 0;
+
+    const points = [];
+    for (let i = 0; i <= samples; i++) points.push(at((flightTime * i) / samples));
+
+    const tApex = Math.max(0, Math.min(flightTime, vz0 / G));
+    return {
+      points,
+      at,
+      flightTime,
+      speed,
+      angle,
+      apex: { ...at(tApex), t: tApex },
+      origin: { x: ox, y: oy, z: oz },
+    };
+  }
+
   massContribution() {
     return null;
   }
