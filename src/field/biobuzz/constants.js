@@ -62,10 +62,11 @@ export const HIVE_PIVOT_HEIGHT = 43.95 * INCH;
 /** Section 9.6.2: the two CELLS of a HIVE sit ~18.8 in apart. */
 export const CELL_SPACING = 18.8 * INCH;
 
-/** Section 9.6.2: CELL opening is ~20 in wide, 14 in tall, 12 in deep. */
-export const CELL_OPENING_WIDTH = 20 * INCH;
-export const CELL_OPENING_HEIGHT = 14 * INCH;
-export const CELL_DEPTH = 12 * INCH;
+/**
+ * Section 9.6.2 gives the CELL opening as ~20 in wide, 14 in tall and 12 in
+ * deep. Those live in the CAD block below alongside the figure's own heights,
+ * which is where the 14 in gets cross-checked against 65.6 - 53.5.
+ */
 
 /**
  * Section 9.7 describes the FLOWER as a ~4 in opening ~21.5 in above the tiles,
@@ -162,17 +163,28 @@ export const NECTAR_RADIUS = 1.81 * INCH;
 
 // -- HIVE ------------------------------------------------------------------
 
-/** Pivot bearings sit at the centre of each HIVE, on the A-frame top bar. */
-export const HIVE_PIVOT_X = 12.7 * INCH;
+/**
+ * Figure 9-9 dimensions the HIVE directly, and these supersede anything derived
+ * from part bounding boxes.
+ *
+ *  - HIVE centre to centre: 25.5 in, so each pivot is 12.75 in off the middle.
+ *  - Bottom of the HIVE above the tiles: 25.5 in -- well clear of an 18 in
+ *    ROBOT, so you drive underneath it.
+ *  - Bottom of the HIVE *opening*: 53.5 in. Top of it: 65.6 in.
+ */
+export const HIVE_PIVOT_X = 12.75 * INCH;
+export const HIVE_BOTTOM_HEIGHT = 25.5 * INCH;
+export const CELL_OPENING_BOTTOM = 53.5 * INCH;
+export const CELL_OPENING_TOP = 65.6 * INCH;
 
 /**
- * The HIVE's resting tilt, 30 degrees, confirmed twice over in the CAD:
+ * The HIVE's resting tilt, 30 degrees, confirmed four separate ways:
  *
- *  - the four Goal Rib origins of one HIVE lie on a straight line of slope
- *    0.577 to four figures, across three independent segments;
- *  - the 1 in square arm tube spans 15.01 in horizontally and 9.25 in
- *    vertically, which for a 1 in tube solves to a 16.76 in axis at 30.00
- *    degrees from both equations independently.
+ *  - Figure 9-9 dimensions it as 30 degrees outright;
+ *  - the four Goal Rib origins of one HIVE lie on a line of slope 0.577;
+ *  - the 1 in square arm tube spans 15.01 in by 9.25 in, which solves to a
+ *    16.76 in axis at 30.00 degrees from both equations independently;
+ *  - the opening's 12.1 in vertical span is 14*cos(30) to three figures.
  */
 export const HIVE_TILT_DEGREES = 30;
 export const HIVE_TILT = (HIVE_TILT_DEGREES * Math.PI) / 180;
@@ -181,37 +193,42 @@ export const HIVE_TILT = (HIVE_TILT_DEGREES * Math.PI) / 180;
 export const HIVE_ARM_LENGTH = 16.76 * INCH;
 
 /**
- * Where a SCORING ELEMENT comes to rest in the upward-facing CELL, measured
- * from the three NECTAR the CAD stages there: 9.4 in horizontally from the
- * pivot on the up side, 50.2 in above the TILES. This is the point a LAUNCHER
- * has to put a ball on, so it is the number that matters most for shooting.
+ * The CELL opening: 20 in wide by 14 in tall by 12 in deep (Section 9.6.2),
+ * and a **pentagon**, not a rectangle -- Figure 9-11 gives a 20 in base, sides
+ * to a shoulder at 7.61 in, then a taper to an apex at 14 in.
+ *
+ * Its plane is **perpendicular to the arm**, which is what the figure's two
+ * heights prove: 65.6 - 53.5 = 12.1 in of vertical span, and 14*cos(30) =
+ * 12.12. So the opening faces straight out along the arm, 30 degrees above
+ * horizontal, and the aperture a shot has to cross is that pentagon.
+ */
+export const CELL_OPENING_WIDTH = 20 * INCH;
+export const CELL_OPENING_HEIGHT = (CELL_OPENING_TOP - CELL_OPENING_BOTTOM) / Math.cos(HIVE_TILT);
+export const CELL_SHOULDER_HEIGHT = 7.61 * INCH;
+export const CELL_DEPTH = 12 * INCH;
+
+/**
+ * Where elements come to rest inside the CELL, measured from the three NECTAR
+ * the CAD stages there: 9.4 in horizontally from the pivot, 50.2 in up. Section
+ * 10.3.1 says they sit "contacting the back wall of the CELL and in a line
+ * against the side closest to the ALLIANCE AREA", which is also why the CAD has
+ * them off-centre across the CELL.
+ *
+ * This is **not** what a LAUNCHER aims at -- it is 12 in back along the arm and
+ * below the opening, on the sloping floor. Aiming here instead of at the
+ * opening puts the ball into the outside of the CELL wall.
  */
 export const CELL_REST_OFFSET = 9.4 * INCH;
 export const CELL_REST_HEIGHT = 50.2 * INCH;
-/**
- * The downward CELL is **not** a point reflection of the upward one through the
- * pivot: the two CELLS are mirror images across the arm, because both open
- * upward when their own end is raised. So the down CELL sits a little higher
- * than 2*pivot - rest would suggest, and `Hive.cellOpening` computes it from
- * the geometry rather than storing it here.
- */
 
 /**
- * The CELL's inner and outer reach along the arm, from the pivot. The bottom
- * skin is 20.20 in wide and the structure runs out to about 20 in from the
- * pivot, which is the 12 in depth the manual quotes measured from the near lip.
- */
-export const CELL_NEAR_REACH = 9 * INCH;
-export const CELL_FAR_REACH = 20 * INCH;
-export const CELL_MEASURED_WIDTH = 20.2 * INCH;
-
-/**
- * The A-frame. Each side has a full-depth foot bar on the tiles and two struts
- * running diagonally up and inward to a point beside the pivot.
+ * The A-frame. Each side is a triangle whose base sits on the tiles and whose
+ * apex leans inward to carry a pivot, joined across the top by a crossbar
+ * (Figure 9-8: 49.46 in wide, 38.95 in deep, pivots 43.95 in up).
  *
  * The foot bar is what a bumper meets: 2.00 in thick, the full 38.94 in depth,
- * and only 2.15 in tall. Above it the struts slope inward, so the middle of the
- * frame is open and a ROBOT crosses the field straight through it.
+ * and only 2.15 in tall. Above it the struts lean inward, so there is nothing
+ * in the middle of the frame below the CELLS.
  */
 export const FRAME_HALF_WIDTH = 24.3 * INCH;
 export const FRAME_HALF_DEPTH = 19.07 * INCH;
@@ -283,14 +300,28 @@ export const FLOWER_TOP_RING_BOTTOM = 20.22 * INCH;
 export const FLOWER_TOP_RING_TOP = 21.4 * INCH;
 
 /**
- * The retrieval opening: the gap between the top of the lower ring and the
- * bottom of the middle ring, 3.19 in.
+ * The retrieval opening, 3.55 in, dimensioned in Figure 9-12.
  *
- * That is tighter than the 3.55 in the manual quotes, and it is what enforces
- * G418 by itself -- POLLEN is 2.80 in and goes through with 0.39 in to spare,
- * NECTAR is 3.62 in and cannot come out at all.
+ * Taking it from the ring bounding boxes instead gives 3.19 in, because the
+ * lower ring's box picks up the under-field bracket bolted through it -- the
+ * figure also calls the ring 0.43 in thick, against the 0.70 in top the box
+ * reports. Where a figure dimensions something directly, it wins.
+ *
+ * Either way this is what enforces G418 on its own: POLLEN is 2.80 in and goes
+ * through, NECTAR is 3.62 in and cannot come out at all.
  */
-export const FLOWER_RETRIEVAL_GAP = FLOWER_MIDDLE_RING_BOTTOM - FLOWER_LOWER_RING_TOP;
+export const FLOWER_RETRIEVAL_GAP = 3.55 * INCH;
+export const FLOWER_RETRIEVAL_DEPTH = 3.57 * INCH;
+export const FLOWER_LOWER_RING_THICKNESS = 0.43 * INCH;
+
+/**
+ * The top ring's own hole is 4.0 in across and the lower ring's 2.79 in
+ * (Figure 9-12) -- the latter being why a 2.8 in POLLEN nests in it. The four
+ * pipes intrude very slightly inside the top ring's hole, so the tightest
+ * constraint on a ball remains the 1.9146 in the pipes leave.
+ */
+export const FLOWER_TOP_RING_HOLE = 4.0 * INCH;
+export const FLOWER_LOWER_RING_HOLE = 2.79 * INCH;
 
 /**
  * The two square supports between the lower and middle rings. Section 9.7:

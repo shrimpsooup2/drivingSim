@@ -164,3 +164,58 @@ export function sphereMesh(segments = 16, rings = 10) {
   }
   return { vertices: new Float32Array(v), indices: new Uint16Array(idx) };
 }
+
+/**
+ * The BIOBUZZ CELL: a pentagonal prism, open on one end face.
+ *
+ * Figure 9-11 gives the rib as a 20 in base, straight sides to a shoulder, then
+ * a taper to an apex. Built as a unit shape -- x across the 2 wide base, y along
+ * the prism (the arm), z from 0 at the base to 1 at the apex -- so the caller
+ * scales it by the real width, depth and height.
+ *
+ * @param {number} shoulder shoulder height as a fraction of the full height
+ */
+export function cellMesh(shoulder = 0.54) {
+  // Rib outline, counter-clockwise in the x-z plane of the opening.
+  const outline = [
+    [-1, 0],
+    [1, 0],
+    [1, shoulder],
+    [0, 1],
+    [-1, shoulder],
+  ];
+  const v = [];
+  const idx = [];
+  const push = (x, y, z, nx, ny, nz, u, w) => {
+    v.push(x, y, z, nx, ny, nz, u, w);
+    return v.length / 8 - 1;
+  };
+
+  // Walls: one quad per outline edge, spanning the prism's depth.
+  for (let i = 0; i < outline.length; i++) {
+    const [ax, az] = outline[i];
+    const [bx, bz] = outline[(i + 1) % outline.length];
+    let nx = az - bz;
+    let nz = bx - ax;
+    const n = Math.hypot(nx, nz) || 1;
+    nx /= n;
+    nz /= n;
+    const a = push(ax, 0, az, nx, 0, nz, 0, 0);
+    const b = push(bx, 0, bz, nx, 0, nz, 1, 0);
+    const c = push(bx, 1, bz, nx, 0, nz, 1, 1);
+    const d = push(ax, 1, az, nx, 0, nz, 0, 1);
+    idx.push(a, b, c, a, c, d);
+  }
+
+  // Back face only -- the opening end is left open so you can see inside.
+  const centre = push(0, 1, shoulder * 0.6, 0, 1, 0, 0.5, 0.5);
+  for (let i = 0; i < outline.length; i++) {
+    const [ax, az] = outline[i];
+    const [bx, bz] = outline[(i + 1) % outline.length];
+    const a = push(ax, 1, az, 0, 1, 0, 0, 0);
+    const b = push(bx, 1, bz, 0, 1, 0, 1, 0);
+    idx.push(centre, b, a);
+  }
+
+  return { vertices: new Float32Array(v), indices: new Uint16Array(idx) };
+}

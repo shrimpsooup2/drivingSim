@@ -438,18 +438,22 @@ test('sideways speed walks the shot off target in proportion', () => {
   };
 
   const still = shoot(0);
-  const slow = shoot(0.6);
+  const nudge = shoot(0.4);
+  const slow = shoot(0.8);
   const fast = shoot(1.6);
 
   assert.ok(still.scored, 'stopped, the shot goes in');
   assert.ok(still.drift < 0.01, `and it flies dead straight: ${still.drift.toFixed(4)} m`);
-  assert.ok(slow.drift > still.drift + 0.05, 'drifting a little pushes it off');
-  assert.ok(
-    fast.drift > slow.drift * 1.8,
-    `drifting more pushes it much further: ${fast.drift.toFixed(3)} vs ${slow.drift.toFixed(3)} m`,
-  );
-  assert.ok(!fast.scored, `at 1.6 m/s it no longer scores for you (went to ${fast.landedIn})`);
-  assert.equal(fast.landedIn, 'blue', "it lands in the opponent's CELL instead");
+
+  // The opening is 20 in wide, so a small drift is survivable -- which is
+  // worth knowing, because it means the failure is not gradual.
+  assert.ok(nudge.drift > still.drift + 0.05, 'drifting pushes it off line');
+  assert.ok(nudge.scored, 'but 0.4 m/s is still inside a 20 in aperture');
+
+  assert.ok(slow.drift > nudge.drift * 1.8, 'twice the speed, far more than twice the miss');
+  assert.ok(!slow.scored, 'and 0.8 m/s is already outside it');
+  assert.ok(fast.drift > slow.drift, 'faster still is further off');
+  assert.ok(!fast.scored);
 });
 
 test('a CELL only accepts a descending ball, so close shots need a steep hood', () => {

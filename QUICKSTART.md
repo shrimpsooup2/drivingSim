@@ -153,18 +153,22 @@ the start of a real match. Your robot has an intake and a flywheel launcher, and
 the clock runs: 30 seconds of auto, then two minutes of driving.
 
 The controls are the right bumper to intake, `Y` to spin the flywheel up, and
-the right trigger to fire. `M` restarts the match.
+the right trigger to fire. `M` restarts the match, and `?` brings up the full
+list any time. **The match panel also tells you which one to press next** — it
+reads your own robot and says "hold to intake", "spin the flywheel up", "wait
+for the wheel", or "fire".
 
 Three things to know before your first shot, because they catch everyone:
 
 1. **Watch the recovery bar** under the shooter readout. The ball leaves at
    whatever speed the wheel is actually doing, so firing before it comes back
    throws the shot short.
-2. **You can be too close.** A CELL faces upward, so the ball has to *drop* into
-   it. Inside about a metre there is no hood angle that works — back off.
-3. **Stop before you shoot.** The ball keeps your robot's velocity, so sliding
-   sideways at walking pace is enough to miss. Drift far enough and it lands in
-   the opposing alliance's CELL and tips their hive for them.
+2. **You can be too close.** The CELL faces up and outward, so the ball has to
+   drop into it. Inside about a metre no hood angle works — the panel says "no
+   shot from here". Back off.
+3. **Stop before you shoot.** The ball keeps your robot's velocity. The opening
+   is 20 in wide so a slow drift survives, but at half a metre per second you
+   are already missing.
 
 Press `G` to put the game away and get an empty field. Loading a drill does that
 for you, and clearing the drill brings the match back.

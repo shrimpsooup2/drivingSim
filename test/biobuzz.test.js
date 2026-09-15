@@ -10,8 +10,10 @@ import { BiobuzzField } from '../src/field/biobuzz/BiobuzzField.js';
 import { buildZones, gardenStagingPositions } from '../src/field/biobuzz/zones.js';
 import {
   BLUE_START_UP,
+  CELL_OPENING_BOTTOM,
+  CELL_OPENING_HEIGHT,
+  CELL_OPENING_TOP,
   CELL_REST_HEIGHT,
-  CELL_REST_OFFSET,
   CELL_START_NECTAR,
   FIELD_INNER_HALF,
   FLOWER_ALONG_WALL,
@@ -26,6 +28,7 @@ import {
   HALF_FIELD,
   HIVE_PIVOT_HEIGHT,
   HIVE_PIVOT_X,
+  HIVE_TILT,
   NECTAR_MASS,
   NECTAR_PER_ALLIANCE,
   NECTAR_RADIUS,
@@ -178,17 +181,70 @@ test('a heavier load goes over faster, because it is a torque balance', () => {
 
 test('the down CELL cannot hold anything, which is why a tip empties it', () => {
   const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
-  assert.ok(hive.openingUpwardness('fore') > 0.8, 'the raised CELL faces up');
-  assert.ok(
-    hive.openingUpwardness('aft') <= 0.1,
-    'the lowered CELL has rolled past horizontal',
-  );
+  // The opening faces straight out along the arm, so its upward component is
+  // exactly the sine of the arm angle: +0.5 raised, -0.5 lowered. That is not a
+  // tuned number -- it follows from the figure's two opening heights.
+  const expected = Math.sin(hive.tilt);
+  assert.ok(Math.abs(hive.openingUpwardness('fore') - expected) < 1e-9);
+  assert.ok(Math.abs(hive.openingUpwardness('aft') + expected) < 1e-9);
+  assert.ok(hive.openingUpwardness('aft') < 0, 'the lowered CELL faces downward');
+
   // And it refuses a ball outright.
   const ball = pollen();
   const down = hive.cellOpening('aft');
   ball.setPosition(0, down.y, down.z);
   ball.setVelocity(0, 0, -0.5);
   assert.ok(!hive.interactBall(ball));
+});
+
+test('the CELL opening is where Figure 9-9 puts it, not where the contents rest', () => {
+  const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const opening = hive.cellOpening('fore');
+  const rest = hive.cellRest('fore');
+  const half = (CELL_OPENING_HEIGHT / 2) * Math.cos(hive.tilt);
+
+  // Figure 9-9: bottom of the opening 53.5 in, top 65.6 in.
+  assert.ok(Math.abs(opening.z - half - CELL_OPENING_BOTTOM) < 1e-3);
+  assert.ok(Math.abs(opening.z + half - CELL_OPENING_TOP) < 1e-3);
+
+  // The CAD stages its NECTAR on the floor, well below the opening.
+  assert.ok(Math.abs(rest.z - CELL_REST_HEIGHT) < 1e-9);
+  assert.ok(
+    opening.z - rest.z > 8 * INCH,
+    'the aperture is over eight inches above where the contents sit',
+  );
+  assert.ok(Math.abs(rest.y) < Math.abs(opening.y), 'and further in along the arm');
+
+  // The opening faces out along the arm, 30 degrees above horizontal.
+  const n = hive.openingNormal('fore');
+  assert.ok(Math.abs(Math.hypot(n.y, n.z) - 1) < 1e-9);
+  assert.ok(Math.abs(n.z - Math.sin(hive.tilt)) < 1e-9);
+  assert.ok(n.y < 0, 'outward, on the fore side');
+});
+
+test('the opening is a pentagon, so the top corners are tighter than the base', () => {
+  const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const opening = hive.cellOpening('fore');
+  const n = hive.openingNormal('fore');
+
+  /** Drop a ball into the opening `v` up its face and `dx` off centre. */
+  const tryAt = (v, dx) => {
+    const ball = pollen();
+    const up = v - CELL_OPENING_HEIGHT / 2;
+    // In-plane up is the normal turned a quarter turn, on the fore side.
+    const y = opening.y - (-n.z) * up * -1;
+    const z = opening.z + n.y * up * -1;
+    ball.setPosition(opening.x + dx, y, z);
+    // Heading into the opening.
+    ball.setVelocity(0, -n.y * 3, -n.z * 3);
+    const fresh = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+    return fresh.interactBall(ball);
+  };
+
+  // Low down the face, the full 20 in width is available.
+  assert.ok(tryAt(3 * INCH, 8 * INCH), 'wide at the base');
+  // Near the apex the pentagon has closed in.
+  assert.ok(!tryAt(13 * INCH, 8 * INCH), 'narrow at the apex');
 });
 
 test('a TIP during AUTO is counted separately', () => {
@@ -544,7 +600,7 @@ test('the FLOWER scoring volume is the span of the pipes, and the staged POLLEN 
   assert.ok(FLOWER_STAGED_HEIGHTS[0] + POLLEN_RADIUS < FLOWER_SCORING_BOTTOM);
 });
 
-test('the up CELL sits where the CAD stages its NECTAR', () => {
+test('the shooting target is the CELL opening, on the right side of each HIVE', () => {
   const field = new Field(new Config().values);
   const bb = new BiobuzzField({ field });
 
@@ -552,9 +608,10 @@ test('the up CELL sits where the CAD stages its NECTAR', () => {
   const blue = bb.hiveTarget('blue');
   const close = (a, b) => Math.abs(a - b) < 1e-9;
 
-  assert.ok(close(Math.abs(red.x), HIVE_PIVOT_X));
-  assert.ok(close(red.z, CELL_REST_HEIGHT), 'up CELL is 50.2 in above the tiles');
-  assert.ok(close(Math.abs(red.y), CELL_REST_OFFSET), '9.4 in from the pivot');
+  assert.ok(close(Math.abs(red.x), HIVE_PIVOT_X), 'centred on its own pivot');
+  const half = (CELL_OPENING_HEIGHT / 2) * Math.cos(HIVE_TILT);
+  assert.ok(Math.abs(red.z - half - CELL_OPENING_BOTTOM) < 1e-3, 'Figure 9-9: 53.5 in');
+  assert.ok(Math.abs(red.z + half - CELL_OPENING_TOP) < 1e-3, 'Figure 9-9: 65.6 in');
 
   // Red's audience-side CELL is up, blue's rear-side one is.
   assert.equal(bb.hives.red.up, RED_START_UP);
@@ -562,14 +619,9 @@ test('the up CELL sits where the CAD stages its NECTAR', () => {
   assert.ok(red.y < 0, "red's up CELL is on the audience side");
   assert.ok(blue.y > 0, "blue's up CELL is on the rear side");
 
-  // The down CELL is a mirror across the arm, not a point reflection through
-  // the pivot, so it sits a little above 2*pivot - rest.
+  // The down CELL is a mirror across the arm, and below the pivot.
   const down = bb.hives.red.cellOpening(RED_START_UP === 'fore' ? 'aft' : 'fore');
   assert.ok(down.z < HIVE_PIVOT_HEIGHT, 'the down CELL is below the pivot');
-  assert.ok(
-    down.z > 2 * HIVE_PIVOT_HEIGHT - CELL_REST_HEIGHT,
-    'but higher than a point reflection would put it',
-  );
   assert.ok(Math.sign(down.y) !== Math.sign(red.y), 'and on the other side');
 });
 

@@ -604,13 +604,25 @@ async function main() {
         redTotal: document.querySelector('.match-total.red').textContent,
         blueTotal: document.querySelector('.match-total.blue').textContent,
         rows: document.querySelectorAll('.match-breakdown tr').length,
+        prompt: document.querySelector('.match-prompt').textContent,
+        // The drills panel shares the .overlay-card class, so go through the
+        // app's own reference rather than picking the first match in the DOM.
+        helpText: globalThis.ftcSim.helpOverlay.textContent ?? '',
       };
     })()`);
     console.log(`  Match panel: ${played.clockText} ${played.phaseText}, red ${played.redTotal} - blue ${played.blueTotal}, ${played.rows} rows`);
+    console.log(`  Next-step prompt: "${played.prompt}"`);
     if (!played.panelVisible) failures.push('match panel is not visible with the game running');
     if (played.phase !== 'teleop') failures.push(`expected teleop after 40 s, got ${played.phase}`);
     if (!/^\d:\d\d$/.test(played.clockText)) failures.push(`clock did not render: ${played.clockText}`);
     if (Number(played.redTotal) <= 0) failures.push('red total did not score');
+    // "How do I shoot" should be answerable without leaving the app.
+    if (!played.prompt) failures.push('the match panel gives no next-step prompt');
+    for (const phrase of ['right trigger', 'right bumper', 'spin the flywheel']) {
+      if (!new RegExp(phrase, 'i').test(played.helpText)) {
+        failures.push(`the help overlay never mentions "${phrase}"`);
+      }
+    }
 
     await sleep(700);
     const shot6 = await cdp.send('Page.captureScreenshot', { format: 'png' });

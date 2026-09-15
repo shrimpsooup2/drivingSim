@@ -17,8 +17,14 @@ Two sources, and the code says which for every value in
 
 - **MANUAL** — quoted from the *BIOBUZZ Competition Manual V1*, with the
   section it came from.
+- **FIGURE** — dimensioned directly in a manual figure
+  (`BIOBUZZ_Competition_Manual_V1.pdf` in the repo). These beat everything else:
+  where a figure calls out a number, that is the number.
 - **CAD** — measured from the official field CAD, an Onshape STEP AP242 export
   of `am-5850 BIOBUZZ` (`field-cad-step.zip` in the repo), 832 part occurrences.
+  Good for positions and for anything no figure dimensions — but a part's
+  bounding box picks up whatever is bolted through it, which is exactly how I
+  got the flower's retrieval opening wrong at 3.19 in when the figure says 3.55.
 
 Where the two disagree the CAD wins, because the manual rounds: NECTAR is
 "3.6 in" in the text and 3.62 in the model.
@@ -52,9 +58,40 @@ surface at z = 0, wall top at 11.3 in.
 
 ## The HIVE
 
-A bi-stable see-saw per alliance, pivots 43.95 in up at x = ±12.7 in, resting
+A bi-stable see-saw per alliance, pivots 43.95 in up at x = ±12.75 in, resting
 at 30°. Fill the upward CELL until it tips (20 points), the contents spill, and
 the opposite CELL arrives empty ready to fill again.
+
+### What you actually shoot at
+
+Figure 9‑9 dimensions this outright, and it is the thing to get right:
+
+| | |
+| --- | --- |
+| Bottom of the CELL opening | **53.5 in** |
+| Top of the CELL opening | **65.6 in** |
+| HIVE centre to centre | 25.5 in, so each pivot is 12.75 in off the middle |
+| Bottom of the HIVE structure | 25.5 in — you drive underneath it |
+
+The opening is **20 in wide by 14 in tall and perpendicular to the arm**, so it
+faces straight out along the arm, 30° above horizontal. The proof is in those
+two heights: 65.6 − 53.5 = 12.1 in, and 14·cos30° = 12.12.
+
+And it is a **pentagon**, not a rectangle (Figure 9‑11): 20 in across the base,
+straight sides up to a shoulder at 7.61 in, then a taper to the apex at 14 in.
+The top corners are tighter than the base, so a high shot has less room than the
+20 in suggests.
+
+The CAD stages three NECTAR at **9.4 in out and 50.2 in up** — but that is where
+contents *rest*, on the sloping floor 12 in back along the arm and about nine
+inches below the opening. Aiming there instead of at the opening puts the ball
+into the outside of the CELL wall. `Hive.cellOpening()` gives the aperture,
+`Hive.cellRest()` the floor, and `target` is the aperture.
+
+Three numbers from three places reconcile to three figures here, which is why it
+is worth building rather than guessing: take the CAD's staged NECTAR, go 12 in
+out along the arm (the manual's CELL depth), lift to the middle of the figure's
+53.5 and 65.6 — and the lower edge lands on 53.5 and the apex on 65.6 exactly.
 
 ### How the tip works
 
@@ -160,9 +197,8 @@ alliance spent the match filling can be taken whole by one late NECTAR.
    stuck there for the rest of the match.
 3. **Aim long.** The backstop is on the wall side only, so an overshot comes off
    it and drops in while the same error short of the tube misses entirely.
-4. **G418 is enforced by the geometry with room to spare.** The retrieval
-   opening measures 3.19 in, tighter than the 3.55 in the manual quotes: POLLEN
-   at 2.80 in comes out with 0.39 in of clearance and NECTAR at 3.62 in cannot.
+4. **G418 is enforced by the geometry.** The retrieval opening is 3.55 in
+   (Figure 9‑12), so POLLEN at 2.80 in comes out and NECTAR at 3.62 in cannot.
    The two square supports sit on the *wall* side of that opening, which is why
    a robot collects from the field side.
 
@@ -200,15 +236,15 @@ down requires
 tan(hood) > 2 * rise / range
 ```
 
-because the apex has to fall before the target. The CELL is 50.2 in up, so from
-1.3 m that is steeper than 57°, and **inside about 0.9 m the shot cannot be made
-at any RPM**. A flat shot from point blank never scores however the speed is
+because the apex has to fall before the target. The opening is 59.6 in up at its
+centre, so from 1.3 m that is a steep shot, and **inside about a metre it cannot
+be made at any RPM** — the panel says "no shot from here". A flat shot from point blank never scores however the speed is
 trimmed. `Launcher.aimFor` solves this and picks the shallowest hood that
 works, which is the tuning table a team would work out on a practice field.
 
-Shooting on the move misses, because the ball keeps the robot's velocity — and
-the two HIVES are 25.4 in apart on the same crossbar, so a shot that drifts far
-enough lands in the *other* alliance's CELL and tips their hive for them.
+Shooting on the move misses, because the ball keeps the robot's velocity. The
+opening is 20 in wide, so it is forgiving up to a point and then not at all:
+0.4 m/s of sideways drift still goes in, 0.8 m/s does not.
 
 ## Match flow and scoring
 
@@ -272,9 +308,10 @@ measurements, and they are the places to look first if something feels wrong:
 - **Ball masses** (POLLEN 0.045 kg, NECTAR 0.085 kg) are not published. They
   only affect how far a robot shoves a pile and how the flywheel behaves, not
   scoring.
-- **The HIVE's `holdMass`**, and through it `M*h`, calibrated as above. Its
-  structure mass (for inertia) and the angle its CELL opening is tilted at are
-  the other two numbers a part bounding box cannot pin down.
+- **The HIVE's `holdMass`**, and through it `M*h`, calibrated as above, plus its
+  structure mass for the inertia. The CELL opening's angle used to be a third
+  guess here; Figure 9‑9's two heights removed it, since the opening turns out to
+  be perpendicular to the arm.
 - **The CELL capture margin** (1.5 in), because the manual defines scoring by
   what is in the CELL at rest, not by a capture volume.
 - **Flower stack pitch.** A column of balls in a tube wider than the balls

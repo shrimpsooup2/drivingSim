@@ -45,6 +45,9 @@ export class MatchPanel {
     this.shooter.append(this.shooterText, this.shooterBarOuter);
     this.element.append(this.shooter);
 
+    this.prompt = el('div', 'match-prompt');
+    this.element.append(this.prompt);
+
     this.notes = el('div', 'match-notes');
     this.element.append(this.notes);
 
@@ -87,6 +90,11 @@ export class MatchPanel {
     this.shooterBar.style.width = `${(s.recovery * 100).toFixed(1)}%`;
     this.shooterBar.style.background = s.ready ? '#47d18a' : '#f2a33c';
 
+    // Say what to press next. "How do I shoot" should never need the manual.
+    const step = nextStep(t);
+    this.prompt.textContent = step.text;
+    this.prompt.classList.toggle('urgent', step.urgent);
+
     const notes = [];
     notes.push(`held ${t.held}/${t.capacity}`);
     notes.push(`hood ${s.hoodDegrees.toFixed(0)} deg`);
@@ -104,6 +112,26 @@ export class MatchPanel {
     if (early > 0) notes.push(`G410 x${early}`);
     this.notes.textContent = notes.join('  -  ');
   }
+}
+
+/**
+ * The next thing a driver should press, from the state of their own robot.
+ *
+ * The controls exist in the help overlay, but a driver mid-match is not reading
+ * an overlay -- so the panel says which one is useful right now.
+ *
+ * @param {ReturnType<import('../app/BiobuzzGame.js').BiobuzzGame['telemetry']>} t
+ */
+function nextStep(t) {
+  if (t.phase === 'ended') return { text: 'MATCH OVER', urgent: false };
+  if (t.held === 0) return { text: 'RIGHT BUMPER  hold to intake', urgent: false };
+  if (!t.shooter.spinning) return { text: 'Y  spin the flywheel up', urgent: false };
+  if (!t.solution) {
+    return { text: 'no shot from here  -  back away from the HIVE', urgent: true };
+  }
+  if (!t.shooter.ready) return { text: 'wait for the wheel...', urgent: true };
+  if (t.moving) return { text: 'stop moving, then fire', urgent: true };
+  return { text: 'RIGHT TRIGGER  fire', urgent: false };
 }
 
 /** Rows of the score breakdown, in the order Table 10-2 lists them. */

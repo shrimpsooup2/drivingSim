@@ -2,6 +2,7 @@ import * as mat4 from './mat4.js';
 import {
   arrowMesh,
   boxMesh,
+  cellMesh,
   cylinderMesh,
   discMesh,
   planeMesh,
@@ -14,9 +15,9 @@ import { CameraRig } from './Camera.js';
 import { clamp } from '../math/MathUtil.js';
 import {
   CELL_DEPTH,
+  CELL_OPENING_HEIGHT,
   CELL_OPENING_WIDTH,
-  CELL_REST_HEIGHT,
-  CELL_REST_OFFSET,
+  CELL_SHOULDER_HEIGHT,
   FLOWER_BACKSTOP_HEIGHT,
   FLOWER_PIPE_OFFSET,
   FLOWER_PIPE_RADIUS,
@@ -79,6 +80,7 @@ export class Renderer {
       arrow: createMesh(gl, arrowMesh(), this.lit.attributes),
       disc: createMesh(gl, discMesh(40), this.lit.attributes),
       sphere: createMesh(gl, sphereMesh(16, 10), this.lit.attributes),
+      cell: createMesh(gl, cellMesh(CELL_SHOULDER_HEIGHT / CELL_OPENING_HEIGHT), this.lit.attributes),
     };
 
     this.textures = {
@@ -394,32 +396,40 @@ export class Renderer {
       const tint = alliance === 'red' ? [0.82, 0.24, 0.26, 1] : [0.2, 0.42, 0.85, 1];
       const tilt = hive.currentTilt;
 
-      // The arm itself, a bar through the pivot.
-      const reach = Math.hypot(CELL_REST_OFFSET, CELL_REST_HEIGHT - HIVE_PIVOT_HEIGHT);
-      const armLen = reach * 2;
-      mat4.composeZ(m, hive.pivotX, 0, HIVE_PIVOT_HEIGHT, 1, 0, 0.05, 0.05, 0.05);
+      // Pivot hub, and an arm tube running out to each CELL. The CAD has these
+      // as two separate 16.76 in tubes rather than one bar through the pivot.
+      mat4.composeZ(m, hive.pivotX, 0, HIVE_PIVOT_HEIGHT, 1, 0, 0.06, 0.06, 0.06);
       this._draw(this.meshes.box, m, [0.3, 0.32, 0.36, 1], this.textures.white);
-      this._armMatrix(m, hive.pivotX, HIVE_PIVOT_HEIGHT, tilt, armLen, 0.05);
-      this._draw(this.meshes.box, m, [0.34, 0.36, 0.4, 1], this.textures.white);
+      for (const side of ['fore', 'aft']) {
+        const rest = hive.cellRest(side);
+        this._strutMatrix(
+          m,
+          hive.pivotX,
+          0,
+          HIVE_PIVOT_HEIGHT,
+          hive.pivotX,
+          rest.y,
+          rest.z,
+          0.028,
+        );
+        this._draw(this.meshes.box, m, [0.34, 0.36, 0.4, 1], this.textures.white);
+      }
 
       for (const side of ['fore', 'aft']) {
-        const cell = hive.cellOpening(side);
+        const opening = hive.cellOpening(side);
+        const n = hive.openingNormal(side);
         const up = hive.up === side;
-        // A CELL is an open box; drawn as a floor plus three low walls so you
-        // can see what is inside it from the driver's viewpoint.
-        const w = CELL_OPENING_WIDTH;
-        const d = CELL_DEPTH;
-        const wall = 0.03;
-        mat4.composeZ(m, cell.x, cell.y, cell.z - 0.04, 1, 0, w, d, wall);
-        this._draw(this.meshes.box, m, tint, this.textures.plate, up ? 0.22 : 0.05);
-        for (const [ox, oy, sx, sy] of [
-          [-w / 2, 0, wall, d],
-          [w / 2, 0, wall, d],
-          [0, (cell.y < 0 ? -1 : 1) * (d / 2), w, wall],
-        ]) {
-          mat4.composeZ(m, cell.x + ox, cell.y + oy, cell.z + 0.06, 1, 0, sx, sy, 0.2);
-          this._draw(this.meshes.box, m, tint, this.textures.white, up ? 0.14 : 0.02);
-        }
+        // The prism runs from the opening inward along the arm, so its own
+        // axes are the opening's normal and the in-plane up.
+        this._cellMatrix(
+          m,
+          opening.x,
+          opening.y,
+          opening.z,
+          n,
+          hive === game.field.hives[alliance] ? 1 : 1,
+        );
+        this._draw(this.meshes.cell, m, tint, this.textures.plate, up ? 0.2 : 0.04);
       }
     }
 
@@ -489,6 +499,29 @@ export class Renderer {
   }
 
   /**
+   * Model matrix for a CELL: the unit `cellMesh` scaled to the real opening and
+   * planted on the opening plane, with its prism axis running inward along the
+   * arm.
+   *
+   * @param {{y:number,z:number}} normal outward unit normal of the opening
+   */
+  _cellMatrix(out, x, y, z, normal) {
+    const halfWidth = CELL_OPENING_WIDTH / 2;
+    // Mesh x -> field x (across the field, the opening's width).
+    out[0] = halfWidth; out[1] = 0; out[2] = 0; out[3] = 0;
+    // Mesh y -> inward along the arm, over the CELL's depth.
+    out[4] = 0; out[5] = -normal.y * CELL_DEPTH; out[6] = -normal.z * CELL_DEPTH; out[7] = 0;
+    // Mesh z -> up the opening's own face: the normal turned a quarter turn.
+    out[8] = 0; out[9] = -normal.z * CELL_OPENING_HEIGHT; out[10] = normal.y * CELL_OPENING_HEIGHT; out[11] = 0;
+    // Mesh origin sits at the middle of the opening's base edge.
+    out[12] = x;
+    out[13] = y + normal.z * (CELL_OPENING_HEIGHT / 2);
+    out[14] = z - normal.y * (CELL_OPENING_HEIGHT / 2);
+    out[15] = 1;
+    return out;
+  }
+
+  /**
    * Model matrix for a square strut spanning two arbitrary points in space.
    *
    * Builds an orthonormal frame around the strut's own axis, picking whichever
@@ -521,21 +554,6 @@ export class Renderer {
     out[4] = dx * length; out[5] = dy * length; out[6] = dz * length; out[7] = 0;
     out[8] = vx * thickness; out[9] = vy * thickness; out[10] = vz * thickness; out[11] = 0;
     out[12] = (ax + bx) / 2; out[13] = (ay + by) / 2; out[14] = (az + bz) / 2; out[15] = 1;
-    return out;
-  }
-
-  /**
-   * Compose the model matrix for a HIVE arm: a bar of `length` through the
-   * pivot, rotated `tilt` above horizontal in the y-z plane.
-   */
-  _armMatrix(out, x, pivotZ, tilt, length, thickness) {
-    const c = Math.cos(tilt);
-    const s = Math.sin(tilt);
-    // Columns are the rotated basis; the arm runs along local y.
-    out[0] = thickness; out[1] = 0; out[2] = 0; out[3] = 0;
-    out[4] = 0; out[5] = c * length; out[6] = s * length; out[7] = 0;
-    out[8] = 0; out[9] = -s * thickness; out[10] = c * thickness; out[11] = 0;
-    out[12] = x; out[13] = 0; out[14] = pivotZ; out[15] = 1;
     return out;
   }
 

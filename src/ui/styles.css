@@ -528,3 +528,15 @@ select { width: 100%; }
   opacity: 0.5;
   text-align: center;
 }
+
+.match-prompt {
+  margin-top: 7px;
+  padding: 3px 0;
+  border-radius: 4px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.07);
+  color: #cfd3da;
+}
+.match-prompt.urgent { color: #f2a33c; background: rgba(242, 163, 60, 0.12); }

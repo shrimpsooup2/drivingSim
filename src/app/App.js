@@ -83,23 +83,44 @@ export class App {
     const card = document.createElement('div');
     card.className = 'overlay-card';
     card.innerHTML = `
-      <h2>FTC Driving Simulator</h2>
-      <p>A physics-accurate parallel-plate drivetrain to practise on before kickoff.
-         Plug in a controller (Logitech F310 with the rear switch on <strong>X</strong>, or an
+      <h2>FTC Driving Simulator &mdash; BIOBUZZ</h2>
+      <p>This season's game on a physics-accurate parallel-plate drivetrain. Plug in a
+         controller (Logitech F310 with the rear switch on <strong>X</strong>, or an
          Xbox pad) and press a button on it to wake it up, or drive with the keyboard.</p>
+
+      <h3>Scoring &mdash; how to shoot</h3>
+      <div class="keys">
+        <kbd>Right bumper</kbd><span>Run the intake &mdash; drive over a POLLEN to pick it up</span>
+        <kbd>Y</kbd><span>Spin the flywheel up (leave it running)</span>
+        <kbd>Right trigger</kbd><span>Fire into your HIVE's raised CELL</span>
+        <kbd>Left bumper</kbd><span>Spit the front element back out</span>
+        <kbd>D-pad &uarr;&darr;</kbd><span>Trim the hood angle</span>
+        <kbd>D-pad &larr;&rarr;</kbd><span>Trim the target RPM</span>
+      </div>
+      <p>The panel at the top of the screen tells you what to press next, and shows the
+         flywheel's recovery bar. Three things catch everyone:</p>
+      <ul>
+        <li><strong>Wait for the wheel.</strong> The ball leaves at whatever speed the
+            flywheel is actually doing, so firing early throws the shot short.</li>
+        <li><strong>You can be too close.</strong> The CELL faces up and out, so the ball
+            has to drop into it. Inside about a metre no hood angle works &mdash; back off.</li>
+        <li><strong>Stop before you shoot.</strong> The ball keeps your robot's velocity.
+            The opening is 20&nbsp;in wide so a little drift survives, but much more and
+            you miss entirely.</li>
+      </ul>
+
       <h3>Controller</h3>
       <div class="keys">
         <kbd>Left stick</kbd><span>Drive and strafe</span>
         <kbd>Right stick X</kbd><span>Rotate</span>
         <kbd>Left trigger</kbd><span>Precision mode (analogue)</span>
-        <kbd>Right trigger</kbd><span>Bypass the acceleration ramp</span>
-        <kbd>Y</kbd><span>Toggle field centric</span>
-        <kbd>B</kbd><span>Reset IMU heading</span>
         <kbd>Back</kbd><span>Reset robot position</span>
       </div>
       <h3>Keyboard</h3>
       <div class="keys">
         ${KEYBOARD_HELP.map(([k, d]) => `<kbd>${k}</kbd><span>${d}</span>`).join('')}
+        <kbd>G</kbd><span>Put the game away / bring it back</span>
+        <kbd>M</kbd><span>Restart the match</span>
         <kbd>P</kbd><span>Pause</span>
         <kbd>?</kbd><span>Show this help</span>
       </div>

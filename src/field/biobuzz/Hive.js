@@ -1,15 +1,17 @@
 import { Vec2 } from '../../math/Vec2.js';
 import { INCH } from '../../math/MathUtil.js';
 import {
-  CELL_MEASURED_WIDTH,
-  CELL_NEAR_REACH,
-  CELL_FAR_REACH,
+  CELL_DEPTH,
+  CELL_OPENING_BOTTOM,
+  CELL_OPENING_HEIGHT,
+  CELL_OPENING_TOP,
+  CELL_OPENING_WIDTH,
   CELL_REST_HEIGHT,
   CELL_REST_OFFSET,
+  CELL_SHOULDER_HEIGHT,
   HIVE_PIVOT_HEIGHT,
   HIVE_TILT,
   INFERRED,
-  NECTAR_MASS,
 } from './constants.js';
 
 const G = 9.80665;
@@ -30,6 +32,44 @@ const REST_ALONG =
 const REST_ACROSS =
   -CELL_REST_OFFSET * Math.sin(HIVE_TILT) +
   (CELL_REST_HEIGHT - HIVE_PIVOT_HEIGHT) * Math.cos(HIVE_TILT);
+
+/**
+ * Centre of the CELL's opening, in the same body frame.
+ *
+ * The opening plane is perpendicular to the arm, so it sits `CELL_DEPTH` out
+ * along the arm from the back of the CELL, and its centre is half the opening's
+ * height up from the floor. Three numbers from three different places agree on
+ * this to three figures, which is why it is worth building rather than guessing:
+ *
+ *  - Figure 9-9 puts the bottom of the opening 53.5 in above the tiles and the
+ *    top 65.6 in;
+ *  - Section 9.6.2 gives the CELL 12 in of depth;
+ *  - the CAD stages three NECTAR on the floor at 9.4 in out and 50.2 in up.
+ *
+ * Build the opening 12 in out along the arm from those NECTAR and lift it to
+ * the middle of 53.5 and 65.6, and its lower edge lands on 53.5 and its apex on
+ * 65.6 exactly.
+ */
+const OPENING_ALONG = REST_ALONG + CELL_DEPTH;
+const OPENING_ACROSS =
+  REST_ACROSS +
+  ((CELL_OPENING_BOTTOM + CELL_OPENING_TOP) / 2 -
+    (CELL_REST_HEIGHT + CELL_DEPTH * Math.sin(HIVE_TILT))) /
+    Math.cos(HIVE_TILT);
+
+/**
+ * Half-width of the opening at height `v` above its lower edge.
+ *
+ * Figure 9-11: the CELL rib is a pentagon, 20 in across the base, straight up
+ * to a shoulder at 7.61 in, then tapering to an apex at 14 in. A shot into the
+ * top corners has less room than a rectangle would suggest.
+ */
+function openingHalfWidth(v) {
+  if (v < 0 || v > CELL_OPENING_HEIGHT) return 0;
+  if (v <= CELL_SHOULDER_HEIGHT) return CELL_OPENING_WIDTH / 2;
+  const taper = (CELL_OPENING_HEIGHT - v) / (CELL_OPENING_HEIGHT - CELL_SHOULDER_HEIGHT);
+  return (CELL_OPENING_WIDTH / 2) * taper;
+}
 
 /**
  * One ALLIANCE's HIVE: a bi-stable see-saw with a CELL at each end, tipping
@@ -84,7 +124,6 @@ export class Hive {
    *   tilt?: number,
    *   holdMass?: number,
    *   structureMass?: number,
-   *   openingAngle?: number,
    *   damping?: number,
    *   startUp?: 'fore'|'aft',
    * }} opts
@@ -109,14 +148,6 @@ export class Hive {
      * two sheet-metal baskets and a tube, so a few kilograms.
      */
     this.structureMass = opts.structureMass ?? 2.7;
-    /**
-     * How far the CELL opening is tilted outward from the arm's perpendicular.
-     * At the up stop this leaves the opening 30 degrees from vertical, facing
-     * out into the FIELD, and at the down stop it has rotated past horizontal
-     * so the CELL empties itself. It is the one shape the part bounding boxes
-     * cannot pin down.
-     */
-    this.openingAngle = opts.openingAngle ?? (60 * Math.PI) / 180;
     /**
      * Damping at the pivot, from the four Blumotion 970A soft-close dampers the
      * CAD fits to it.
@@ -176,7 +207,9 @@ export class Hive {
   /** Rotational inertia of the structure alone, about the pivot. */
   get structureInertia() {
     // Two baskets, most of the mass out near the CELLS.
-    const radius = (CELL_NEAR_REACH + CELL_FAR_REACH) / 2;
+    // Most of the mass is out in the two baskets, so use the distance to the
+    // middle of a CELL as the radius of gyration.
+    const radius = Math.hypot(REST_ALONG + CELL_DEPTH / 2, REST_ACROSS);
     return this.structureMass * radius * radius;
   }
 
@@ -228,18 +261,32 @@ export class Hive {
   }
 
   /**
-   * Centre of a CELL's opening, in field coordinates: the point an element
-   * comes to rest on.
+   * Centre of a CELL's opening, in field coordinates: the aperture a shot has
+   * to cross, 20 in wide by 14 in tall and perpendicular to the arm.
    *
    * The two CELLS are mirror images across the pivot rather than 180 degree
-   * rotations of each other -- both open upward when their own end is raised --
-   * so the perpendicular offset keeps its sign and only the along-arm term
+   * rotations of each other -- both open outward along their own end of the arm
+   * -- so the perpendicular offset keeps its sign and only the along-arm term
    * flips.
    *
    * @param {'fore'|'aft'} side
    * @returns {{x:number, y:number, z:number}}
    */
   cellOpening(side) {
+    const offset = this._toWorld(this._sideSign(side) * OPENING_ALONG, OPENING_ACROSS);
+    return { x: this.pivotX, y: offset.y, z: HIVE_PIVOT_HEIGHT + offset.z };
+  }
+
+  /**
+   * Where elements come to rest inside a CELL: on the sloping floor, 12 in back
+   * along the arm from the opening and below it.
+   *
+   * This is not what to shoot at. Aiming here rather than at the opening puts
+   * the ball into the outside of the CELL wall, about nine inches low.
+   *
+   * @param {'fore'|'aft'} side
+   */
+  cellRest(side) {
     const offset = this._toWorld(this._sideSign(side) * REST_ALONG, REST_ACROSS);
     return { x: this.pivotX, y: offset.y, z: HIVE_PIVOT_HEIGHT + offset.z };
   }
@@ -249,18 +296,27 @@ export class Hive {
     return this.cellOpening(this.up);
   }
 
+  /** Outward unit normal of a CELL's opening, in field coordinates. */
+  openingNormal(side) {
+    const sign = this._sideSign(side);
+    const c = Math.cos(this.angle);
+    const s = Math.sin(this.angle);
+    // Body-frame normal is straight along the arm: (sign, 0).
+    return { y: sign * c, z: sign * s };
+  }
+
   /**
-   * Upward component of a CELL's opening normal, 1 when it faces straight up
-   * and negative once it has rolled past horizontal and cannot hold anything.
+   * Upward component of a CELL's opening normal: 1 facing straight up, negative
+   * once the opening has rolled past horizontal and cannot hold anything.
+   *
+   * The opening faces straight out along the arm, so this is simply the sine of
+   * the arm angle -- +0.5 for the raised CELL at a 30 degree stop and -0.5 for
+   * the lowered one, which is why a tip empties itself. It used to be a free
+   * parameter; the figure's two opening heights removed it.
    * @param {'fore'|'aft'} side
    */
   openingUpwardness(side) {
-    const sign = this._sideSign(side);
-    // Body-frame normal (sign*sin(phi), cos(phi)); its world vertical component.
-    return (
-      sign * Math.sin(this.openingAngle) * Math.sin(this.angle) +
-      Math.cos(this.openingAngle) * Math.cos(this.angle)
-    );
+    return this._sideSign(side) * Math.sin(this.angle);
   }
 
   /**
@@ -305,24 +361,33 @@ export class Hive {
    */
   interactBall(ball) {
     const side = this.up;
-    if (this.openingUpwardness(side) < 0.35) return false;
-    if (ball.vz > 0.4) return false;
+    // A CELL whose mouth has rolled to horizontal cannot take anything.
+    if (this.openingUpwardness(side) < 0.1) return false;
 
     const opening = this.cellOpening(side);
+    const normal = this.openingNormal(side);
     const margin = INFERRED.cellCaptureMargin;
-    if (Math.abs(ball.x - opening.x) > CELL_MEASURED_WIDTH / 2 + margin) return false;
 
-    // Measure along and across the arm rather than in world axes, so the
-    // volume follows the CELL as it rotates.
+    // The ball has to be heading *into* the opening, not drifting back out.
+    const closing = -(ball.vy * normal.y + ball.vz * normal.z);
+    if (closing <= 0) return false;
+
     const dy = ball.y - opening.y;
     const dz = ball.z - opening.z;
-    const c = Math.cos(this.angle);
-    const s = Math.sin(this.angle);
-    const along = dy * c + dz * s;
-    const across = -dy * s + dz * c;
-    const depth = (CELL_FAR_REACH - CELL_NEAR_REACH) / 2 + margin;
-    if (Math.abs(along) > depth) return false;
-    if (across < -margin || across > depth * 2) return false;
+    // Distance through the opening plane, positive outside the CELL.
+    const through = dy * normal.y + dz * normal.z;
+    if (through < -CELL_DEPTH || through > ball.radius + margin) return false;
+
+    // Height up the opening, measured in its own plane: the in-plane "up" is
+    // the arm's perpendicular, which is the normal turned a quarter turn.
+    const up = -dy * normal.z + dz * normal.y;
+    const v = up * this._sideSign(side) + CELL_OPENING_HEIGHT / 2;
+    if (v < -margin || v > CELL_OPENING_HEIGHT + margin) return false;
+
+    // And within the pentagon at that height, which is narrower than the full
+    // 20 in once you are above the shoulder.
+    const halfWidth = openingHalfWidth(Math.min(Math.max(v, 0), CELL_OPENING_HEIGHT));
+    if (Math.abs(ball.x - opening.x) > halfWidth + margin) return false;
 
     this.upBalls.push(ball);
     ball.attachTo('cell', this);
@@ -348,8 +413,8 @@ export class Hive {
       const balls = side === 'fore' ? this.foreBalls : this.aftBalls;
       if (balls.length === 0) continue;
       const sign = this._sideSign(side);
-      const perRow = Math.max(1, Math.floor(CELL_MEASURED_WIDTH / (3.8 * INCH)));
-      const spread = CELL_MEASURED_WIDTH / (perRow + 1);
+      const perRow = Math.max(1, Math.floor(CELL_OPENING_WIDTH / (3.8 * INCH)));
+      const spread = CELL_OPENING_WIDTH / (perRow + 1);
       balls.forEach((ball, i) => {
         const row = Math.floor(i / perRow);
         const column = i % perRow;
@@ -360,7 +425,7 @@ export class Hive {
           REST_ACROSS + row * ball.radius * 0.5,
         );
         ball.setPosition(
-          this.pivotX - CELL_MEASURED_WIDTH / 2 + spread * (column + 1),
+          this.pivotX - CELL_OPENING_WIDTH / 2 + spread * (column + 1),
           offset.y,
           HIVE_PIVOT_HEIGHT + offset.z,
         );
@@ -434,7 +499,7 @@ export class Hive {
         const vy = -this.angularVelocity * offset.z;
         const vz = this.angularVelocity * offset.y;
         ball.setPosition(
-          this.pivotX + (Math.random() * 2 - 1) * CELL_MEASURED_WIDTH * 0.3,
+          this.pivotX + (Math.random() * 2 - 1) * CELL_OPENING_WIDTH * 0.3,
           offset.y,
           HIVE_PIVOT_HEIGHT + offset.z,
         );

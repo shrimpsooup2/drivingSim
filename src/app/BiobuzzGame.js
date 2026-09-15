@@ -190,9 +190,16 @@ export class BiobuzzGame {
         rpm: this.launcher.rpm,
         target: this.launcher.targetRpm,
         ready: this.launcher.ready,
+        spinning: this.launcher.spinning,
         recovery: this.launcher.recovery,
         hoodDegrees: (this.launcher.hoodAngle * 180) / Math.PI,
       },
+      /**
+       * Whether the robot is moving enough to throw a shot off. The opening is
+       * 20 in wide, so a little drift survives; this is the point past which it
+       * does not.
+       */
+      moving: this.sim.robot.body.speed > 0.35,
       solution: this.launcher.aimFor(this.field.hiveTarget(this.alliance)),
     };
   }
