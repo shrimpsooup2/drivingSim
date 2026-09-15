@@ -158,6 +158,11 @@ export class BiobuzzField {
       this.ballWorld.addInteractor((ball) => flower.interactBall(ball));
     }
     for (const hive of [this.hives.red, this.hives.blue]) {
+      // Walls first, then adoption. A CELL is a structure a shot bounces
+      // around inside *and* a container that eventually keeps what stops
+      // moving, in that order -- registering only the container is what made
+      // shots snap out of the air onto a shelf.
+      this.ballWorld.addCollider((ball) => hive.collideBall(ball));
       this.ballWorld.addInteractor((ball) => hive.interactBall(ball));
     }
 

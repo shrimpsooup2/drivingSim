@@ -60,6 +60,11 @@ export class BallWorld {
      */
     this.interactors = [];
     /**
+     * Solid structures balls bounce off, as callbacks. See `addCollider`.
+     * @type {((ball: Ball, dt: number) => void)[]}
+     */
+    this.colliders = [];
+    /**
      * Solid bodies balls bounce off: the player's robot and every opponent.
      * @type {{body: any, halfLength: number, halfWidth: number, height: number}[]}
      */
@@ -82,12 +87,29 @@ export class BallWorld {
   clear() {
     this.balls.length = 0;
     this.interactors.length = 0;
+    this.colliders.length = 0;
     this.bodies.length = 0;
   }
 
   /** @param {(ball: Ball, dt: number) => boolean} fn */
   addInteractor(fn) {
     this.interactors.push(fn);
+    return this;
+  }
+
+  /**
+   * Register something solid that is not a ROBOT: a CELL's walls, say.
+   *
+   * Separate from `interactors`, which claim ownership of a ball. A collider
+   * only pushes it around, which is the difference between a structure a ball
+   * bounces off and a container that has swallowed it. Both exist because a
+   * CELL is the first and the second in that order -- the ball has to fly in
+   * and rattle before anything adopts it.
+   *
+   * @param {(ball: Ball, dt: number) => void} fn
+   */
+  addCollider(fn) {
+    this.colliders.push(fn);
   }
 
   /** Register a robot so balls collide with it. */
@@ -131,6 +153,16 @@ export class BallWorld {
     for (const ball of this.balls) {
       if (!ball.free || ball.outOfBounds) continue;
       ball.contactSpeedBound = ball.speed;
+    }
+
+    // Structures first, then ROBOTS: a ball is far more often being held by a
+    // CELL's walls than shoved by a ROBOT, and resolving the ROBOT last lets
+    // it win, which is what a 15 kg machine driving into something should do.
+    for (const collide of this.colliders) {
+      for (const ball of this.balls) {
+        if (!ball.free || ball.outOfBounds) continue;
+        collide(ball, dt);
+      }
     }
 
     for (const entry of this.bodies) {

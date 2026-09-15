@@ -11,7 +11,9 @@ import { buildZones, gardenStagingPositions } from '../src/field/biobuzz/zones.j
 import {
   BLUE_START_UP,
   CELL_OPENING_BOTTOM,
+  CELL_DEPTH,
   CELL_OPENING_HEIGHT,
+  CELL_OPENING_WIDTH,
   CELL_OPENING_TOP,
   CELL_REST_HEIGHT,
   CELL_START_NECTAR,
@@ -245,18 +247,24 @@ test('the pentagon taper is above the shoulder, not below it', () => {
     const nearApex = CELL_OPENING_HEIGHT / 2 - 1 * 0.0254;
     const nearBase = -CELL_OPENING_HEIGHT / 2 + 1 * 0.0254;
     const offset = 8 * 0.0254;
-    const shoot = (v) => {
+    // Asked of the geometry directly. `interactBall` now only adopts an
+    // element that has already come to rest inside the CELL -- a moving one is
+    // the walls' business -- so putting a ball in the mouth at 1.5 m/s and
+    // expecting it to be taken is no longer the question being asked here.
+    const inside = (v) => {
       const ball = pollen();
       ball.setPosition(
         centre.x + offset,
         centre.y + up.y * v + n.y * 0.01,
         centre.z + up.z * v + n.z * 0.01,
       );
-      ball.setVelocity(0, -n.y * 1.5, -n.z * 1.5);
-      return hive.interactBall(ball);
+      return hive.openingContains(side, ball.x, ball.y, ball.z, {
+        margin: 0,
+        outward: ball.radius,
+      });
     };
-    assert.ok(shoot(nearBase), `${side}: a ball along the base should go in`);
-    assert.ok(!shoot(nearApex), `${side}: a ball 8 in off centre at the apex should not`);
+    assert.ok(inside(nearBase), `${side}: a point along the base is inside`);
+    assert.ok(!inside(nearApex), `${side}: a point 8 in off centre at the apex is not`);
   }
 });
 
@@ -290,24 +298,240 @@ test('the opening is a pentagon, so the top corners are tighter than the base', 
   const opening = hive.cellOpening('fore');
   const n = hive.openingNormal('fore');
 
-  /** Drop a ball into the opening `v` up its face and `dx` off centre. */
-  const tryAt = (v, dx) => {
+  const up = hive.openingUp('fore');
+
+  /** Is a point `v` up the opening's face and `dx` off centre inside it? */
+  const at = (v, dx) => {
     const ball = pollen();
-    const up = v - CELL_OPENING_HEIGHT / 2;
-    // In-plane up is the normal turned a quarter turn, on the fore side.
-    const y = opening.y - (-n.z) * up * -1;
-    const z = opening.z + n.y * up * -1;
-    ball.setPosition(opening.x + dx, y, z);
-    // Heading into the opening.
-    ball.setVelocity(0, -n.y * 3, -n.z * 3);
-    const fresh = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
-    return fresh.interactBall(ball);
+    const along = v - CELL_OPENING_HEIGHT / 2;
+    ball.setPosition(
+      opening.x + dx,
+      opening.y + up.y * along,
+      opening.z + up.z * along,
+    );
+    return hive.openingContains('fore', ball.x, ball.y, ball.z, {
+      margin: 0,
+      outward: ball.radius,
+    });
   };
 
   // Low down the face, the full 20 in width is available.
-  assert.ok(tryAt(3 * INCH, 8 * INCH), 'wide at the base');
+  assert.ok(at(3 * INCH, 8 * INCH), 'wide at the base');
   // Near the apex the pentagon has closed in.
-  assert.ok(!tryAt(13 * INCH, 8 * INCH), 'narrow at the apex');
+  assert.ok(!at(13 * INCH, 8 * INCH), 'narrow at the apex');
+
+  // And the CELL's walls are where the outline says: a ball on the line that
+  // aims at the top corner is stopped by the rib rather than let through.
+  const planes = hive.cellPlanes('fore');
+  const local = hive.cellLocal('fore', opening.x + 8 * INCH, opening.y, opening.z, planes);
+  const apexLocal = {
+    a: 8 * INCH,
+    v: 13 * INCH,
+  };
+  const worst = Math.min(
+    ...planes.edges.map((e) => e.a * apexLocal.a + e.v * apexLocal.v - e.offset),
+  );
+  assert.ok(worst < 0, 'the top-corner point is outside the pentagon');
+  assert.ok(Math.abs(local.d) < 1e-9, 'and the opening plane is where it should be');
+});
+
+test('a shot has to physically arrive -- the CELL does not snap it out of the air', () => {
+  // A CELL that simply accepts anything crossing its mouth pulls the ball out
+  // of mid-air onto a shelf, which looks like a magnet and teaches nothing: a
+  // shot that should have rattled off the rib scored, and one that should have
+  // bounced out stayed in. Now it has five walls and a back panel, and nothing
+  // is adopted until it has stopped moving in there.
+  const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const opening = hive.cellOpening('fore');
+  const normal = hive.openingNormal('fore');
+  const ball = pollen();
+
+  // Dead centre of the mouth, heading straight in at shooting speed.
+  ball.setPosition(
+    opening.x,
+    opening.y + normal.y * 0.02,
+    opening.z + normal.z * 0.02,
+  );
+  ball.setVelocity(-normal.y * 4, -normal.z * 4, 0);
+  ball.setVelocity(0, -normal.y * 4, -normal.z * 4);
+
+  assert.equal(hive.interactBall(ball), false, 'moving at 4 m/s it is not adopted');
+  assert.equal(hive.elementsInUpCell(), 0);
+
+  // The walls are what stop it. Step it through them and it should end up
+  // inside, slowed, and only then taken.
+  let adopted = false;
+  for (let i = 0; i < 4000 && !adopted; i++) {
+    const dt = 1 / 2000;
+    ball.vz -= 9.80665 * dt;
+    ball.x += ball.vx * dt;
+    ball.y += ball.vy * dt;
+    ball.z += ball.vz * dt;
+    hive.collideBall(ball);
+    adopted = hive.interactBall(ball);
+  }
+  assert.ok(adopted, 'it settles in the CELL and is then adopted');
+  assert.equal(hive.elementsInUpCell(), 1);
+});
+
+test('the CELL walls stop a ball rather than letting it through', () => {
+  const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const planes = hive.cellPlanes('fore');
+  const opening = hive.cellOpening('fore');
+  const normal = hive.openingNormal('fore');
+
+  // Fired hard at the back panel from inside the mouth. Without walls it flew
+  // straight out the back of the structure.
+  const ball = pollen();
+  ball.setPosition(opening.x, opening.y, opening.z);
+  ball.setVelocity(0, -normal.y * 8, -normal.z * 8);
+  for (let i = 0; i < 400; i++) {
+    const dt = 1 / 2000;
+    ball.x += ball.vx * dt;
+    ball.y += ball.vy * dt;
+    ball.z += ball.vz * dt;
+    hive.collideBall(ball);
+  }
+  const local = hive.cellLocal('fore', ball.x, ball.y, ball.z, planes);
+  assert.ok(
+    local.d < planes.depth + ball.radius,
+    `it went ${local.d.toFixed(3)} m deep, past the ${planes.depth.toFixed(3)} m back panel`,
+  );
+});
+
+test('a CELL wall only exists where the structure does', () => {
+  // Each side plate is bounded by its own two vertices, and the tube is
+  // bounded along its depth. Unbounded, the plane of one CELL's wall reached
+  // across the whole FIELD: a shot from the far corner at the red CELL was
+  // swatted out of the air by a blue CELL a metre and a half off its line.
+  const hive = new Hive({ alliance: 'blue', pivotX: 0.324, startUp: 'aft' });
+  const planes = hive.cellPlanes('fore');
+  const opening = hive.cellOpening('fore');
+  const up = hive.openingUp('fore');
+
+  // A foot above the pentagon's apex, in the plane of a side wall, inside the
+  // tube's depth: in line with a wall but a long way past where it ends.
+  const above = CELL_OPENING_HEIGHT / 2 + 0.3;
+  const ball = pollen();
+  ball.setPosition(
+    opening.x + CELL_OPENING_WIDTH / 2,
+    opening.y + up.y * above + planes.inward.y * 0.15,
+    opening.z + up.z * above + planes.inward.z * 0.15,
+  );
+  ball.setVelocity(0, 0, -4);
+  const before = { ...ball };
+  hive.collideBall(ball);
+  assert.equal(ball.vz, before.vz, 'nothing there, so nothing happened');
+  assert.equal(ball.y, before.y);
+  assert.equal(ball.z, before.z);
+});
+
+test('the arm feels the shot, not just what settles in it', () => {
+  // Newton's third law, and the reason a *volley* can take a HIVE over rather
+  // than only the weight that piles up afterwards. A POLLEN arriving at 6 m/s
+  // carries 0.27 kg m/s, and landed two thirds of a metre out on the lever
+  // that is a real angular impulse.
+  const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const opening = hive.cellOpening('fore');
+  const normal = hive.openingNormal('fore');
+  hive.angularVelocity = 0;
+
+  // Arriving *descending*, which is the only way a CELL accepts anything: the
+  // manual's own geometry forces the shot to drop in. The direction matters to
+  // the answer -- a shot fired flat along the arm pushes at the pivot and
+  // produces almost no torque at all, which is correct and not what a real
+  // shot does.
+  const ball = pollen();
+  ball.setPosition(opening.x, opening.y, opening.z + 0.02);
+  ball.setVelocity(0, -normal.y * 1.5, -5);
+  for (let i = 0; i < 600; i++) {
+    const dt = 1 / 2000;
+    ball.x += ball.vx * dt;
+    ball.y += ball.vy * dt;
+    ball.z += ball.vz * dt;
+    hive.collideBall(ball);
+  }
+  assert.ok(
+    Math.abs(hive.angularVelocity) > 1e-4,
+    `the arm should have been nudged, got ${hive.angularVelocity.toExponential(2)} rad/s`,
+  );
+  // The fore CELL is raised, so weight landing in it drives that end down --
+  // which for this sign convention means the angle rising toward a tip.
+  assert.ok(
+    hive.angularVelocity > 0,
+    `and nudged toward tipping, got ${hive.angularVelocity.toExponential(2)} rad/s`,
+  );
+});
+
+test('a shot fired flat along the arm barely torques it', () => {
+  // The other half of the same physics, and worth pinning because it is
+  // counter-intuitive: a force pointed at the pivot has no lever on it. A shot
+  // arriving along the arm's axis pushes the CELL toward the pivot rather than
+  // down, so it does almost nothing to the balance -- which is one more reason
+  // a CELL only takes a descending element.
+  const flat = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const steep = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const opening = flat.cellOpening('fore');
+  const normal = flat.openingNormal('fore');
+
+  const fire = (hive, vy, vz) => {
+    const ball = pollen();
+    ball.setPosition(opening.x, opening.y, opening.z + 0.02);
+    ball.setVelocity(0, vy, vz);
+    hive.angularVelocity = 0;
+    for (let i = 0; i < 600; i++) {
+      const dt = 1 / 2000;
+      ball.y += ball.vy * dt;
+      ball.z += ball.vz * dt;
+      hive.collideBall(ball);
+    }
+    return hive.angularVelocity;
+  };
+
+  const alongArm = fire(flat, -normal.y * 5, -normal.z * 5);
+  const descending = fire(steep, -normal.y * 1.5, -5);
+  assert.ok(
+    descending > Math.abs(alongArm),
+    `descending ${descending.toExponential(2)} should beat along-the-arm ${alongArm.toExponential(2)}`,
+  );
+});
+
+test('the tip follows where the weight is, not how many elements there are', () => {
+  // The lever arm used to be assumed: every element counted as if it sat at the
+  // CELL's rest point, so the balance was a function of the count alone. Two
+  // elements at the back of a CELL and two at its mouth are not the same
+  // torque, and now they are not treated as such.
+  const deep = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const shallow = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+
+  const place = (hive, along) => {
+    const ball = pollen();
+    const opening = hive.cellOpening('fore');
+    const normal = hive.openingNormal('fore');
+    hive.foreBalls.push(ball);
+    ball.attachTo('cell', hive);
+    ball.setPosition(
+      opening.x,
+      opening.y - normal.y * along,
+      opening.z - normal.z * along,
+    );
+    return ball;
+  };
+
+  // Same element, same mass, different depth into the same CELL.
+  place(deep, CELL_DEPTH * 0.9);
+  place(shallow, CELL_DEPTH * 0.1);
+
+  assert.ok(
+    Math.abs(deep.netTorque) !== Math.abs(shallow.netTorque),
+    'the same element at two depths must not give the same torque',
+  );
+  // Further out along the raised arm is a longer lever, so it pulls harder
+  // toward the tip.
+  assert.ok(
+    deep.netTorque < shallow.netTorque,
+    `deep ${deep.netTorque.toFixed(4)} should push harder toward the tip than shallow ${shallow.netTorque.toFixed(4)}`,
+  );
 });
 
 test('a TIP during AUTO is counted separately', () => {

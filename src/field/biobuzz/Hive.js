@@ -1,5 +1,6 @@
 import { Vec2 } from '../../math/Vec2.js';
 import { INCH } from '../../math/MathUtil.js';
+import { resolveSphereContact } from '../../physics/BallWorld.js';
 import {
   CELL_DEPTH,
   CELL_OPENING_BOTTOM,
@@ -26,6 +27,15 @@ const G = 9.80665;
  * along the arm and 0.71 in above its axis, which is where a ball sitting on
  * the floor of a basket bolted to a 1 in tube should be.
  */
+/**
+ * How slow an element has to be before the CELL adopts it, m/s.
+ *
+ * The handover threshold between real wall physics and stable stacking. Low
+ * enough that a shot visibly arrives, hits the back and drops before anything
+ * takes it -- a couple of tenths of a second, not instantly.
+ */
+const CELL_SETTLE_SPEED = 0.6;
+
 const REST_ALONG =
   CELL_REST_OFFSET * Math.cos(HIVE_TILT) +
   (CELL_REST_HEIGHT - HIVE_PIVOT_HEIGHT) * Math.sin(HIVE_TILT);
@@ -344,16 +354,19 @@ export class Hive {
    */
   get netTorque() {
     let torque = this.holdingMoment * G * Math.sin(this.angle);
-    const c = Math.cos(this.angle);
-    const s = Math.sin(this.angle);
-    for (const side of ['fore', 'aft']) {
-      const sign = this._sideSign(side);
-      const along = sign * REST_ALONG;
-      const balls = side === 'fore' ? this.foreBalls : this.aftBalls;
-      for (const ball of balls) {
-        torque -= ball.mass * G * (along * c - REST_ACROSS * s);
-      }
-    }
+    // Each element's own lever arm, from where it actually is.
+    //
+    // This used to assume every element sat at the CELL's rest point, which
+    // made the arm's balance a function of the *count* rather than of where
+    // the weight was. It is the same sum -- torque about the pivot from a
+    // vertical force is `-m*g*y` -- but taken from the real position, so a
+    // CELL filled to the back tips sooner than one with the same number of
+    // elements piled at the mouth, and a NECTAR resting further out counts for
+    // more than a POLLEN resting closer in. Elements still loose inside a CELL
+    // are not in this sum: they are pressing on its walls, and `_pushOff`
+    // hands the arm that reaction directly.
+    for (const ball of this.foreBalls) torque -= ball.mass * G * ball.y;
+    for (const ball of this.aftBalls) torque -= ball.mass * G * ball.y;
     return torque;
   }
 
@@ -418,11 +431,266 @@ export class Hive {
   }
 
   /**
-   * Try to capture a free ball into the upward-facing CELL.
+   * The CELL's walls, in world space: five pentagon edges and the back panel.
    *
-   * The capture volume is the CELL's mouth, inflated slightly, and the ball
-   * must be falling -- a ball rising through the plane is on its way out. A
-   * CELL that has rolled too far to hold anything refuses outright.
+   * Real geometry rather than a capture test, because a CELL that simply
+   * *accepts* anything crossing its mouth snaps the ball out of the air and
+   * onto a shelf, which looks like a magnet and teaches nothing. With walls, a
+   * shot flies in, hits the back panel, rattles down into the low corner and
+   * settles -- and one that clips the rib bounces back out rather than
+   * scoring.
+   *
+   * The frame is (across, up, inward): across the FIELD, up the opening's own
+   * face toward the pentagon's apex, and inward along the arm. Each plane is
+   * stored as an inward normal and the offset of the wall along it, so the
+   * signed distance of a point is `offset - n.point` and positive means inside.
+   *
+   * @param {'fore'|'aft'} side
+   */
+  cellPlanes(side) {
+    const opening = this.cellOpening(side);
+    const normal = this.openingNormal(side);
+    const up = this.openingUp(side);
+    const hw = CELL_OPENING_WIDTH / 2;
+    const apex = CELL_OPENING_HEIGHT;
+    const shoulder = CELL_SHOULDER_HEIGHT;
+    const rise = apex - shoulder;
+    const taper = Math.hypot(rise, hw);
+
+    // In (across, v) where v runs 0 at the pentagon's base to `apex` at its
+    // point. Inward normals, so a point is inside when every distance is
+    // positive.
+    const edges = [
+      { a: 0, v: 1, offset: 0 }, // base
+      { a: -1, v: 0, offset: -hw }, // right
+      { a: 1, v: 0, offset: -hw }, // left
+      { a: -rise / taper, v: -hw / taper, offset: -(rise * hw + hw * shoulder) / taper },
+      { a: rise / taper, v: -hw / taper, offset: -(rise * hw + hw * shoulder) / taper },
+    ];
+
+    return {
+      origin: opening,
+      // Unit basis vectors of the CELL's own frame, in world coordinates.
+      across: { x: 1, y: 0, z: 0 },
+      up,
+      inward: { x: 0, y: -normal.y, z: -normal.z },
+      depth: CELL_DEPTH,
+      baseOffset: apex / 2,
+      edges,
+    };
+  }
+
+  /**
+   * Local coordinates of a world point in a CELL's frame.
+   * @param {'fore'|'aft'} side
+   */
+  cellLocal(side, x, y, z, planes = this.cellPlanes(side)) {
+    const dx = x - planes.origin.x;
+    const dy = y - planes.origin.y;
+    const dz = z - planes.origin.z;
+    return {
+      a: dx,
+      // Measured from the pentagon's base rather than the opening's centre,
+      // which is what the edge equations are written in.
+      v: dy * planes.up.y + dz * planes.up.z + planes.baseOffset,
+      d: dy * planes.inward.y + dz * planes.inward.z,
+    };
+  }
+
+  /**
+   * Bounce a free ball off this HIVE's CELLS.
+   *
+   * Registered with the ball world as a collider, so it runs on every free
+   * ball every substep. Cheap-rejected on a bounding sphere first, because 56
+   * elements times two CELLS times six planes at two thousand hertz is worth
+   * not doing.
+   *
+   * @param {import('../../physics/Ball.js').Ball} ball
+   */
+  collideBall(ball) {
+    for (const side of ['fore', 'aft']) {
+      const planes = this.cellPlanes(side);
+      // Bounding sphere around the CELL's volume, centred half a depth in.
+      const cx = planes.origin.x;
+      const cy = planes.origin.y + planes.inward.y * (planes.depth / 2);
+      const cz = planes.origin.z + planes.inward.z * (planes.depth / 2);
+      const reach = CELL_OPENING_WIDTH / 2 + planes.depth / 2 + ball.radius;
+      if (
+        Math.abs(ball.x - cx) > reach ||
+        Math.abs(ball.y - cy) > reach ||
+        Math.abs(ball.z - cz) > reach
+      ) {
+        continue;
+      }
+      this._collideCell(ball, side, planes);
+    }
+  }
+
+  /**
+   * Resolve a ball against one CELL, modelled as the plates it is made of.
+   *
+   * Six two-sided plates: the five pentagon side walls, each spanning the
+   * CELL's depth, and the back panel bounded by the outline. The mouth has no
+   * plate, which is what lets a shot in.
+   *
+   * Two-sided and *bounded* both matter, and the bounding is what the first
+   * version got wrong. Treating the mouth as an infinite plane whenever the
+   * ball was near the outline meant the plane of every CELL extended across
+   * the whole FIELD: a shot from the far corner at the red CELL was batted out
+   * of the air by the opening plane of a blue CELL a metre and a half off its
+   * line. A plate only exists where the structure does.
+   *
+   * @param {import('../../physics/Ball.js').Ball} ball
+   */
+  _collideCell(ball, side, planes) {
+    const local = this.cellLocal(side, ball.x, ball.y, ball.z, planes);
+    const r = ball.radius;
+
+    // Along the tube at all? The mouth is open, so a ball short of it by more
+    // than its radius is in free air.
+    const alongWall = local.d > -r && local.d < planes.depth + r;
+
+    const distances = planes.edges.map(
+      (edge) => edge.a * local.a + edge.v * local.v - edge.offset,
+    );
+    const worstDistance = Math.min(...distances);
+
+    for (let i = 0; i < planes.edges.length && alongWall; i++) {
+      const distance = distances[i];
+      if (Math.abs(distance) >= r) continue;
+
+      // A side wall only exists between its own two vertices, so the ball has
+      // to be within the outline as far as every *other* edge is concerned.
+      // Without that bound each wall ran off to infinity in its own plane: a
+      // shot from the far corner was swatted out of the air by the plane of a
+      // CELL wall extended a foot above the pentagon's apex, where there is
+      // nothing but air.
+      let bounded = true;
+      for (let j = 0; j < distances.length && bounded; j++) {
+        if (j !== i && distances[j] < -r) bounded = false;
+      }
+      if (!bounded) continue;
+
+      // Straddling this wall: push it to whichever side it is already on. This
+      // is both the interior wall and the rib a clipped shot bounces off.
+      const sign = distance >= 0 ? 1 : -1;
+      const edge = planes.edges[i];
+      this._pushOff(
+        ball,
+        sign * edge.a,
+        sign * edge.v * planes.up.y,
+        sign * edge.v * planes.up.z,
+        r - Math.abs(distance),
+      );
+    }
+
+    // The back panel, from either side, bounded by the outline.
+    if (worstDistance >= -r) {
+      const behind = planes.depth - local.d;
+      if (Math.abs(behind) < r) {
+        const sign = behind >= 0 ? 1 : -1;
+        this._pushOff(
+          ball,
+          0,
+          -sign * planes.inward.y,
+          -sign * planes.inward.z,
+          r - Math.abs(behind),
+        );
+      }
+    }
+  }
+
+  /**
+   * Push a ball off a plate and resolve the bounce, with the plate's own
+   * velocity as the arm swings.
+   */
+  _pushOff(ball, nx, ny, nz, penetration) {
+    const length = Math.hypot(nx, ny, nz) || 1;
+    const ux = nx / length;
+    const uy = ny / length;
+    const uz = nz / length;
+    ball.x += ux * penetration;
+    ball.y += uy * penetration;
+    ball.z += uz * penetration;
+
+    const surface = this._surfaceVelocity(ball.x, ball.y, ball.z);
+    const beforeVy = ball.vy;
+    const beforeVz = ball.vz;
+    resolveSphereContact(ball, ux, uy, uz, {
+      // Polycarbonate on a foam-lined basket: a CELL is meant to keep what
+      // lands in it, and a lively wall would throw shots back out of something
+      // that in reality absorbs them.
+      restitution: ball.restitution * 0.4,
+      friction: 0.35,
+      surfaceVx: surface.vx,
+      surfaceVy: surface.vy,
+      surfaceVz: surface.vz,
+      minBounce: 0.25,
+    });
+
+    // --- And the arm feels it back.
+    //
+    // Newton's third law, and it is the whole reason a *shot* can tip a HIVE
+    // rather than only the weight that accumulates in it afterwards. A POLLEN
+    // arriving at 6 m/s carries 0.27 kg m/s; landed on a lever two thirds of a
+    // metre out that is a real angular impulse, and firing a volley into a
+    // CELL that is nearly over is how you take it over. A resting element
+    // hands the same law a steady trickle of tiny impulses, which is its
+    // weight -- so free elements inside a CELL need no separate bookkeeping.
+    const impulseY = -ball.mass * (ball.vy - beforeVy);
+    const impulseZ = -ball.mass * (ball.vz - beforeVz);
+    const ry = ball.y;
+    const rz = ball.z - HIVE_PIVOT_HEIGHT;
+    const angularImpulse = ry * impulseZ - rz * impulseY;
+    this.angularVelocity += angularImpulse / this.momentOfInertia;
+  }
+
+  /**
+   * Everything the arm has to swing, about the pivot.
+   *
+   * The structure plus whatever is in the CELLS, each at its own distance
+   * rather than at an assumed one -- the same reason `netTorque` uses real
+   * positions.
+   */
+  get momentOfInertia() {
+    let inertia = this.structureInertia;
+    for (const list of [this.foreBalls, this.aftBalls]) {
+      for (const ball of list) {
+        const r = Math.hypot(ball.y, ball.z - HIVE_PIVOT_HEIGHT);
+        inertia += ball.mass * r * r;
+      }
+    }
+    return inertia;
+  }
+
+  /**
+   * Velocity of the HIVE's structure at a world point.
+   *
+   * The arm turns about the pivot on the +x axis, so a point offset from it by
+   * (0, oy, oz) is moving at (0, -w*oz, w*oy). It matters: a CELL coming down
+   * through the middle of a tip is moving at a metre a second at its mouth, and
+   * a wall that pretends to be stationary either swallows a ball it should have
+   * batted away or lets one sit on it while it rotates out from underneath.
+   */
+  _surfaceVelocity(x, y, z) {
+    const oy = y;
+    const oz = z - HIVE_PIVOT_HEIGHT;
+    const w = this.angularVelocity;
+    return { vx: 0, vy: -w * oz, vz: w * oy };
+  }
+
+  /**
+   * Adopt a ball that has come to rest inside the upward-facing CELL.
+   *
+   * The handover between real physics and stable stacking, and the condition
+   * is the honest one: the ball has to be *in* there and no longer moving.
+   * Before, anything crossing the mouth was adopted on the spot -- which
+   * snapped it out of mid-air onto a shelf, so a shot that should have rattled
+   * off the rib scored, and one that should have bounced out stayed in.
+   *
+   * Adoption still exists because a column of elements resting in a rotating
+   * container is where contact solvers go to die. Once they have stopped
+   * moving, the CELL positions them and the physics has nothing left to say.
    *
    * @param {import('../../physics/Ball.js').Ball} ball
    */
@@ -430,20 +698,14 @@ export class Hive {
     const side = this.up;
     // A CELL whose mouth has rolled to horizontal cannot take anything.
     if (this.openingUpwardness(side) < 0.1) return false;
+    // Still moving: leave it to the walls. This is what stops the snap.
+    if (ball.speed > CELL_SETTLE_SPEED) return false;
 
-    const normal = this.openingNormal(side);
-    // The ball has to be heading *into* the opening, not drifting back out.
-    const closing = -(ball.vy * normal.y + ball.vz * normal.z);
-    if (closing <= 0) return false;
-
-    const margin = INFERRED.cellCaptureMargin;
-    if (
-      !this.openingContains(side, ball.x, ball.y, ball.z, {
-        margin,
-        outward: ball.radius + margin,
-      })
-    ) {
-      return false;
+    const planes = this.cellPlanes(side);
+    const local = this.cellLocal(side, ball.x, ball.y, ball.z, planes);
+    if (local.d < 0 || local.d > planes.depth + ball.radius) return false;
+    for (const edge of planes.edges) {
+      if (edge.a * local.a + edge.v * local.v - edge.offset < -ball.radius) return false;
     }
 
     this.upBalls.push(ball);
@@ -499,14 +761,7 @@ export class Hive {
    * @param {boolean} inAuto whether the MATCH is still in AUTO
    */
   update(dt, inAuto) {
-    let inertia = this.structureInertia;
-    for (const side of ['fore', 'aft']) {
-      const balls = side === 'fore' ? this.foreBalls : this.aftBalls;
-      for (const ball of balls) {
-        const r = Math.hypot(REST_ALONG, REST_ACROSS);
-        inertia += ball.mass * r * r;
-      }
-    }
+    const inertia = this.momentOfInertia;
 
     // Semi-implicit in the damping term so a stiff damper cannot ring.
     const alpha = this.netTorque / inertia;
