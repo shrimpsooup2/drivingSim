@@ -422,7 +422,15 @@ test('sideways speed walks the shot off target in proportion', () => {
     let drift = 0;
     for (let i = 0; i < 900; i++) {
       bb.update(1 / 500, { inAuto: false });
-      if (!ball.free) return { drift, scored: ball.container.kind === 'cell' };
+      if (!ball.free) {
+        // Whose CELL matters: the two HIVES are 25.4 in apart on one crossbar,
+        // so a drifting shot can land in the opponent's and tip it for them.
+        return {
+          drift,
+          scored: ball.container.kind === 'cell' && ball.container.ref.alliance === 'red',
+          landedIn: ball.container.kind === 'cell' ? ball.container.ref.alliance : ball.container.kind,
+        };
+      }
       drift = Math.max(drift, Math.abs(ball.x - target.x));
       if (ball.z <= ball.radius + 1e-6 && i > 10) break;
     }
@@ -440,7 +448,8 @@ test('sideways speed walks the shot off target in proportion', () => {
     fast.drift > slow.drift * 1.8,
     `drifting more pushes it much further: ${fast.drift.toFixed(3)} vs ${slow.drift.toFixed(3)} m`,
   );
-  assert.ok(!fast.scored, 'and at 1.6 m/s it no longer scores');
+  assert.ok(!fast.scored, `at 1.6 m/s it no longer scores for you (went to ${fast.landedIn})`);
+  assert.equal(fast.landedIn, 'blue', "it lands in the opponent's CELL instead");
 });
 
 test('a CELL only accepts a descending ball, so close shots need a steep hood', () => {

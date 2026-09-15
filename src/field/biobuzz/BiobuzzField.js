@@ -13,9 +13,15 @@ import {
   FLOWER_AXIS_OFFSET,
   FLOWER_BACKSTOP_TOP,
   FLOWER_START_POLLEN,
-  FLOWER_TUBE_RADIUS,
-  FRAME_HALF_DEPTH,
-  FRAME_HALF_WIDTH,
+  FLOWER_RING_DEPTH,
+  FLOWER_RING_WIDTH,
+  FLOWER_SUPPORT_TOP,
+  FRAME_FOOT_HALF_DEPTH,
+  FRAME_FOOT_HEIGHT,
+  FRAME_FOOT_INNER,
+  FRAME_FOOT_OUTER,
+  FRAME_STRUT_BASE,
+  FRAME_STRUT_TOP,
   GARDEN_START_POLLEN,
   HIVE_PIVOT_HEIGHT,
   HIVE_PIVOT_X,
@@ -28,10 +34,14 @@ import {
   POLLEN_RADIUS,
   PRELOAD_POLLEN,
   RED_START_UP,
+  ROBOT_SIZE_LIMIT,
 } from './constants.js';
 
-/** Thickness of one frame leg where a bumper meets it. */
-const FRAME_LEG_THICKNESS = 3 * INCH;
+/**
+ * Width of one A-frame strut where a ROBOT can reach it. Measured across the
+ * 1 in extrusion plus its gussets.
+ */
+const STRUT_WIDTH = 2 * INCH;
 
 /**
  * The BIOBUZZ FIELD: the HIVE structure, four FLOWERS, the taped zones, and all
@@ -58,7 +68,7 @@ export class BiobuzzField {
    * @param {{
    *   field: import('../Field.js').Field,
    *   ballRate?: number,
-   *   hiveTipMass?: number,
+   *   hiveHoldMass?: number,
    * }} opts
    */
   constructor(opts) {
@@ -75,13 +85,13 @@ export class BiobuzzField {
         alliance: 'red',
         pivotX: -HIVE_PIVOT_X,
         startUp: RED_START_UP,
-        tipMassThreshold: opts.hiveTipMass,
+        holdMass: opts.hiveHoldMass,
       }),
       blue: new Hive({
         alliance: 'blue',
         pivotX: HIVE_PIVOT_X,
         startUp: BLUE_START_UP,
-        tipMassThreshold: opts.hiveTipMass,
+        holdMass: opts.hiveHoldMass,
       }),
     };
 
@@ -179,28 +189,64 @@ export class BiobuzzField {
    * nose an inch or two further under the slope than this allows.
    */
   _buildObstacles() {
-    const legX = FRAME_HALF_WIDTH - FRAME_LEG_THICKNESS / 2;
+    // --- The A-frame, as the two things a ROBOT can actually hit.
+    //
+    // A single full-depth box is wrong in both directions: it walls off the
+    // middle of the field, which a robot really can drive through, and it
+    // misses that the struts lean inward over a robot's own height. So the
+    // frame goes in as its foot bar plus the reachable part of each strut.
     for (const sign of [-1, 1]) {
+      // The foot bar: 2 in thick, the full 38.94 in depth, 2.15 in tall. This
+      // is what a bumper meets, and it is continuous, so it does stop you.
       this.obstacles.push(
         new Obstacle({
-          id: `hiveFrameLeg${sign < 0 ? 'Red' : 'Blue'}`,
-          position: new Vec2(sign * legX, 0),
-          size: new Vec2(FRAME_LEG_THICKNESS, FRAME_HALF_DEPTH * 2),
-          height: HIVE_PIVOT_HEIGHT,
+          id: `hiveFoot${sign < 0 ? 'Red' : 'Blue'}`,
+          position: new Vec2((sign * (FRAME_FOOT_OUTER + FRAME_FOOT_INNER)) / 2, 0),
+          size: new Vec2(FRAME_FOOT_OUTER - FRAME_FOOT_INNER, FRAME_FOOT_HALF_DEPTH * 2),
+          height: FRAME_FOOT_HEIGHT,
           color: [0.35, 0.36, 0.4, 1],
           visible: false,
         }),
       );
+
+      // Each strut runs from its base corner up and inward to the pivot. Only
+      // the part below the ROBOT height limit can ever be touched, so the
+      // collider is that segment's shadow on the tiles and no more -- past it
+      // the strut is overhead and a robot passes underneath.
+      for (const side of [-1, 1]) {
+        const reach = Math.min(1, ROBOT_SIZE_LIMIT / (FRAME_STRUT_TOP.z - FRAME_STRUT_BASE.z));
+        const ax = sign * FRAME_STRUT_BASE.x;
+        const ay = side * FRAME_STRUT_BASE.y;
+        const bx = ax + (sign * FRAME_STRUT_TOP.x - ax) * reach;
+        const by = ay + (FRAME_STRUT_TOP.y - ay) * reach;
+        const dx = bx - ax;
+        const dy = by - ay;
+        this.obstacles.push(
+          new Obstacle({
+            id: `hiveStrut${sign < 0 ? 'Red' : 'Blue'}${side < 0 ? 'Fore' : 'Aft'}`,
+            position: new Vec2((ax + bx) / 2, (ay + by) / 2),
+            size: new Vec2(Math.hypot(dx, dy), STRUT_WIDTH),
+            heading: Math.atan2(dy, dx),
+            height: ROBOT_SIZE_LIMIT,
+            color: [0.44, 0.46, 0.5, 1],
+            visible: false,
+          }),
+        );
+      }
     }
 
-    // The four pipes stand on a square; a robot meets the square, not a circle.
-    const tube = 2 * (FLOWER_TUBE_RADIUS + 0.5 * INCH);
+    // --- FLOWERS. The ring plates are the widest part and set the footprint;
+    // the supports between the lower and middle rings sit inside that, so one
+    // oriented box per flower is the whole obstacle.
     for (const flower of this.flowers) {
+      const alongWall = Math.abs(Math.cos(flower.facing)) < 0.5;
       this.obstacles.push(
         new Obstacle({
           id: `${flower.id}Tube`,
           position: new Vec2(flower.x, flower.y),
-          size: new Vec2(tube, tube),
+          size: alongWall
+            ? new Vec2(FLOWER_RING_WIDTH, FLOWER_RING_DEPTH)
+            : new Vec2(FLOWER_RING_DEPTH, FLOWER_RING_WIDTH),
           height: FLOWER_BACKSTOP_TOP,
           color: [0.2, 0.6, 0.3, 1],
           visible: false,

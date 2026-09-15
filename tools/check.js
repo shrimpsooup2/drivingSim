@@ -213,6 +213,16 @@ async function main() {
     // 4. Frames are being produced.
     await sleep(700);
     const framesRan = await cdp.evaluate('globalThis.ftcSim.running && globalThis.ftcSim.lastFrame > 0');
+
+    // BIOBUZZ should be up the moment the app opens.
+    const defaultGame = await cdp.evaluate(`(() => {
+      const g = globalThis.ftcSim.sim.game;
+      return g ? { on: true, phase: g.match.phase, balls: g.field.allBalls.length } : { on: false };
+    })()`);
+    console.log(`  Default mode: ${defaultGame.on ? `BIOBUZZ, ${defaultGame.phase}, ${defaultGame.balls} elements` : 'bare field'}`);
+    if (!defaultGame.on) failures.push('BIOBUZZ should be on when the app opens');
+    // The drivetrain and camera checks below want an empty field to drive on.
+    await cdp.evaluate('globalThis.ftcSim.sim.disableGame(), true');
     if (!framesRan) failures.push('render loop is not running');
 
     // 5. Drive it through the full input -> op-mode -> drivetrain -> physics
@@ -491,7 +501,7 @@ async function main() {
       const app = globalThis.ftcSim;
       app.sim.challenges.clear();
       app.sim.clearOpponents();
-      const g = app._toggleGame();
+      const g = app.sim.game ?? app._toggleGame();
       g.start();
       const staged = g.participants.map((p) => ({
         id: p.id,
@@ -519,7 +529,29 @@ async function main() {
     if (game.inFlowers !== 16) failures.push(`expected 16 staged flower POLLEN, got ${game.inFlowers}`);
     if (game.inCells !== 6) failures.push(`expected 6 staged cell NECTAR, got ${game.inCells}`);
     if (!game.staged.every((p) => p.legal)) failures.push('a robot was staged illegally');
-    if (game.obstacles !== 6) failures.push(`expected 6 game solids, got ${game.obstacles}`);
+    // Loading a drill puts the game away and clearing it brings the game back,
+    // so a driver can dip into a drill and return to the match.
+    const roundTrip = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const before = Boolean(app.sim.game);
+      app.sim.challenges.select(app.sim.challenges.available()[0].id);
+      const duringDrill = Boolean(app.sim.game);
+      const solidsDuring = app.sim.field.elements.length;
+      app.sim.challenges.clear();
+      return {
+        before,
+        duringDrill,
+        solidsDuring,
+        after: Boolean(app.sim.game),
+        solidsAfter: app.sim.field.elements.length,
+      };
+    })()`);
+    console.log(`  Drill round trip: game ${roundTrip.before ? 'on' : 'off'} -> drill (${roundTrip.solidsDuring} solids) -> ${roundTrip.after ? 'on' : 'off'} (${roundTrip.solidsAfter} solids)`);
+    if (roundTrip.duringDrill) failures.push('a drill should be run on a bare field');
+    if (!roundTrip.after) failures.push('clearing a drill should put the game back');
+    if (roundTrip.solidsAfter !== 10) failures.push(`game solids not restored: ${roundTrip.solidsAfter}`);
+    // Two frame foot bars, four strut shadows, four flower tubes.
+    if (game.obstacles !== 10) failures.push(`expected 10 game solids, got ${game.obstacles}`);
 
     // Shoot into the CELL through the real renderer/physics loop.
     const launched = await cdp.evaluate(`(() => {

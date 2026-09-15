@@ -175,3 +175,47 @@ test('the whole intake to launcher to CELL loop works through the game', () => {
   }
   assert.ok(landed, 'a shot fed from the intake lands in the CELL');
 });
+
+test('a drill runs on a bare field and the game comes back afterwards', () => {
+  // A driver should be able to dip into a drill and return to the match.
+  // The drill lays out its own course, and 56 SCORING ELEMENTS rolling around
+  // a slalom is not the drill.
+  const sim = newSim();
+  sim.enableGame({ alliance: 'red' }).start();
+  const solids = sim.field.elements.length;
+  assert.ok(solids > 0);
+
+  sim.challenges.select(sim.challenges.available()[0].id);
+  assert.equal(sim.game, null, 'the game steps aside for a drill');
+  assert.equal(
+    sim.robot.subsystems.filter((s) => s instanceof Intake || s instanceof Launcher).length,
+    0,
+    'and takes its mechanisms with it',
+  );
+
+  sim.challenges.clear();
+  assert.ok(sim.game, 'and comes back when the drill is cleared');
+  assert.equal(sim.field.elements.length, solids);
+  assert.equal(sim.game.intake.count, PRELOAD_POLLEN, 'restaged, with its pre-load');
+});
+
+test('loading a second drill does not lose the fact the game was running', () => {
+  const sim = newSim();
+  sim.enableGame().start();
+  const drills = sim.challenges.available();
+
+  sim.challenges.select(drills[0].id);
+  sim.challenges.select(drills[1].id);
+  assert.equal(sim.game, null);
+
+  sim.challenges.clear();
+  assert.ok(sim.game, 'two drills in a row still restores the game');
+});
+
+test('a drill loaded with no game running leaves it off', () => {
+  const sim = newSim();
+  assert.equal(sim.game, null);
+  sim.challenges.select(sim.challenges.available()[0].id);
+  sim.challenges.clear();
+  assert.equal(sim.game, null, 'nothing to restore');
+});

@@ -3,6 +3,7 @@ import { DcMotor } from '../../hardware/DcMotor.js';
 import { PIDF } from '../../math/PIDF.js';
 import { MOTOR_PRESETS } from '../../config/presets/motors.js';
 import { INCH, clamp } from '../../math/MathUtil.js';
+import { POLLEN_MASS } from '../../field/biobuzz/constants.js';
 
 /** Gravity, for the ballistics helper. */
 const G = 9.80665;
@@ -162,9 +163,36 @@ export class Launcher extends Subsystem {
     return this.omega * this.wheelRadius;
   }
 
-  /** Exit speed a ball would leave at right now, m/s. */
-  get exitSpeed() {
+  /**
+   * Speed an infinitely light ball would leave at: the wheel surface speed
+   * times the transfer efficiency, with nothing taken back out of the wheel.
+   */
+  get idealExitSpeed() {
     return this.transferEfficiency * this.surfaceSpeed;
+  }
+
+  /**
+   * How much of the wheel's speed survives putting a ball of `mass` through it.
+   *
+   * The ball carries angular momentum away as it goes, so it leaves at the
+   * *post*-transfer surface speed, not the speed the wheel was doing when it
+   * arrived. Ignoring this is a quiet way to shoot short: a POLLEN comes out
+   * about 6 percent slow and range goes as the square of speed, so the shot
+   * lands 13 percent short -- about six inches at CELL range.
+   */
+  droopFactor(mass) {
+    const R = this.wheelRadius;
+    return this.inertia / (this.inertia + this.transferEfficiency * mass * R * R);
+  }
+
+  /** Exit speed a ball of `mass` would actually leave at right now, m/s. */
+  exitSpeedFor(mass = POLLEN_MASS) {
+    return this.idealExitSpeed * this.droopFactor(mass);
+  }
+
+  /** Exit speed for a POLLEN, the common case. */
+  get exitSpeed() {
+    return this.exitSpeedFor(POLLEN_MASS);
   }
 
   /** True when the wheel is close enough to target to shoot. */
@@ -306,9 +334,15 @@ export class Launcher extends Subsystem {
     return v2 > 0 ? Math.sqrt(v2) : null;
   }
 
-  /** Flywheel RPM that would produce `speed` at the muzzle. */
-  rpmForExitSpeed(speed) {
-    const omega = speed / (this.transferEfficiency * this.wheelRadius);
+  /**
+   * Flywheel RPM to spin up to so that a ball of `mass` leaves at `speed`.
+   *
+   * Divided by the droop factor, because the wheel has to be running fast
+   * enough *before* the shot that it is still doing the required speed after
+   * the ball has taken its share.
+   */
+  rpmForExitSpeed(speed, mass = POLLEN_MASS) {
+    const omega = speed / (this.transferEfficiency * this.wheelRadius * this.droopFactor(mass));
     return (omega * 60) / (2 * Math.PI);
   }
 
@@ -330,10 +364,11 @@ export class Launcher extends Subsystem {
    *
    * @param {{x:number,y:number,z:number}} target
    * @param {number} [angle] hood angle to evaluate; defaults to the current one
+   * @param {number} [mass] mass of the element to be shot; POLLEN by default
    * @returns {{range:number, rise:number, speed:number, rpm:number,
    *            angle:number, descending:boolean, apexRange:number}|null}
    */
-  solutionFor(target, angle = this.hoodAngle) {
+  solutionFor(target, angle = this.hoodAngle, mass = POLLEN_MASS) {
     if (!this.robot) return null;
     const { x, y } = this.pose;
     const range = Math.max(
@@ -349,7 +384,7 @@ export class Launcher extends Subsystem {
       range,
       rise,
       speed,
-      rpm: this.rpmForExitSpeed(speed),
+      rpm: this.rpmForExitSpeed(speed, mass),
       angle,
       descending: apexRange < range,
       apexRange,
@@ -369,11 +404,11 @@ export class Launcher extends Subsystem {
    * @returns {ReturnType<Launcher['solutionFor']>|null} null when the shot
    *   cannot be made from here at all.
    */
-  aimFor(target) {
+  aimFor(target, mass = POLLEN_MASS) {
     const steps = 60;
     for (let i = 0; i <= steps; i++) {
       const angle = this.minHoodAngle + ((this.maxHoodAngle - this.minHoodAngle) * i) / steps;
-      const solution = this.solutionFor(target, angle);
+      const solution = this.solutionFor(target, angle, mass);
       if (solution && solution.descending && solution.rpm <= this.maxRpm) return solution;
     }
     return null;
@@ -383,8 +418,8 @@ export class Launcher extends Subsystem {
    * Point the hood and set the target RPM to hit `target`, if it can be hit.
    * @returns {boolean} whether a workable shot was found and dialled in.
    */
-  aimAt(target) {
-    const solution = this.aimFor(target);
+  aimAt(target, mass = POLLEN_MASS) {
+    const solution = this.aimFor(target, mass);
     if (!solution) return false;
     this.setHoodAngle(solution.angle);
     this.setTargetRpm(solution.rpm);

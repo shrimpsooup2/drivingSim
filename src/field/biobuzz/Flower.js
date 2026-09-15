@@ -1,7 +1,7 @@
 import { INCH } from '../../math/MathUtil.js';
 import {
   FLOWER_BACKSTOP_TOP,
-  FLOWER_RETRIEVAL_HEIGHT,
+  FLOWER_RETRIEVAL_GAP,
   FLOWER_SCORING_BOTTOM,
   FLOWER_SCORING_TOP,
   FLOWER_TUBE_RADIUS,
@@ -255,7 +255,7 @@ export class Flower {
   removeBottom() {
     const ball = this.stack[0];
     if (!ball) return null;
-    if (ball.radius * 2 > FLOWER_RETRIEVAL_HEIGHT) return null;
+    if (ball.radius * 2 > FLOWER_RETRIEVAL_GAP) return null;
     this.stack.shift();
     ball.release();
     this._restack();

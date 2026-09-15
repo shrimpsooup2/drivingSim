@@ -80,6 +80,7 @@ export class Simulation {
 
     this._bindConfig();
     this.resetRobot();
+
   }
 
   _bindConfig() {
@@ -111,6 +112,10 @@ export class Simulation {
 
   /**
    * Switch BIOBUZZ on. Returns the game so callers can start a MATCH.
+   *
+   * The drills need a bare field -- their courses place their own obstacles and
+   * opponents -- so `ChallengeRunner` turns the game off when a drill is
+   * selected and back on when it is cleared.
    * @param {{alliance?: 'red'|'blue'}} [opts]
    */
   enableGame(opts = {}) {

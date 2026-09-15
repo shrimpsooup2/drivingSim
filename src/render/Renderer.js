@@ -20,8 +20,12 @@ import {
   FLOWER_BACKSTOP_HEIGHT,
   FLOWER_PIPE_OFFSET,
   FLOWER_PIPE_RADIUS,
-  FRAME_HALF_DEPTH,
-  FRAME_HALF_WIDTH,
+  FRAME_FOOT_HALF_DEPTH,
+  FRAME_FOOT_HEIGHT,
+  FRAME_FOOT_INNER,
+  FRAME_FOOT_OUTER,
+  FRAME_STRUT_BASE,
+  FRAME_STRUT_TOP,
   HIVE_PIVOT_HEIGHT,
 } from '../field/biobuzz/constants.js';
 
@@ -348,27 +352,40 @@ export class Renderer {
   _drawGame(game) {
     const m = this._model;
 
-    // --- The A-frame. Two open triangles at the ends of a crossbar, which is
-    // the point: a ROBOT drives straight between them under the apex, and
-    // drawing the collider box instead would put a wall across the field.
-    const legHalf = FRAME_HALF_DEPTH;
-    const apex = HIVE_PIVOT_HEIGHT;
+    // --- The A-frame: a foot bar on the tiles at each end and two struts per
+    // side running up and inward to the pivot. Drawn from the measured strut
+    // endpoints, and drawn open, because the collider is deliberately only the
+    // parts a ROBOT can reach and a solid box here would hide half the field.
     const frameMetal = [0.44, 0.46, 0.5, 1];
+    const footMetal = [0.34, 0.35, 0.39, 1];
     for (const sx of [-1, 1]) {
-      const x = sx * FRAME_HALF_WIDTH;
+      const footX = (sx * (FRAME_FOOT_OUTER + FRAME_FOOT_INNER)) / 2;
+      mat4.composeZ(
+        m,
+        footX,
+        0,
+        FRAME_FOOT_HEIGHT / 2,
+        1,
+        0,
+        FRAME_FOOT_OUTER - FRAME_FOOT_INNER,
+        FRAME_FOOT_HALF_DEPTH * 2,
+        FRAME_FOOT_HEIGHT,
+      );
+      this._draw(this.meshes.box, m, footMetal, this.textures.white);
+
       for (const sy of [-1, 1]) {
-        // One sloping leg, from (y = sy*legHalf, z = 0) up to (0, apex).
-        const len = Math.hypot(legHalf, apex);
-        const cos = apex / len;
-        const sin = (-sy * legHalf) / len;
-        this._legMatrix(m, x, (sy * legHalf) / 2, apex / 2, cos, sin, len, 0.045);
+        const ax = sx * FRAME_STRUT_BASE.x;
+        const ay = sy * FRAME_STRUT_BASE.y;
+        const az = FRAME_STRUT_BASE.z;
+        const bx = sx * FRAME_STRUT_TOP.x;
+        const by = FRAME_STRUT_TOP.y;
+        const bz = FRAME_STRUT_TOP.z;
+        this._strutMatrix(m, ax, ay, az, bx, by, bz, 0.04);
         this._draw(this.meshes.box, m, frameMetal, this.textures.white);
       }
-      mat4.composeZ(m, x, 0, apex, 1, 0, 0.07, 0.12, 0.07);
-      this._draw(this.meshes.box, m, frameMetal, this.textures.white);
     }
-    // Crossbar joining the two apexes.
-    mat4.composeZ(m, 0, 0, apex, 1, 0, FRAME_HALF_WIDTH * 2, 0.05, 0.05);
+    // Crossbar joining the two tops, carrying both pivots.
+    mat4.composeZ(m, 0, 0, HIVE_PIVOT_HEIGHT, 1, 0, FRAME_STRUT_TOP.x * 2, 0.05, 0.05);
     this._draw(this.meshes.box, m, frameMetal, this.textures.white);
 
     // --- HIVE: two arms on a shared crossbar, each with a CELL at both ends.
@@ -472,15 +489,38 @@ export class Renderer {
   }
 
   /**
-   * Model matrix for a strut of `length` and square `thickness` whose long
-   * axis is tilted in the y-z plane, given the cosine and sine of that tilt
-   * measured from vertical. Centred on (x, y, z).
+   * Model matrix for a square strut spanning two arbitrary points in space.
+   *
+   * Builds an orthonormal frame around the strut's own axis, picking whichever
+   * world axis is least parallel to it as the seed so the cross products never
+   * collapse.
    */
-  _legMatrix(out, x, y, z, cos, sin, length, thickness) {
-    out[0] = thickness; out[1] = 0; out[2] = 0; out[3] = 0;
-    out[4] = 0; out[5] = sin * length; out[6] = cos * length; out[7] = 0;
-    out[8] = 0; out[9] = cos * thickness; out[10] = -sin * thickness; out[11] = 0;
-    out[12] = x; out[13] = y; out[14] = z; out[15] = 1;
+  _strutMatrix(out, ax, ay, az, bx, by, bz, thickness) {
+    let dx = bx - ax;
+    let dy = by - ay;
+    let dz = bz - az;
+    const length = Math.hypot(dx, dy, dz) || 1;
+    dx /= length;
+    dy /= length;
+    dz /= length;
+
+    const seed =
+      Math.abs(dz) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+    let ux = seed[1] * dz - seed[2] * dy;
+    let uy = seed[2] * dx - seed[0] * dz;
+    let uz = seed[0] * dy - seed[1] * dx;
+    const un = Math.hypot(ux, uy, uz) || 1;
+    ux /= un;
+    uy /= un;
+    uz /= un;
+    const vx = dy * uz - dz * uy;
+    const vy = dz * ux - dx * uz;
+    const vz = dx * uy - dy * ux;
+
+    out[0] = ux * thickness; out[1] = uy * thickness; out[2] = uz * thickness; out[3] = 0;
+    out[4] = dx * length; out[5] = dy * length; out[6] = dz * length; out[7] = 0;
+    out[8] = vx * thickness; out[9] = vy * thickness; out[10] = vz * thickness; out[11] = 0;
+    out[12] = (ax + bx) / 2; out[13] = (ay + by) / 2; out[14] = (az + bz) / 2; out[15] = 1;
     return out;
   }
 

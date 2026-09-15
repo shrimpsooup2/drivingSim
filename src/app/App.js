@@ -54,6 +54,12 @@ export class App {
 
     this._buildOverlays();
     this._bindKeys();
+
+    // BIOBUZZ is on by default: a driving simulator for this season should open
+    // on this season's game. The simulator underneath does not require it --
+    // `Simulation` starts bare and the drills switch it off -- so everything
+    // that came before still works, and G puts it away.
+    this.sim.enableGame({ alliance: 'red' }).start();
     this._bindMouse();
 
     this.lastFrame = 0;

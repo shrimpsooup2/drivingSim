@@ -16,7 +16,9 @@ import {
   FIELD_INNER_HALF,
   FLOWER_ALONG_WALL,
   FLOWER_AXIS_OFFSET,
-  FLOWER_RETRIEVAL_HEIGHT,
+  FLOWER_RETRIEVAL_GAP,
+  FLOWER_RING_DEPTH,
+  FLOWER_RING_WIDTH,
   FLOWER_SCORING_BOTTOM,
   FLOWER_SCORING_TOP,
   FLOWER_STAGED_HEIGHTS,
@@ -99,28 +101,100 @@ test('the HIVE holds the three NECTAR staged in it at setup', () => {
   // HIVES tipping, so this pins the calibration down.
   const hive = new Hive({ alliance: 'red', pivotX: 0 });
   for (let i = 0; i < CELL_START_NECTAR; i++) hive.stage(nectar('red'));
-  for (let i = 0; i < 60; i++) hive.update(1 / 60, false);
+  for (let i = 0; i < 2000; i++) hive.update(1 / 500, false);
   assert.equal(hive.tips, 0);
   assert.equal(hive.elementsInUpCell(), CELL_START_NECTAR);
 });
 
-test('the HIVE tips once loaded past the threshold, spills, and comes back empty', () => {
+/** Run a hive until it has finished tipping, or give up. */
+function settle(hive, inAuto = false, limit = 8) {
+  let t = 0;
+  const dt = 1 / 500;
+  while (t < limit) {
+    hive.update(dt, inAuto);
+    t += dt;
+    const atStop = Math.abs(Math.abs(hive.angle) - hive.tilt) < 1e-4;
+    if (hive.tips > 0 && atStop && Math.abs(hive.angularVelocity) < 1e-3) break;
+  }
+  return t;
+}
+
+test('the HIVE goes over once the load beats the latch, and arrives empty', () => {
   const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
   for (let i = 0; i < CELL_START_NECTAR; i++) hive.stage(nectar('red'));
   hive.stage(pollen());
 
-  for (let i = 0; i < 120; i++) hive.update(1 / 60, false);
+  const took = settle(hive);
 
   assert.equal(hive.tips, 1);
   assert.equal(hive.up, 'aft', 'the opposite CELL is now up');
   assert.equal(hive.elementsInUpCell(), 0, 'it arrives empty, ready to fill again');
   assert.equal(hive.takeSpilled().length, 4, 'the old contents fall out');
+  assert.ok(took > 0.3 && took < 5, `the rotation takes real time: ${took.toFixed(2)} s`);
+});
+
+test('the latch holds exactly the staged load and goes over on one more', () => {
+  // Section 10.3.1 stages three NECTAR, which must hold. One more element has
+  // to take it over, or the game would be unplayable.
+  const hold = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  for (let i = 0; i < CELL_START_NECTAR; i++) hold.stage(nectar('red'));
+  for (let i = 0; i < 3000; i++) hold.update(1 / 500, false);
+  assert.equal(hold.tips, 0);
+  assert.ok(hold.netTorque < 0, 'net torque still pins it to the fore stop');
+
+  const over = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  for (let i = 0; i < CELL_START_NECTAR; i++) over.stage(nectar('red'));
+  over.stage(pollen());
+  assert.ok(over.netTorque > 0, 'one more element reverses the torque');
+  settle(over);
+  assert.equal(over.tips, 1);
+});
+
+test('an empty CELL needs a full load again, about seven POLLEN', () => {
+  const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  let held = 0;
+  for (let i = 0; i < 12; i++) {
+    hive.stage(pollen());
+    settle(hive);
+    if (hive.tips > 0) break;
+    held++;
+  }
+  assert.ok(held >= 5 && held <= 8, `expected around seven POLLEN, held ${held}`);
+});
+
+test('a heavier load goes over faster, because it is a torque balance', () => {
+  const marginal = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  for (let i = 0; i < 4; i++) marginal.stage(nectar('red'));
+  const slow = settle(marginal);
+
+  const loaded = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  for (let i = 0; i < 8; i++) loaded.stage(nectar('red'));
+  const quick = settle(loaded);
+
+  assert.equal(marginal.tips, 1);
+  assert.equal(loaded.tips, 1);
+  assert.ok(quick < slow * 0.8, `${quick.toFixed(2)} s loaded vs ${slow.toFixed(2)} s marginal`);
+});
+
+test('the down CELL cannot hold anything, which is why a tip empties it', () => {
+  const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  assert.ok(hive.openingUpwardness('fore') > 0.8, 'the raised CELL faces up');
+  assert.ok(
+    hive.openingUpwardness('aft') <= 0.1,
+    'the lowered CELL has rolled past horizontal',
+  );
+  // And it refuses a ball outright.
+  const ball = pollen();
+  const down = hive.cellOpening('aft');
+  ball.setPosition(0, down.y, down.z);
+  ball.setVelocity(0, 0, -0.5);
+  assert.ok(!hive.interactBall(ball));
 });
 
 test('a TIP during AUTO is counted separately', () => {
   const hive = new Hive({ alliance: 'blue', pivotX: 0 });
   for (let i = 0; i < 4; i++) hive.stage(nectar('blue'));
-  for (let i = 0; i < 120; i++) hive.update(1 / 60, true);
+  settle(hive, true);
   assert.equal(hive.tips, 1);
   assert.equal(hive.autoTips, 1);
 });
@@ -156,7 +230,7 @@ test('a FLOWER fills up and then refuses more', () => {
 
 test('G418: only POLLEN comes out of the bottom, so a low NECTAR plugs the FLOWER', () => {
   assert.ok(
-    NECTAR_RADIUS * 2 > FLOWER_RETRIEVAL_HEIGHT,
+    NECTAR_RADIUS * 2 > FLOWER_RETRIEVAL_GAP,
     'the geometry itself is what enforces G418',
   );
   const flower = newFlower();
@@ -190,7 +264,6 @@ test('FLOWER ownership goes to the top-most NECTAR and the bonus to the bottom-m
   assert.deepEqual(flower.score(), { red: 0, blue: 0 });
 
   flower.add(nectar('red'));
-  flower.add(pollen());
   flower.add(pollen());
   assert.equal(flower.owner(), 'red');
   assert.equal(flower.bottomNectarAlliance(), 'red');
@@ -355,16 +428,16 @@ test('the HIVE structure and the FLOWERS are solid', () => {
   const field = new Field(new Config().values);
   const before = field.elements.length;
   const bb = new BiobuzzField({ field });
-  assert.equal(field.elements.length, before + 6, 'two frame legs and four FLOWER tubes');
+  assert.equal(
+    field.elements.length,
+    before + 10,
+    'two foot bars, four struts and four FLOWER tubes',
+  );
   for (const obstacle of bb.obstacles) {
     assert.ok(obstacle.collidable);
     assert.ok(obstacle.height > 0);
+    assert.equal(obstacle.visible, false, 'the game draws these itself');
   }
-  // The frame really does block the middle of the FIELD.
-  const legs = bb.obstacles.filter((o) => o.id.startsWith('hiveFrameLeg'));
-  assert.equal(legs.length, 2);
-  assert.ok(legs[0].position.x * legs[1].position.x < 0);
-  for (const leg of legs) assert.ok(leg.size.y > 36 * INCH);
 
   bb.dispose();
   assert.equal(field.elements.length, before, 'and it all comes back out again');
@@ -489,9 +562,15 @@ test('the up CELL sits where the CAD stages its NECTAR', () => {
   assert.ok(red.y < 0, "red's up CELL is on the audience side");
   assert.ok(blue.y > 0, "blue's up CELL is on the rear side");
 
-  // The down CELL mirrors through the pivot.
+  // The down CELL is a mirror across the arm, not a point reflection through
+  // the pivot, so it sits a little above 2*pivot - rest.
   const down = bb.hives.red.cellOpening(RED_START_UP === 'fore' ? 'aft' : 'fore');
-  assert.ok(close(down.z, 2 * HIVE_PIVOT_HEIGHT - CELL_REST_HEIGHT));
+  assert.ok(down.z < HIVE_PIVOT_HEIGHT, 'the down CELL is below the pivot');
+  assert.ok(
+    down.z > 2 * HIVE_PIVOT_HEIGHT - CELL_REST_HEIGHT,
+    'but higher than a point reflection would put it',
+  );
+  assert.ok(Math.sign(down.y) !== Math.sign(red.y), 'and on the other side');
 });
 
 test("each HIVE's down CELL faces the FLOWER on its own half of the field", () => {
@@ -509,6 +588,81 @@ test("each HIVE's down CELL faces the FLOWER on its own half of the field", () =
     assert.ok(
       Math.sign(flower.x) === Math.sign(hive.pivotX),
       `${alliance}'s down CELL faces the FLOWER on its own half`,
+    );
+  }
+});
+
+// ------------------------------------------------- the structures as obstacles
+
+test('the HIVE frame goes in as its foot bars and the reachable strut shadows', () => {
+  const field = new Field(new Config().values);
+  const bb = new BiobuzzField({ field });
+
+  const feet = bb.obstacles.filter((o) => o.id.startsWith('hiveFoot'));
+  const struts = bb.obstacles.filter((o) => o.id.startsWith('hiveStrut'));
+  assert.equal(feet.length, 2);
+  assert.equal(struts.length, 4, 'two struts per side');
+
+  for (const foot of feet) {
+    // 2 in thick, the full depth, and only 2.15 in tall -- bumper height.
+    assert.ok(Math.abs(foot.size.x - 2 * INCH) < 1e-9);
+    assert.ok(Math.abs(foot.size.y - 38.94 * INCH) < 1e-9);
+    assert.ok(Math.abs(foot.height - 2.15 * INCH) < 1e-9);
+  }
+  // Struts are oriented, not axis-aligned: they run up and inward.
+  for (const strut of struts) {
+    assert.ok(Math.abs(Math.sin(strut.heading)) > 0.1, 'a strut is on a diagonal');
+    assert.ok(strut.size.x > 8 * INCH && strut.size.x < 12 * INCH);
+  }
+});
+
+test('a ROBOT crosses the field front to back under the HIVE, but not side to side', () => {
+  // The frame reads as open in the middle, and front to back it is: nothing
+  // below the CELLS at 38 in. But the foot bars are continuous 2 in walls
+  // across the full depth, so going side to side you go *around* the frame.
+  const field = new Field(new Config().values);
+  const bb = new BiobuzzField({ field });
+  const half = 9 * INCH;
+
+  const blocked = (x, y) =>
+    bb.obstacles.some((o) => {
+      const c = Math.abs(Math.cos(o.heading));
+      const s = Math.abs(Math.sin(o.heading));
+      const ex = (o.size.x / 2) * c + (o.size.y / 2) * s;
+      const ey = (o.size.x / 2) * s + (o.size.y / 2) * c;
+      return (
+        Math.abs(x - o.position.x) < ex + half && Math.abs(y - o.position.y) < ey + half
+      );
+    });
+
+  // A corridor straight down the middle, clear the whole way.
+  for (let y = -60; y <= 60; y += 4) {
+    assert.ok(!blocked(0, y * INCH), `the middle should be clear at y = ${y} in`);
+  }
+  // Crossing side to side through the frame is not on: the foot bar stops you.
+  assert.ok(blocked(-23.75 * INCH, 0), 'the red foot bar blocks the centre line');
+  assert.ok(blocked(23.75 * INCH, 0), 'and so does the blue one');
+  // Around the outside of the frame is clear.
+  assert.ok(!blocked(-23.75 * INCH, 32 * INCH), 'past the end of the frame is open');
+});
+
+test('a FLOWER obstacle matches its ring plates and faces the right way', () => {
+  const field = new Field(new Config().values);
+  const bb = new BiobuzzField({ field });
+  const tubes = bb.obstacles.filter((o) => o.id.endsWith('Tube'));
+  assert.equal(tubes.length, 4);
+
+  for (const tube of tubes) {
+    const wide = Math.max(tube.size.x, tube.size.y);
+    const deep = Math.min(tube.size.x, tube.size.y);
+    assert.ok(Math.abs(wide - FLOWER_RING_WIDTH) < 1e-9);
+    assert.ok(Math.abs(deep - FLOWER_RING_DEPTH) < 1e-9);
+    // The wide axis runs along the wall it is mounted on.
+    const onEndWall = Math.abs(tube.position.y) > Math.abs(tube.position.x);
+    assert.equal(
+      tube.size.x > tube.size.y,
+      onEndWall,
+      `${tube.id} should be widest along its own wall`,
     );
   }
 });

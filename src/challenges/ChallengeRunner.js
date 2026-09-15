@@ -39,6 +39,7 @@ export class ChallengeRunner {
     const challenge = this.challenges.find((c) => c.id === id);
     if (!challenge) return null;
 
+    this._suspendGame();
     this._teardown();
     this.active = challenge;
     challenge.build(this.sim.field);
@@ -48,6 +49,26 @@ export class ChallengeRunner {
     this.sim.resetRobot();
     this.events.emit('select', challenge);
     return challenge;
+  }
+
+  /**
+   * A drill needs a bare field: it lays out its own obstacles and opponents,
+   * and 56 SCORING ELEMENTS rolling around a slalom course is not the drill.
+   * The game comes back when the drill is cleared.
+   */
+  _suspendGame() {
+    // Only remember it on the way down. Selecting a second drill while one is
+    // already loaded must not overwrite the flag with "it was off" and lose
+    // the fact that the game is waiting to come back.
+    if (!this.sim.game) return;
+    this._gameWasOn = true;
+    this.sim.disableGame();
+  }
+
+  _restoreGame() {
+    if (!this._gameWasOn || this.sim.game) return;
+    this._gameWasOn = false;
+    this.sim.enableGame().start();
   }
 
   /** Put the drill's obstacles and opponents onto the field. */
@@ -94,6 +115,7 @@ export class ChallengeRunner {
     this._teardown();
     this.active = null;
     this.events.emit('select', null);
+    this._restoreGame();
   }
 
   /**
