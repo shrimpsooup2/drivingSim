@@ -32,6 +32,23 @@ export class BallWorld {
      * a tuning knob.
      */
     this.maxSpeed = opts.maxSpeed ?? 25;
+    /**
+     * Air density, kg/m^3. Sea level and 20 C; a gym in Denver is about 15
+     * percent thinner, which is worth a few inches of range.
+     */
+    this.airDensity = opts.airDensity ?? 1.204;
+    /**
+     * Sliding friction between an element and each surface it can touch.
+     *
+     * Plastic on foam tile grips well, which is why a landed ball scrubs into
+     * a roll in a few centimetres rather than sliding across the FIELD.
+     * Polycarbonate and a ROBOT's plate are slipperier, and plastic on plastic
+     * between two elements slipperier still -- a pile of POLLEN shuffles.
+     */
+    this.floorFriction = opts.floorFriction ?? 0.5;
+    this.wallFriction = opts.wallFriction ?? 0.3;
+    this.bodyFriction = opts.bodyFriction ?? 0.3;
+    this.ballFriction = opts.ballFriction ?? 0.22;
     /** How many times the cap has fired. Should stay zero; useful if it does not. */
     this.speedCapHits = 0;
 
@@ -119,7 +136,14 @@ export class BallWorld {
     for (const entry of this.bodies) {
       for (const ball of this.balls) {
         if (!ball.free || ball.outOfBounds) continue;
-        resolveBallVsBox(ball, entry.body, entry.halfLength, entry.halfWidth, entry.height);
+        resolveBallVsBox(
+          ball,
+          entry.body,
+          entry.halfLength,
+          entry.halfWidth,
+          entry.height,
+          this.bodyFriction,
+        );
       }
     }
 
@@ -211,8 +235,12 @@ export class BallWorld {
 
   _integrate(ball, dt) {
     ball.vz -= GRAVITY * dt;
+    applyDrag(ball, dt, this.airDensity);
 
-    // Rolling resistance, only while actually on the tiles.
+    // Rolling resistance, only while actually on the tiles. This is the
+    // hysteresis loss in the foam, which is separate from the sliding friction
+    // in `resolveSphereContact` -- a ball that has settled into a true roll has
+    // no sliding left and would otherwise coast forever.
     if (ball.onFloor) {
       const speed = ball.groundSpeed;
       if (speed > 1e-4) {
@@ -220,9 +248,17 @@ export class BallWorld {
         const scale = Math.max(0, 1 - decel / speed);
         ball.vx *= scale;
         ball.vy *= scale;
+        // A rolling ball's spin decays with it, or it would arrive at the next
+        // contact spinning as if it were still doing the old speed.
+        ball.wx *= scale;
+        ball.wy *= scale;
+        ball.wz *= scale;
       } else {
         ball.vx = 0;
         ball.vy = 0;
+        ball.wx = 0;
+        ball.wy = 0;
+        ball.wz = 0;
       }
     }
 
@@ -237,11 +273,11 @@ export class BallWorld {
       return;
     }
     ball.z = ball.radius;
-    if (ball.vz < 0) {
-      // Below a threshold, stop bouncing rather than buzzing on the floor
-      // forever with ever-smaller hops.
-      ball.vz = -ball.vz < 0.35 ? 0 : -ball.vz * this.floorRestitution;
-    }
+    resolveSphereContact(ball, 0, 0, 1, {
+      restitution: this.floorRestitution,
+      friction: this.floorFriction,
+      minBounce: 0.35,
+    });
     ball.onFloor = Math.abs(ball.vz) < 0.05;
   }
 
@@ -255,19 +291,22 @@ export class BallWorld {
         return;
       }
     }
+    // Polycarbonate, so it gives back more than the foam floor does, and it
+    // scrubs a glancing ball into a spin the same way the floor does.
+    const wall = { restitution: ball.restitution, friction: this.wallFriction };
     if (ball.x < -limit) {
       ball.x = -limit;
-      if (ball.vx < 0) ball.vx = -ball.vx * ball.restitution;
+      resolveSphereContact(ball, 1, 0, 0, wall);
     } else if (ball.x > limit) {
       ball.x = limit;
-      if (ball.vx > 0) ball.vx = -ball.vx * ball.restitution;
+      resolveSphereContact(ball, -1, 0, 0, wall);
     }
     if (ball.y < -limit) {
       ball.y = -limit;
-      if (ball.vy < 0) ball.vy = -ball.vy * ball.restitution;
+      resolveSphereContact(ball, 0, 1, 0, wall);
     } else if (ball.y > limit) {
       ball.y = limit;
-      if (ball.vy > 0) ball.vy = -ball.vy * ball.restitution;
+      resolveSphereContact(ball, 0, -1, 0, wall);
     }
   }
 
@@ -301,7 +340,7 @@ export class BallWorld {
             for (const other of bucket) {
               // Each pair is visited twice; the id comparison keeps it to once.
               if (other === ball || other.id <= ball.id) continue;
-              resolveBallPair(ball, other);
+              resolveBallPair(ball, other, this.ballFriction);
             }
           }
         }
@@ -314,8 +353,21 @@ function cellKey(x, y, z, size) {
   return `${Math.floor(x / size)},${Math.floor(y / size)},${Math.floor(z / size)}`;
 }
 
-/** Elastic-ish impulse between two spheres along the line of centres. */
-export function resolveBallPair(a, b) {
+/**
+ * Contact between two elements: impulse along the line of centres, friction
+ * across it.
+ *
+ * The friction is what makes a pile behave like a pile. Without it every
+ * contact was purely radial, so a POLLEN shoved into a heap pushed the others
+ * out along clean lines and nothing tumbled -- balls slid past each other
+ * without ever gripping. Plastic on plastic is slippery but it is not
+ * frictionless.
+ *
+ * @param {Ball} a
+ * @param {Ball} b
+ * @param {number} [friction]
+ */
+export function resolveBallPair(a, b, friction = 0.22) {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const dz = b.z - a.z;
@@ -349,12 +401,85 @@ export function resolveBallPair(a, b) {
 
   const restitution = Math.min(a.restitution, b.restitution);
   const impulse = (-(1 + restitution) * approaching) / invSum;
+
+  // Raise the per-step speed ceiling for both of them before applying it.
+  //
+  // `BallWorld._boundContactSpeed` holds a ball to what it was doing at the
+  // start of the step unless a contact says otherwise, and a struck ball was
+  // doing *nothing* -- so without this, every bit of momentum handed over got
+  // scaled straight back out and a cue ball fired into a heap stopped dead
+  // while the heap sat there. Momentum was being destroyed outright.
+  //
+  // The honest bound for a two-body collision: in the centre-of-mass frame
+  // each ball's speed can only shrink, so in the lab frame neither can end up
+  // faster than the centre of mass plus the whole relative speed.
+  if (a.contactSpeedBound !== undefined || b.contactSpeedBound !== undefined) {
+    const massSum = a.mass + b.mass;
+    const cmx = (a.vx * a.mass + b.vx * b.mass) / massSum;
+    const cmy = (a.vy * a.mass + b.vy * b.mass) / massSum;
+    const cmz = (a.vz * a.mass + b.vz * b.mass) / massSum;
+    const possible = Math.hypot(cmx, cmy, cmz) + Math.hypot(rvx, rvy, rvz);
+    if (a.contactSpeedBound !== undefined && possible > a.contactSpeedBound) {
+      a.contactSpeedBound = possible;
+    }
+    if (b.contactSpeedBound !== undefined && possible > b.contactSpeedBound) {
+      b.contactSpeedBound = possible;
+    }
+  }
   a.vx -= nx * impulse * invA;
   a.vy -= ny * impulse * invA;
   a.vz -= nz * impulse * invA;
   b.vx += nx * impulse * invB;
   b.vy += ny * impulse * invB;
   b.vz += nz * impulse * invB;
+
+  if (friction <= 0) return true;
+
+  // Sliding speed where they touch, spin included. Each contact point sits one
+  // radius along the line of centres from its own centre.
+  const acx = nx * a.radius;
+  const acy = ny * a.radius;
+  const acz = nz * a.radius;
+  const bcx = -nx * b.radius;
+  const bcy = -ny * b.radius;
+  const bcz = -nz * b.radius;
+  let ux =
+    b.vx + (b.wy * bcz - b.wz * bcy) - (a.vx + (a.wy * acz - a.wz * acy));
+  let uy =
+    b.vy + (b.wz * bcx - b.wx * bcz) - (a.vy + (a.wz * acx - a.wx * acz));
+  let uz =
+    b.vz + (b.wx * bcy - b.wy * bcx) - (a.vz + (a.wx * acy - a.wy * acx));
+  const un = ux * nx + uy * ny + uz * nz;
+  ux -= un * nx;
+  uy -= un * ny;
+  uz -= un * nz;
+  const sliding = Math.hypot(ux, uy, uz);
+  if (sliding < 1e-6) return true;
+
+  // Effective mass at the contact for a tangential impulse, both spheres'
+  // translation and rotation together.
+  const tangentialInv =
+    invA +
+    invB +
+    (a.radius * a.radius) / a.spinInertia +
+    (b.radius * b.radius) / b.spinInertia;
+  const magnitude = Math.min(sliding / tangentialInv, friction * impulse);
+  const tx = (ux / sliding) * magnitude;
+  const ty = (uy / sliding) * magnitude;
+  const tz = (uz / sliding) * magnitude;
+
+  a.vx += tx * invA;
+  a.vy += ty * invA;
+  a.vz += tz * invA;
+  b.vx -= tx * invB;
+  b.vy -= ty * invB;
+  b.vz -= tz * invB;
+  a.wx += (acy * tz - acz * ty) / a.spinInertia;
+  a.wy += (acz * tx - acx * tz) / a.spinInertia;
+  a.wz += (acx * ty - acy * tx) / a.spinInertia;
+  b.wx -= (bcy * tz - bcz * ty) / b.spinInertia;
+  b.wy -= (bcz * tx - bcx * tz) / b.spinInertia;
+  b.wz -= (bcx * ty - bcy * tx) / b.spinInertia;
   return true;
 }
 
@@ -371,7 +496,7 @@ export function resolveBallPair(a, b) {
  * @param {number} halfWidth
  * @param {number} height
  */
-export function resolveBallVsBox(ball, body, halfLength, halfWidth, height) {
+export function resolveBallVsBox(ball, body, halfLength, halfWidth, height, friction = 0.3) {
   if (ball.z - ball.radius > height) return false;
 
   // Into the robot frame.
@@ -436,27 +561,28 @@ export function resolveBallVsBox(ball, body, halfLength, halfWidth, height) {
   const surfaceVx = body.velocity.x - body.angularVelocity * contactY;
   const surfaceVy = body.velocity.y + body.angularVelocity * contactX;
 
-  const relativeVx = ball.vx - surfaceVx;
-  const relativeVy = ball.vy - surfaceVy;
-
   // Tell `BallWorld._boundContactSpeed` how fast the quickest thing touching
   // this ball is going, so a sequence of contacts in one step cannot ratchet it
   // past what any of them could have imparted.
+  const restitution = ball.restitution * 0.6;
   if (ball.contactSpeedBound !== undefined) {
-    const restitution = ball.restitution * 0.6;
     const surfaceSpeed = Math.hypot(surfaceVx, surfaceVy);
     const possible = (1 + restitution) * surfaceSpeed;
     if (possible > ball.contactSpeedBound) ball.contactSpeedBound = possible;
   }
 
-  const approaching = relativeVx * nx + relativeVy * ny;
+  // A ROBOT is a box extruded upward, so every face normal is horizontal and
+  // the vertical velocity plays no part in whether the ball is approaching it.
+  const approaching = (ball.vx - surfaceVx) * nx + (ball.vy - surfaceVy) * ny;
   if (approaching < 0) {
-    // Bounce off a much heavier body: the ball leaves at `e` times the speed it
-    // arrived, measured against the moving face.
-    const restitution = ball.restitution * 0.6;
-    const impulse = -(1 + restitution) * approaching;
-    ball.vx += nx * impulse;
-    ball.vy += ny * impulse;
+    // Bounce off a much heavier body, with friction across the face -- which is
+    // what makes a ball shoved by a plate roll rather than skate.
+    resolveSphereContact(ball, nx, ny, 0, {
+      restitution,
+      friction,
+      surfaceVx,
+      surfaceVy,
+    });
   } else {
     // Already separating, but a face driving into a ball should carry it along
     // rather than sliding through it.
@@ -479,6 +605,136 @@ export function resolveBallVsBox(ball, body, halfLength, halfWidth, height) {
     }
   }
   return true;
+}
+
+
+/**
+ * Aerodynamic drag on a ball, applied as a velocity change over `dt`.
+ *
+ * `F = 0.5 * rho * Cd * A * v^2`, opposing motion. Integrated explicitly,
+ * which is stable here because even at the muzzle the drag deceleration is a
+ * fifth of gravity and the substep is half a millisecond.
+ *
+ * This is not a refinement. A 45 g POLLEN is 71 mm across, so it has a lot of
+ * frontal area for its mass and it is a *wiffle* ball -- perforated, which
+ * pushes the drag coefficient above a smooth sphere's. Leaving drag out
+ * overstated the range of a shot by about a fifth, and it overstated it by
+ * *different* amounts for a POLLEN and a NECTAR, which is exactly the sort of
+ * error that teaches a driver the wrong aim.
+ *
+ * @param {Ball} ball
+ * @param {number} dt
+ * @param {number} rho air density, kg/m^3
+ */
+export function applyDrag(ball, dt, rho = 1.204) {
+  const speed = Math.hypot(ball.vx, ball.vy, ball.vz);
+  if (speed < 1e-4) return ball;
+  const force = 0.5 * rho * ball.dragCoefficient * ball.area * speed * speed;
+  // Clamped so a pathologically large step cannot reverse the velocity.
+  const dv = Math.min(speed, (force / ball.mass) * dt);
+  const scale = 1 - dv / speed;
+  ball.vx *= scale;
+  ball.vy *= scale;
+  ball.vz *= scale;
+  return ball;
+}
+
+/**
+ * Resolve one contact on a sphere: bounce along the normal, friction across it.
+ *
+ * The friction is the part that was missing, and it is what makes a landing
+ * look like a landing. A ball that arrives with horizontal speed and no spin
+ * has a contact point sliding backwards along the ground, so the surface
+ * scrubs it: the ball slows, picks up spin, and once the contact point has
+ * stopped sliding it is rolling and the friction switches itself off. Skid,
+ * then roll. Without it a ball landed and *slid*, and a pile of POLLEN pushed
+ * apart along clean lines of centres instead of scattering.
+ *
+ * Coulomb, with the stick case handled exactly: the tangential impulse needed
+ * to bring the contact point to rest on a sphere is
+ * `m / (1 + m r^2 / J)` times the sliding speed, and if that is less than
+ * `mu` times the normal impulse the ball grips instead of sliding. For a
+ * wiffle ball (`J = 0.6 m r^2`) that factor is `m / 2.67`.
+ *
+ * @param {Ball} ball
+ * @param {number} nx outward contact normal, pointing from the surface to the ball
+ * @param {number} ny
+ * @param {number} nz
+ * @param {{restitution: number, friction: number, surfaceVx?: number,
+ *          surfaceVy?: number, surfaceVz?: number, minBounce?: number}} opts
+ * @returns {boolean} whether the ball is resting on this contact
+ */
+export function resolveSphereContact(ball, nx, ny, nz, opts) {
+  const sx = opts.surfaceVx ?? 0;
+  const sy = opts.surfaceVy ?? 0;
+  const sz = opts.surfaceVz ?? 0;
+
+  // Velocity of the ball relative to the surface, at its centre.
+  let rvx = ball.vx - sx;
+  let rvy = ball.vy - sy;
+  let rvz = ball.vz - sz;
+  const normal = rvx * nx + rvy * ny + rvz * nz;
+
+  // --- Normal impulse. `minBounce` stops a ball buzzing on the floor forever
+  // with ever-smaller hops; below it the bounce is simply absorbed.
+  let impulse = 0;
+  if (normal < 0) {
+    const restitution = -normal < (opts.minBounce ?? 0) ? 0 : opts.restitution;
+    impulse = -(1 + restitution) * normal;
+    ball.vx += nx * impulse;
+    ball.vy += ny * impulse;
+    ball.vz += nz * impulse;
+    rvx += nx * impulse;
+    rvy += ny * impulse;
+    rvz += nz * impulse;
+  }
+
+  const resting = normal < 0 && -normal < (opts.minBounce ?? 0);
+
+  // --- Friction. Zero normal impulse means nothing pressing them together,
+  // except for a resting contact, where the weight is being carried by the
+  // position correction rather than by an impulse -- so give that case a
+  // normal impulse equal to one step of gravity's worth, or a ball sitting
+  // still would never scrub at all.
+  const pressing = impulse > 1e-9 ? impulse : resting ? Math.abs(normal) + 1e-3 : 0;
+  if (pressing <= 0 || opts.friction <= 0) return resting;
+
+  // Contact point is one radius along -n from the centre, and its velocity
+  // includes the spin.
+  const cx = -nx * ball.radius;
+  const cy = -ny * ball.radius;
+  const cz = -nz * ball.radius;
+  let ux = rvx + (ball.wy * cz - ball.wz * cy);
+  let uy = rvy + (ball.wz * cx - ball.wx * cz);
+  let uz = rvz + (ball.wx * cy - ball.wy * cx);
+  // Only the part across the normal slides.
+  const un = ux * nx + uy * ny + uz * nz;
+  ux -= un * nx;
+  uy -= un * ny;
+  uz -= un * nz;
+  const sliding = Math.hypot(ux, uy, uz);
+  if (sliding < 1e-6) return resting;
+
+  // Effective mass at the contact for a tangential impulse on a sphere.
+  const J = ball.spinInertia;
+  const reduced = 1 / (1 / ball.mass + (ball.radius * ball.radius) / J);
+  const stick = (reduced * sliding) / ball.mass;
+  const magnitude = Math.min(stick, opts.friction * pressing);
+
+  const tx = -(ux / sliding) * magnitude;
+  const ty = -(uy / sliding) * magnitude;
+  const tz = -(uz / sliding) * magnitude;
+  ball.vx += tx;
+  ball.vy += ty;
+  ball.vz += tz;
+  // Torque from the tangential impulse: r_contact x P, over the inertia. The
+  // impulse is stored per unit mass, so multiply the mass back in.
+  const m = ball.mass;
+  ball.wx += (m * (cy * tz - cz * ty)) / J;
+  ball.wy += (m * (cz * tx - cx * tz)) / J;
+  ball.wz += (m * (cx * ty - cy * tx)) / J;
+
+  return resting;
 }
 
 export { GRAVITY };

@@ -129,3 +129,63 @@ export const LAUNCH_SYSTEM_OPTIONS = Object.values(LAUNCH_SYSTEMS).map((s) => ({
   value: s.id,
   label: s.label,
 }));
+
+/**
+ * Which `shooter.*` settings apply to a flywheel, and which to a thrower.
+ *
+ * The two mechanisms share a panel because a driver has one shooter, not two,
+ * but they do not share all their numbers: there is no RPM to hold on an
+ * elastic and no transfer efficiency on a wheel that does not touch the ball
+ * until it is thrown.
+ */
+const FLYWHEEL_KEYS = [
+  'motorCount',
+  'inertia',
+  'wheelRadius',
+  'gearRatio',
+  'transferEfficiency',
+  'drag',
+  'targetRpm',
+  'readyTolerance',
+  'feedInterval',
+];
+
+/**
+ * Build the launcher options for the player's ROBOT.
+ *
+ * Precedence is the useful way round: the launch system supplies the shape,
+ * and any `shooter.*` value the user has actually moved off its schema default
+ * overrides it. So picking "twin flywheels" gets you twin flywheels, and then
+ * dialling the inertia toward your own robot keeps everything else.
+ *
+ * Comparing against the defaults rather than tracking "has the user touched
+ * this" is deliberate: a setting put back to its default should stop
+ * overriding, which is what the panel's reset affordance is for.
+ *
+ * @param {import('../../config/schema.js').SimConfig} config
+ * @param {object} defaults `defaultConfig()`, for the comparison
+ * @returns {{thrower: boolean, options: object}}
+ */
+export function playerLaunchOptions(config, defaults) {
+  const system = LAUNCH_SYSTEMS[config?.match?.launchSystem] ?? LAUNCH_SYSTEMS.flywheel;
+  const options = { ...system.options };
+  const shooter = config?.shooter ?? {};
+  const base = defaults?.shooter ?? {};
+
+  for (const [key, value] of Object.entries(shooter)) {
+    if (value === undefined) continue;
+    // Untouched: leave the launch system's own number alone.
+    if (base[key] !== undefined && value === base[key]) continue;
+    if (system.thrower) {
+      // A thrower takes the angle spread and the scatter; the wheel numbers
+      // mean nothing to it.
+      if (key === 'hoodScatter') options.angleScatter = (value * Math.PI) / 180;
+      else if (key === 'rpmScatter') options.energyScatter = value;
+      continue;
+    }
+    if (key === 'hoodScatter') options.hoodScatter = (value * Math.PI) / 180;
+    else if (key === 'rpmScatter') options.rpmScatter = value;
+    else if (FLYWHEEL_KEYS.includes(key)) options[key] = value;
+  }
+  return { thrower: Boolean(system.thrower), options };
+}

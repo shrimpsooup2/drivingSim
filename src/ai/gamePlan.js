@@ -415,11 +415,17 @@ export function shootingSpot(ctx, state) {
       // Outside the opening plane, measured at the muzzle: inside it there is
       // no shot at any angle, however the hood is trimmed.
       if (hive.openingDepth(hive.up, x, y, launcher.exitHeight) <= 0) continue;
-      // And the mechanism has to be able to make the shot from there. This is
-      // the launcher's own solver evaluated at a hypothetical position rather
-      // than a distance rule of thumb, so a catapult's hard maximum range and
-      // a flywheel's "too close to drop in" both fall out of it for free.
-      if (!launcher.aimFor(target, undefined, { x, y })) continue;
+      // And the mechanism has to be able to make the shot from there. The
+      // launcher's own *screen* rather than its full solver: this runs over
+      // hundreds of candidates and the real solve is a bisection over a drag
+      // integration. The screen is drag-free and so slightly optimistic, which
+      // is the right direction -- it never rules out a shot that is possible,
+      // and the real solve runs once the robot is standing there.
+      //
+      // Either way a catapult's hard maximum range and a flywheel's "too close
+      // to drop in" both fall out of the mechanism rather than out of a
+      // distance rule of thumb here.
+      if (!launcher.couldReach(target, undefined, { x, y })) continue;
       const cost = Vec2.distance(ctx.selfPosition, new Vec2(x, y));
       if (cost < bestScore) {
         bestScore = cost;

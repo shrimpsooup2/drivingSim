@@ -159,16 +159,228 @@ test('a POLLEN in a corner with a ROBOT on it stays finite and in bounds', () =>
   assert.ok(Math.abs(ball.y) <= HALF - ball.radius + 1e-9);
 });
 
-test('a launched POLLEN keeps its speed -- the cap is above anything real', () => {
-  // The backstop must not clip a legitimate shot. The fastest shooter modelled
-  // here is 4500 rpm on a 2 in wheel at 0.62 transfer: 14.8 m/s at the muzzle.
+test('momentum survives a collision between two elements', () => {
+  // The pinch guard holds each ball to what it was doing at the start of the
+  // step unless a contact raises the ceiling, and a *struck* ball was doing
+  // nothing at all. Before the pair solver raised its own ceiling, every bit
+  // of momentum handed over was scaled straight back out: a POLLEN fired into
+  // a stationary one stopped dead and the target never moved.
+  // In mid-air and head-on, so the only thing acting is the pair solver.
+  // Rolling on the tiles the answer is muddier and for good reason: a ball
+  // with topspin drives itself forward off the floor after the hit, and a
+  // spinning contact converts some translation into spin and into the ground.
+  // Those are real, and they are not what this is checking.
+  const w = world();
+  const cue = pollen('cue');
+  const target = pollen('target');
+  cue.setPosition(-0.25, 0, 1);
+  cue.setVelocity(2.5, 0, 0);
+  target.setPosition(0, 0, 1);
+  w.add(cue);
+  w.add(target);
+
+  // Total momentum across the one step the contact happens on.
+  const total = () => cue.mass * cue.vx + target.mass * target.vx;
+  let before = total();
+  let after = before;
+  let peak = 0;
+  for (let i = 0; i < 400; i++) {
+    const wasStill = target.groundSpeed < 1e-9;
+    const priorTotal = total();
+    w.step(1 / 2000);
+    if (wasStill && target.groundSpeed > 1e-6) {
+      before = priorTotal;
+      after = total();
+    }
+    peak = Math.max(peak, target.groundSpeed);
+  }
+
+  assert.ok(peak > 1, `the target barely moved: ${peak.toFixed(2)} m/s`);
+  // Equal masses, head-on: whatever one loses the other gains.
+  assert.ok(
+    Math.abs(after - before) < before * 0.02,
+    `momentum jumped from ${before.toFixed(4)} to ${after.toFixed(4)} kg m/s across the contact`,
+  );
+  assert.equal(w.speedCapHits, 0);
+});
+
+test('a launched POLLEN loses speed to drag and nothing else', () => {
+  // The divergence backstop must not clip a legitimate shot. The fastest
+  // shooter modelled here is 4500 rpm on a 2 in wheel at 0.62 transfer, which
+  // is 14.8 m/s at the muzzle.
   const w = world();
   const ball = pollen();
   ball.setPosition(0, 0, 0.3);
   ball.setVelocity(10, 0, 8);
   w.add(ball);
   assert.ok(w.maxSpeed > 14.8, 'the cap has to sit above the fastest shooter');
-  w.step(1 / 2000);
-  assert.ok(Math.abs(ball.vx - 10) < 1e-6, 'a shot is untouched');
-  assert.equal(w.speedCapHits, 0);
+
+  const dt = 1 / 2000;
+  w.step(dt);
+  assert.equal(w.speedCapHits, 0, 'nothing clipped it');
+
+  // Drag only, and in the right amount: F = 0.5 * rho * Cd * A * v^2, opposing
+  // motion, so the loss is shared between the components in proportion.
+  // Gravity goes in first, so the speed the drag sees already has that step.
+  const vz = 8 - 9.80665 * dt;
+  const speed = Math.hypot(10, vz);
+  const force = 0.5 * w.airDensity * ball.dragCoefficient * ball.area * speed * speed;
+  const loss = ((force / ball.mass) * dt) / speed;
+  assert.ok(
+    Math.abs(ball.vx - 10 * (1 - loss)) < 1e-9,
+    `vx ${ball.vx} should be 10 less its share of the drag`,
+  );
+  assert.ok(Math.abs(ball.vz - vz * (1 - loss)) < 1e-9);
+  assert.ok(loss * speed > 0.002, 'and the drag is a real amount, not a rounding error');
+});
+
+test('drag costs a real fraction of the range of a shot', () => {
+  // A 45 g POLLEN is 71 mm across and perforated, so it has a lot of frontal
+  // area for its mass: at 6 m/s the drag on one is a ninth of its weight, and
+  // it acts for the whole flight. Leaving it out is not a rounding error, it is
+  // a different aim point.
+  //
+  // Measured to the *first* landing. Carrying on until it stops bouncing would
+  // be measuring the bounces, which drag barely touches.
+  const range = (drag) => {
+    // A deliberately huge FIELD: a 6 m/s shot flies further than a real one is
+    // wide, and the first version of this test measured a ball that had already
+    // bounced off the far wall and was coming back.
+    const w = new BallWorld({ fieldSize: 60, wallHeight: 0.3 });
+    const ball = pollen();
+    ball.dragCoefficient = drag;
+    ball.setPosition(-1.5, 0, 0.3);
+    ball.setVelocity(6, 0, 5);
+    w.add(ball);
+    const start = ball.x;
+    for (let i = 0; i < 8000; i++) {
+      const rising = ball.vz > 0;
+      w.step(1 / 2000);
+      if (!rising && ball.z <= ball.radius + 1e-9) break;
+    }
+    return ball.x - start;
+  };
+  const vacuum = range(0);
+  const real = range(0.6);
+  const lost = 1 - real / vacuum;
+  assert.ok(
+    lost > 0.08 && lost < 0.4,
+    `drag cost ${(lost * 100).toFixed(0)} percent of the range (${real.toFixed(2)} m vs ${vacuum.toFixed(2)} m in vacuum)`,
+  );
+});
+
+test('a NECTAR is less affected by drag than a POLLEN', () => {
+  // Heavier for its frontal area, so the ballistics differ between the two
+  // element types -- one more reason a shot has to be re-aimed between them.
+  const decel = (radius, mass) => {
+    const w = world();
+    const ball = new Ball({ id: 'x', kind: 'pollen', radius, mass });
+    ball.setPosition(0, 0, 1);
+    ball.setVelocity(6, 0, 0);
+    w.add(ball);
+    const before = ball.vx;
+    w.step(1 / 2000);
+    return (before - ball.vx) * 2000;
+  };
+  const pollenDecel = decel(POLLEN_RADIUS, POLLEN_MASS);
+  const nectarDecel = decel(1.81 * 0.0254, 0.085);
+  // At 6 m/s: 0.5 * 1.204 * 0.6 * pi * 0.0356^2 * 36 / 0.045 = 1.15 m/s^2,
+  // which is a ninth of gravity and acts for the whole flight.
+  assert.ok(
+    pollenDecel > 1 && pollenDecel < 1.4,
+    `POLLEN decelerates at ${pollenDecel.toFixed(2)} m/s^2, expected about 1.15`,
+  );
+  // The comparison is `r^2 / m`, and a NECTAR is 1.81 in at 85 g against a
+  // POLLEN's 1.4 in at 45 g -- so it is less affected, but only by about a
+  // tenth. Worth knowing precisely rather than assuming: it is a small,
+  // consistent bias between the two element types, not a large one.
+  const ratio = nectarDecel / pollenDecel;
+  assert.ok(
+    ratio > 0.8 && ratio < 0.95,
+    `a NECTAR should decelerate about a tenth less, got ${(ratio * 100).toFixed(0)} percent of the POLLEN's ${pollenDecel.toFixed(2)}`,
+  );
+});
+
+test('a ball that lands skidding scrubs into a roll', () => {
+  // This is what "falling and scattering" mostly looks like. Without friction
+  // at the contact the ball landed and *slid*, keeping its whole horizontal
+  // speed and never picking up any spin.
+  //
+  // Sampled shortly after it settles. Left for three seconds, rolling
+  // resistance brings it to a complete stop and the answer is zero either way.
+  const w = world();
+  const ball = pollen();
+  ball.setPosition(-1, 0, 0.5);
+  ball.setVelocity(3, 0, -1);
+  w.add(ball);
+
+  let settled = 0;
+  for (let i = 0; i < 2000 * 2; i++) {
+    w.step(1 / 2000);
+    if (ball.onFloor && ++settled > 100) break;
+  }
+  assert.ok(ball.onFloor, 'it settled onto the tiles');
+  assert.ok(ball.spinRate > 10, `it should be spinning, got ${ball.spinRate.toFixed(2)} rad/s`);
+
+  // Rolling without slipping means the contact point is stationary. Solving
+  // `v + w x c = 0` at a contact one radius below the centre gives
+  // `w_y = v_x / r`, so that is what a ball rolling in +x should be doing.
+  const rolling = ball.vx / ball.radius;
+  assert.ok(
+    Math.abs(ball.wy - rolling) < Math.abs(rolling) * 0.1 + 1,
+    `spin ${ball.wy.toFixed(2)} should be near the rolling rate ${rolling.toFixed(2)}`,
+  );
+  assert.ok(ball.vx > 0.4, 'and it kept rolling forward rather than stopping dead');
+  assert.ok(ball.vx < 2.6, `but lost speed to the scrub: ${ball.vx.toFixed(2)} of 3 m/s`);
+});
+
+test('a dropped ball does not pick up spin out of nowhere', () => {
+  const w = world();
+  const ball = pollen();
+  ball.setPosition(0, 0, 0.6);
+  w.add(ball);
+  for (let i = 0; i < 2000 * 2; i++) w.step(1 / 2000);
+  assert.ok(ball.onFloor);
+  assert.ok(ball.spinRate < 1e-6, `dropped straight down it should not spin, got ${ball.spinRate}`);
+  assert.ok(ball.groundSpeed < 1e-6, 'nor wander');
+});
+
+test('a pile of POLLEN scatters rather than sliding past itself', () => {
+  // Frictionless contacts pushed balls apart along clean lines of centres and
+  // nothing tumbled. With friction they grip, spin each other up and spread.
+  const w = world();
+  const balls = [];
+  // A hex pack: one in the middle and six just touching it. Laid out on a
+  // circle any tighter than 2r they start overlapping, and the first step
+  // blows the heap apart on the overlap correction before the cue arrives --
+  // which is what the earlier version of this test was measuring.
+  const pitch = 2 * POLLEN_RADIUS;
+  const middle = pollen('p0');
+  middle.setPosition(0, 0, middle.radius);
+  w.add(middle);
+  balls.push(middle);
+  for (let i = 0; i < 6; i++) {
+    const ball = pollen(`p${i + 1}`);
+    const angle = (i / 6) * Math.PI * 2;
+    ball.setPosition(Math.cos(angle) * pitch, Math.sin(angle) * pitch, ball.radius);
+    w.add(ball);
+    balls.push(ball);
+  }
+  // Fire one through the middle of it.
+  const cue = pollen('cue');
+  cue.setPosition(-0.5, 0, cue.radius);
+  cue.setVelocity(3, 0, 0);
+  w.add(cue);
+
+  // Peak spin during the collision, not what is left after rolling resistance
+  // has stopped everything: the scatter is the event, not the aftermath.
+  let spinning = 0;
+  for (let i = 0; i < 2000 * 3; i++) {
+    w.step(1 / 2000);
+    spinning = Math.max(spinning, balls.filter((b) => b.spinRate > 2).length);
+  }
+  assert.ok(spinning >= 3, `only ${spinning} of 7 ever span`);
+  const spread = balls.map((b) => Math.hypot(b.x, b.y));
+  assert.ok(Math.max(...spread) > 0.12, 'the heap spread out');
+  for (const ball of balls) assert.ok(ball.isFinite());
 });

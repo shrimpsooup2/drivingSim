@@ -6,7 +6,8 @@ import { Thrower } from '../robot/biobuzz/Thrower.js';
 import { FIELD_INNER_HALF, POLLEN_RADIUS } from '../field/biobuzz/constants.js';
 import { INCH } from '../math/MathUtil.js';
 import { buildRoster } from '../ai/roster.js';
-import { LAUNCH_SYSTEMS } from '../robot/biobuzz/launchSystems.js';
+import { playerLaunchOptions } from '../robot/biobuzz/launchSystems.js';
+import { defaultConfig } from '../config/schema.js';
 
 /** The mechanism classes, handed to `Opponent` so the AI layer stays game-free. */
 const MECHANISMS = { Intake, Launcher, Thrower };
@@ -26,6 +27,13 @@ const RESTART_DELAY = 3;
 
 /** How often an AI DRIVE TEAM rolls another NECTAR onto the FIELD. */
 const NECTAR_ENTRY_INTERVAL = 4;
+
+/**
+ * Schema defaults, read once. `playerLaunchOptions` compares against these to
+ * decide which shooter settings are overrides and which to leave to the chosen
+ * launch system.
+ */
+const SCHEMA_DEFAULTS = defaultConfig();
 
 /**
  * A stable fingerprint of the roster settings.
@@ -103,11 +111,13 @@ export class BiobuzzGame {
      * reset is nothing like the rhythm of waiting for a wheel, and drilling the
      * wrong one is worse than not drilling.
      */
-    const launch = LAUNCH_SYSTEMS[this.settings.launchSystem] ?? LAUNCH_SYSTEMS.flywheel;
+    const launch = playerLaunchOptions(sim.config, SCHEMA_DEFAULTS);
     this.intake = sim.robot.addSubsystem(new Intake());
     this.launcher = sim.robot.addSubsystem(
       launch.thrower ? new Thrower(launch.options) : new Launcher(launch.options),
     );
+    /** The launcher signature, so a changed shooter setting rebuilds it. */
+    this._launchSignature = JSON.stringify(launch);
     this.intake.ballWorld = this.field.ballWorld;
     this.intake.flowers = this.field.flowers;
     this.launcher.ballWorld = this.field.ballWorld;
@@ -320,9 +330,16 @@ export class BiobuzzGame {
     return rosterSignature(config?.ai) !== this._rosterSignature;
   }
 
+  /** Whether the shooter settings no longer describe the launcher on the robot. */
+  launcherChanged(config) {
+    return JSON.stringify(playerLaunchOptions(config, SCHEMA_DEFAULTS)) !== this._launchSignature;
+  }
+
   /** Whether this game has to be rebuilt to match the settings. */
   needsRebuild(config) {
-    return this.allianceChanged(config) || this.rosterChanged(config);
+    return (
+      this.allianceChanged(config) || this.rosterChanged(config) || this.launcherChanged(config)
+    );
   }
 
   start() {

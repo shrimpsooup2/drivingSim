@@ -2,7 +2,8 @@ import { Subsystem } from '../Subsystem.js';
 import { DcMotor } from '../../hardware/DcMotor.js';
 import { MOTOR_PRESETS } from '../../config/presets/motors.js';
 import { INCH, clamp } from '../../math/MathUtil.js';
-import { POLLEN_MASS } from '../../field/biobuzz/constants.js';
+import { POLLEN_MASS, POLLEN_RADIUS } from '../../field/biobuzz/constants.js';
+import { heightAtRange, integrateArc, sampleArc } from '../../physics/ballistics.js';
 
 /** Gravity, for the ballistics. */
 const G = 9.80665;
@@ -139,6 +140,14 @@ export class Thrower extends Subsystem {
     return clamp(1 - this.resetRemaining / this.resetSeconds, 0, 1);
   }
 
+  /**
+   * Energy actually available right now: the full draw when loaded, less while
+   * the motor is still winding it back.
+   */
+  get drawnEnergy() {
+    return this.energy * this.recovery;
+  }
+
   /** Exit speed for an element of `mass`, m/s. */
   exitSpeedFor(mass = POLLEN_MASS, energy = this.energy) {
     return Math.sqrt((2 * this.efficiency * energy) / Math.max(1e-6, mass));
@@ -219,8 +228,18 @@ export class Thrower extends Subsystem {
     return this.current;
   }
 
+  /**
+   * Throw, with whatever is wound.
+   *
+   * Not gated on `ready` either, and for the same reason as the flywheel: the
+   * release is a latch, and pulling it mid-wind lets go of a partly drawn
+   * elastic. That is the honest behaviour and it is more instructive than a
+   * refusal -- an early release dribbles the element out at
+   * `sqrt(draw)` of the speed, which for a quarter-wound catapult is half
+   * range, and you can see exactly where it landed.
+   */
   _tryThrow() {
-    if (!this.ready || !this.robot) return null;
+    if (!this.robot) return null;
     const thrown = [];
     for (let i = 0; i < this.batch; i++) {
       const ball = this.intake?.take();
@@ -247,7 +266,12 @@ export class Thrower extends Subsystem {
     if (group.length === 0) return null;
     const { x, y, cos, sin, vx, vy } = this.pose;
 
-    const energy = this.energy * (1 + this.energyScatter * this._jitter());
+    // Only what is actually drawn. `recovery` is the fraction of the wind
+    // completed, and the elastic's stored energy goes in with it, so a throw
+    // taken half-wound has half the joules and comes out at 1/sqrt(2) of the
+    // speed.
+    const drawn = this.energy * this.recovery;
+    const energy = drawn * (1 + this.energyScatter * this._jitter());
     const angle = clamp(
       this.releaseAngle + this.angleScatter * this._jitter(),
       this.minAngle,
@@ -279,6 +303,7 @@ export class Thrower extends Subsystem {
     });
 
     this.shots += 1;
+    // Released, so the wind starts again from nothing however far it had got.
     this.resetRemaining = this.resetSeconds;
     if (this.ballWorld) this.ballWorld.settled = false;
     return first;
@@ -308,6 +333,15 @@ export class Thrower extends Subsystem {
   solutionFor(target, mass = POLLEN_MASS, origin = null) {
     if (!origin && !this.robot) return null;
     const { x, y } = origin ?? this.pose;
+    return this._solve(target, mass, x, y);
+  }
+
+  /** Radius of an element of this mass, for the drag model. */
+  elementRadius(mass = POLLEN_MASS) {
+    return mass > (POLLEN_MASS + 0.085) / 2 ? 1.81 * INCH : POLLEN_RADIUS;
+  }
+
+  _solve(target, mass, x, y) {
     const range = Math.max(
       0.01,
       Math.hypot(target.x - x, target.y - y) - this.exitOffset,
@@ -317,22 +351,53 @@ export class Thrower extends Subsystem {
     // three-ball lobber's elements leave at 1/sqrt(3) of what one would -- and
     // solving the angle from the full energy had it aiming for a range it
     // could not reach and then declining every shot on the field.
-    const v = this.exitSpeedFor(mass, this.energy / this.batch);
-    const v2 = v * v;
-    const disc = v2 * v2 - G * (G * range * range + 2 * rise * v2);
-    if (disc < 0) return null;
-    const angle = Math.atan((v2 + Math.sqrt(disc)) / (G * range));
-    if (angle < this.minAngle || angle > this.maxAngle) return null;
+    //
+    // A *full* draw, deliberately: this is what to dial in, not a running
+    // commentary on a half-wound elastic. `trajectory` uses the drawn energy,
+    // so the guide still shows where an early release would actually land.
+    const speed = this.exitSpeedFor(mass, this.energy / this.batch);
+    const radius = this.elementRadius(mass);
 
-    const apexRange = (v2 * Math.sin(angle) * Math.cos(angle)) / G;
+    // The speed is fixed, so this solves the *angle* -- and with drag in the
+    // way there is no closed form for it either. A sweep from the top of the
+    // elevation range downward, taking the first angle that clears the target:
+    // that is the lofted root, which is the one that arrives descending, and a
+    // CELL takes nothing else. Running out of angles without clearing it *is*
+    // the mechanism's maximum range, which is the constraint a flywheel does
+    // not have.
+    const steps = 48;
+    let best = null;
+    for (let i = 0; i <= steps; i++) {
+      const angle = this.maxAngle - ((this.maxAngle - this.minAngle) * i) / steps;
+      const arc = integrateArc(
+        {
+          x: 0,
+          y: 0,
+          z: 0,
+          vx: speed * Math.cos(angle),
+          vy: 0,
+          vz: speed * Math.sin(angle),
+          mass,
+          radius,
+        },
+        { floor: rise - 6 - radius, maxTime: 6 },
+      );
+      const height = heightAtRange(arc, range);
+      if (height === null || height < rise) continue;
+      const apexRange = Math.hypot(arc.apex.x, arc.apex.y);
+      best = { angle, arc, apexRange };
+      break;
+    }
+    if (!best) return null;
+
     return {
       range,
       rise,
-      speed: v,
-      angle,
+      speed,
+      angle: best.angle,
       rpm: 0,
-      descending: apexRange < range,
-      apexRange,
+      descending: best.apexRange < range,
+      apexRange: best.apexRange,
     };
   }
 
@@ -343,6 +408,29 @@ export class Thrower extends Subsystem {
   aimFor(target, mass = POLLEN_MASS, origin = null) {
     const solution = this.solutionFor(target, mass, origin);
     return solution && solution.descending ? solution : null;
+  }
+
+  /**
+   * Whether a throw at `target` is worth walking to a spot for, drag-free.
+   *
+   * The cheap screen for the AI's position search; `aimFor` does the real
+   * angle sweep once, at the spot it chose. Optimistic, which is the safe
+   * direction: it never rules out a throw that is actually possible.
+   */
+  couldReach(target, mass = POLLEN_MASS, origin = null) {
+    if (!origin && !this.robot) return false;
+    const { x, y } = origin ?? this.pose;
+    const range = Math.max(
+      0.01,
+      Math.hypot(target.x - x, target.y - y) - this.exitOffset,
+    );
+    const rise = target.z - this.exitHeight;
+    const speed = this.exitSpeedFor(mass, this.energy / this.batch);
+    const v2 = speed * speed;
+    const disc = v2 * v2 - G * (G * range * range + 2 * rise * v2);
+    if (disc < 0) return false;
+    const angle = Math.atan((v2 + Math.sqrt(disc)) / (G * range));
+    return angle >= this.minAngle && angle <= this.maxAngle;
   }
 
   aimAt(target, mass = POLLEN_MASS) {
@@ -362,7 +450,7 @@ export class Thrower extends Subsystem {
     if (!this.robot) return null;
     const mass = opts.mass ?? POLLEN_MASS;
     const angle = opts.angle ?? this.releaseAngle;
-    const speed = opts.speed ?? this.exitSpeedFor(mass, this.energy / this.batch);
+    const speed = opts.speed ?? this.exitSpeedFor(mass, this.drawnEnergy / this.batch);
     const samples = Math.max(2, opts.samples ?? 48);
     const floor = opts.floor ?? 0;
 
@@ -375,24 +463,25 @@ export class Thrower extends Subsystem {
     const vy0 = vy + sin * horizontal;
     const vz0 = speed * Math.sin(angle);
 
-    const at = (t) => ({
-      x: ox + vx0 * t,
-      y: oy + vy0 * t,
-      z: oz + vz0 * t - 0.5 * G * t * t,
-    });
-    const disc = vz0 * vz0 + 2 * G * Math.max(0, oz - floor);
-    const flightTime = disc > 0 ? (vz0 + Math.sqrt(disc)) / G : 0;
+    // Same integration the ball world runs, so the guide shows the real throw
+    // -- including a half-wound one, which comes out at sqrt(draw) of the
+    // speed and visibly falls short.
+    const radius = this.elementRadius(mass);
+    const arc = integrateArc(
+      { x: ox, y: oy, z: oz, vx: vx0, vy: vy0, vz: vz0, mass, radius },
+      { step: opts.step ?? 1 / 480, floor, maxTime: 6 },
+    );
+    const at = (t) => sampleArc(arc, t);
     const points = [];
-    for (let i = 0; i <= samples; i++) points.push(at((flightTime * i) / samples));
-    const tApex = Math.max(0, Math.min(flightTime, vz0 / G));
+    for (let i = 0; i <= samples; i++) points.push(at((arc.flightTime * i) / samples));
 
     return {
       points,
       at,
-      flightTime,
+      flightTime: arc.flightTime,
       speed,
       angle,
-      apex: { ...at(tApex), t: tApex },
+      apex: arc.apex,
       origin: { x: ox, y: oy, z: oz },
     };
   }

@@ -463,10 +463,16 @@ test('a CELL only accepts a descending ball, so close shots need a steep hood', 
   const target = bb.hiveTarget('red');
   robot.reset(target.x, target.y - STANDOFF, Math.PI / 2);
 
-  // A flat shot can reach the CELL, but it gets there still climbing.
-  const flat = launcher.solutionFor(target, (45 * Math.PI) / 180);
-  assert.ok(flat, 'reachable at 45 degrees');
-  assert.equal(flat.descending, false, 'but arriving on the way up');
+  // A flat shot gets there still climbing, and the geometry of *how* flat is
+  // the point. At 45 degrees from 1.5 m the CELL is nearly as high as it is far,
+  // so the arc has to be so shallow that it needs 14 m/s -- more than the wheel
+  // can produce -- and the solver says so rather than offering an RPM the
+  // mechanism does not have.
+  const flat = launcher.freeSolutionFor(target, (45 * Math.PI) / 180);
+  assert.ok(flat, 'the geometry has a 45 degree answer');
+  assert.equal(flat.descending, false, 'but it arrives on the way up');
+  assert.ok(flat.rpm > launcher.maxRpm, `and it wants ${flat.rpm.toFixed(0)} rpm`);
+  assert.equal(launcher.solutionFor(target, (45 * Math.PI) / 180), null);
 
   // The threshold is tan(hood) > 2 * rise / range, and the solver agrees.
   const needed = Math.atan((2 * flat.rise) / flat.range);
@@ -474,6 +480,18 @@ test('a CELL only accepts a descending ball, so close shots need a steep hood', 
   const justOver = launcher.solutionFor(target, needed + 0.02);
   assert.equal(justUnder.descending, false);
   assert.equal(justOver.descending, true);
+
+  // Drag makes every one of those shots need more speed than free flight
+  // would. Not much at this range -- a few percent -- but it is the right
+  // sign, and it is the same integration the ball world runs, so the guide and
+  // the shot cannot disagree.
+  const withDrag = launcher.solutionFor(target, needed + 0.05);
+  const withoutDrag = launcher.freeSolutionFor(target, needed + 0.05);
+  assert.ok(
+    withDrag.speed > withoutDrag.speed,
+    `drag needs ${withDrag.speed.toFixed(2)} against ${withoutDrag.speed.toFixed(2)} m/s in vacuum`,
+  );
+  assert.ok(withDrag.speed < withoutDrag.speed * 1.2, 'but not absurdly more');
 
   const aimed = launcher.aimFor(target);
   assert.ok(aimed && aimed.descending);
@@ -505,4 +523,102 @@ test('the launcher draws current and reports what a driver needs to see', () => 
   assert.ok(peak > 1, 'spinning a flywheel up costs current');
   const t = launcher.telemetry();
   assert.ok('Shooter RPM' in t && 'Hood angle' in t && 'Shooter ready' in t);
+});
+
+test('nothing stops you firing early -- it just throws short', () => {
+  // The gate used to refuse the shot, which made the whole recovery model
+  // invisible: you could not throw one short, so there was nothing to learn
+  // from the bar and "wait for the wheel" was enforced rather than taught. A
+  // real robot has no idea whether its flywheel is up to speed.
+  const launcher = new Launcher();
+  const intake = new Intake();
+  const robot = new Robot(new Config().values);
+  robot.addSubsystem(intake);
+  robot.addSubsystem(launcher);
+  launcher.intake = intake;
+  robot.reset(0, 0, 0);
+
+  const speeds = [];
+  for (const fraction of [0.4, 0.7, 1]) {
+    intake.give(pollen(`p${fraction}`));
+    launcher.spinning = true;
+    launcher.omega = (launcher.targetRpm * fraction * 2 * Math.PI) / 60;
+    const wasReady = launcher.ready;
+    launcher.fire();
+    launcher.applyForces(1 / 1000, 12.5);
+    assert.equal(launcher.shots, speeds.length + 1, `a ${fraction} shot should have fired`);
+    if (fraction < 0.97) assert.equal(wasReady, false, 'and it was not ready');
+    speeds.push(launcher.lastExitSpeed);
+    launcher._feedTimer = 0;
+  }
+
+  // Slower wheel, slower ball, monotonically.
+  assert.ok(speeds[0] < speeds[1] && speeds[1] < speeds[2], speeds.join(' < '));
+  assert.ok(
+    speeds[0] < speeds[2] * 0.5,
+    `a 40 percent wheel should throw at well under half speed, got ${speeds[0].toFixed(2)} vs ${speeds[2].toFixed(2)}`,
+  );
+});
+
+test('the feeder still limits the cycle, because that is mechanical', () => {
+  const launcher = new Launcher({ feedInterval: 0.4 });
+  const intake = new Intake();
+  const robot = new Robot(new Config().values);
+  robot.addSubsystem(intake);
+  robot.addSubsystem(launcher);
+  launcher.intake = intake;
+  robot.reset(0, 0, 0);
+  intake.give(pollen('a'));
+  intake.give(pollen('b'));
+  launcher.spinning = true;
+  launcher.omega = 250;
+
+  launcher.fire();
+  launcher.applyForces(1 / 1000, 12.5);
+  assert.equal(launcher.shots, 1);
+  launcher.fire();
+  launcher.applyForces(1 / 1000, 12.5);
+  assert.equal(launcher.shots, 1, 'the feeder has not come round yet');
+  for (let i = 0; i < 500; i++) launcher.applyForces(1 / 1000, 12.5);
+  launcher.fire();
+  launcher.applyForces(1 / 1000, 12.5);
+  assert.equal(launcher.shots, 2);
+});
+
+test('the flywheel spins up and idles like a real one', () => {
+  // Calibrated against the two numbers a team can actually read: how long it
+  // takes to come up, and what it draws holding speed. A single bare 5202
+  // direct-driving a 4 in wheel with a flywheel mass on it is about two
+  // seconds and under an amp. The drag used to be 2.5e-5, which idled at
+  // 0.13 A -- a frictionless wheel, and the reason recovery cost nothing.
+  const launcher = new Launcher();
+  launcher.robot = { config: {} };
+  launcher.spinning = true;
+
+  let time = 0;
+  let peak = 0;
+  let ready = null;
+  const dt = 1 / 2000;
+  for (let i = 0; i < 2000 * 6; i++) {
+    launcher.applyForces(dt, 12.8);
+    time += dt;
+    peak = Math.max(peak, launcher.current);
+    if (ready === null && launcher.rpm >= launcher.targetRpm * launcher.readyTolerance) {
+      ready = time;
+    }
+  }
+  assert.ok(ready > 1.5 && ready < 3, `spin-up took ${ready.toFixed(2)} s, expected about 2`);
+  assert.ok(peak > 8 && peak < 12, `peak draw ${peak.toFixed(1)} A, expected near the 9.2 A stall`);
+  assert.ok(
+    launcher.current > 0.4 && launcher.current < 2,
+    `idles at ${launcher.current.toFixed(2)} A holding ${launcher.rpm.toFixed(0)} rpm`,
+  );
+
+  // The rotors are part of what has to be accelerated.
+  assert.ok(launcher.effectiveInertia > launcher.inertia);
+  const geared = new Launcher({ gearRatio: 2 });
+  assert.ok(
+    geared.effectiveInertia - geared.inertia < launcher.effectiveInertia - launcher.inertia,
+    'gearing up shrinks the reflected rotor inertia as its square',
+  );
 });

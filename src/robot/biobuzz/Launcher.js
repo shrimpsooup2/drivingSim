@@ -3,7 +3,13 @@ import { DcMotor } from '../../hardware/DcMotor.js';
 import { PIDF } from '../../math/PIDF.js';
 import { MOTOR_PRESETS } from '../../config/presets/motors.js';
 import { INCH, clamp } from '../../math/MathUtil.js';
-import { POLLEN_MASS } from '../../field/biobuzz/constants.js';
+import { POLLEN_MASS, POLLEN_RADIUS } from '../../field/biobuzz/constants.js';
+import {
+  freeFlightSolution,
+  integrateArc,
+  sampleArc,
+  solveSpeedForTarget,
+} from '../../physics/ballistics.js';
 
 /** Gravity, for the ballistics helper. */
 const G = 9.80665;
@@ -82,8 +88,17 @@ export class Launcher extends Subsystem {
     this.inertia = opts.inertia ?? 8.3e-4;
     /** Fraction of surface speed a ball leaves at. */
     this.transferEfficiency = opts.transferEfficiency ?? 0.5;
-    /** Viscous drag on the wheel, N*m per rad/s. Sets the idle droop. */
-    this.drag = opts.drag ?? 2.5e-5;
+    /**
+     * Viscous drag on the wheel, N*m per rad/s.
+     *
+     * Bearings, windage and hysteresis in the compliant tread, lumped
+     * together. Calibrated against current draw, which is the number a team
+     * can actually read off their Driver Station: 8e-5 puts a single bare 5202
+     * at about 1.5 A holding 2400 rpm, which is what a real flywheel idles at.
+     * It used to be 2.5e-5, which drew 0.13 A -- an essentially frictionless
+     * wheel, and the reason recovery between shots cost nothing.
+     */
+    this.drag = opts.drag ?? 8e-5;
 
     this.minHoodAngle = opts.minHoodAngle ?? (20 * Math.PI) / 180;
     this.maxHoodAngle = opts.maxHoodAngle ?? (70 * Math.PI) / 180;
@@ -136,6 +151,19 @@ export class Launcher extends Subsystem {
     this.ballWorld = null;
     /** Set by the app: the intake that feeds this. */
     this.intake = null;
+  }
+
+  /**
+   * Everything the motor has to accelerate, referred to the wheel's own axis.
+   *
+   * The rotors count. Reflected through the ratio they scale as `1/ratio^2`,
+   * so on a direct drive a pair of 5202 rotors adds 1.4e-5 against a wheel's
+   * 8.3e-4 -- under two percent, and worth including because it is free and
+   * because a geared-*down* shooter reverses the comparison entirely.
+   */
+  get effectiveInertia() {
+    const rotor = (this.motor.rotorInertia ?? 0) * this.motorCount;
+    return this.inertia + rotor / (this.gearRatio * this.gearRatio);
   }
 
   /** Free speed of the wheel itself at a given bus voltage, rad/s. */
@@ -211,7 +239,8 @@ export class Launcher extends Subsystem {
    */
   droopFactor(mass) {
     const R = this.wheelRadius;
-    return this.inertia / (this.inertia + this.transferEfficiency * mass * R * R);
+    const J = this.effectiveInertia;
+    return J / (J + this.transferEfficiency * mass * R * R);
   }
 
   /** Exit speed a ball of `mass` would actually leave at right now, m/s. */
@@ -295,7 +324,8 @@ export class Launcher extends Subsystem {
     this.current = Math.abs(duty * result.current) * this.motorCount;
 
     // Semi-implicit, so a stiff drag term cannot make the wheel ring.
-    this.omega = (this.omega + (dt * torque) / this.inertia) / (1 + (dt * this.drag) / this.inertia);
+    const J = this.effectiveInertia;
+    this.omega = (this.omega + (dt * torque) / J) / (1 + (dt * this.drag) / J);
     if (this.omega < 0) this.omega = 0;
 
     this._feedTimer = Math.max(0, this._feedTimer - dt);
@@ -306,8 +336,22 @@ export class Launcher extends Subsystem {
     return this.current;
   }
 
+  /**
+   * Fire, whatever the wheel is doing.
+   *
+   * Deliberately *not* gated on `ready`. A real robot has no idea whether its
+   * flywheel is up to speed -- it fires when the trigger is pulled and the
+   * ball goes wherever the wheel's current surface speed sends it. Refusing
+   * the shot made the whole recovery model invisible: you could not throw one
+   * short, so there was nothing to learn from the bar, and "wait for the
+   * wheel" was enforced rather than taught.
+   *
+   * The two things still in the way are mechanical, not rules: the feeder
+   * cannot cycle faster than `feedInterval`, and there has to be something in
+   * the magazine.
+   */
   _tryShoot() {
-    if (!this.ready || this._feedTimer > 0 || !this.robot) return null;
+    if (this._feedTimer > 0 || !this.robot) return null;
     const ball = this.intake?.take();
     if (!ball) return null;
     return this.launch(ball);
@@ -323,7 +367,8 @@ export class Launcher extends Subsystem {
     const k = this.transferEfficiency;
     const R = this.wheelRadius;
 
-    const after = (this.inertia * this.omega) / (this.inertia + k * ball.mass * R * R);
+    const J = this.effectiveInertia;
+    const after = (J * this.omega) / (J + k * ball.mass * R * R);
     // The wheel loses exactly the angular momentum the ball carries away; the
     // scatter is on what comes *out*, not on the mechanism's book-keeping, so
     // a sloppy shooter still conserves momentum.
@@ -369,12 +414,34 @@ export class Launcher extends Subsystem {
    * @param {number} rise target height above the exit point, m
    * @param {number} [angle] hood angle, radians
    */
-  speedForTarget(range, rise, angle = this.hoodAngle) {
-    const c = Math.cos(angle);
-    const denom = 2 * c * c * (range * Math.tan(angle) - rise);
-    if (denom <= 0) return null;
-    const v2 = (G * range * range) / denom;
-    return v2 > 0 ? Math.sqrt(v2) : null;
+  speedForTarget(range, rise, angle = this.hoodAngle, mass = POLLEN_MASS) {
+    const solution = solveSpeedForTarget({
+      range,
+      rise,
+      angle,
+      mass,
+      radius: this.elementRadius(mass),
+      maxSpeed: this.exitSpeedAt(this.maxRpm, mass),
+    });
+    return solution ? solution.speed : null;
+  }
+
+  /**
+   * Radius of an element of this mass, for the drag model.
+   *
+   * Derived from the mass rather than passed in, because every caller already
+   * knows the mass and nobody wants to thread a radius through the aiming
+   * maths as well. The two elements are far enough apart (45 g at 1.4 in,
+   * 85 g at 1.81 in) that picking by mass is unambiguous.
+   */
+  elementRadius(mass = POLLEN_MASS) {
+    return mass > (POLLEN_MASS + 0.085) / 2 ? 1.81 * INCH : POLLEN_RADIUS;
+  }
+
+  /** Exit speed a given wheel RPM would produce for an element of `mass`. */
+  exitSpeedAt(rpm, mass = POLLEN_MASS) {
+    const omega = (rpm * 2 * Math.PI) / 60;
+    return this.transferEfficiency * omega * this.wheelRadius * this.droopFactor(mass);
   }
 
   /**
@@ -423,18 +490,24 @@ export class Launcher extends Subsystem {
       Math.hypot(target.x - x, target.y - y) - this.exitOffset,
     );
     const rise = target.z - this.exitHeight;
-    const speed = this.speedForTarget(range, rise, angle);
-    if (speed === null) return null;
+    const solved = solveSpeedForTarget({
+      range,
+      rise,
+      angle,
+      mass,
+      radius: this.elementRadius(mass),
+      maxSpeed: this.exitSpeedAt(this.maxRpm, mass),
+    });
+    if (!solved) return null;
 
-    const apexRange = (speed * speed * Math.sin(angle) * Math.cos(angle)) / G;
     return {
       range,
       rise,
-      speed,
-      rpm: this.rpmForExitSpeed(speed, mass),
+      speed: solved.speed,
+      rpm: this.rpmForExitSpeed(solved.speed, mass),
       angle,
-      descending: apexRange < range,
-      apexRange,
+      descending: solved.descending,
+      apexRange: solved.apexRange,
     };
   }
 
@@ -452,13 +525,84 @@ export class Launcher extends Subsystem {
    *   cannot be made from here at all.
    */
   aimFor(target, mass = POLLEN_MASS, origin = null) {
+    // Two passes, because the real solve is a bisection over a drag
+    // integration and sixty of them per call is not affordable -- the AI runs
+    // this several times a second for every ROBOT on the FIELD.
+    //
+    // First a drag-free sweep, which is closed form and effectively free, to
+    // find the shallowest angle that could work at all. Then the real solve at
+    // that angle and a few steeper ones, because drag needs more speed than
+    // the free flight and the shallow end is where that runs out of RPM.
     const steps = 60;
+    const span = this.maxHoodAngle - this.minHoodAngle;
+    let guess = -1;
     for (let i = 0; i <= steps; i++) {
-      const angle = this.minHoodAngle + ((this.maxHoodAngle - this.minHoodAngle) * i) / steps;
+      const angle = this.minHoodAngle + (span * i) / steps;
+      const free = this.freeSolutionFor(target, angle, mass, origin);
+      if (free && free.descending && free.rpm <= this.maxRpm) {
+        guess = i;
+        break;
+      }
+    }
+    if (guess < 0) return null;
+
+    for (let i = guess; i <= Math.min(steps, guess + 12); i += 3) {
+      const angle = this.minHoodAngle + (span * i) / steps;
       const solution = this.solutionFor(target, angle, mass, origin);
       if (solution && solution.descending && solution.rpm <= this.maxRpm) return solution;
     }
     return null;
+  }
+
+  /**
+   * The drag-free version of `solutionFor`: same shape, no integration.
+   *
+   * For screening only -- choosing somewhere to stand means testing hundreds
+   * of candidate positions, and paying for a drag integration on each costs
+   * thousands of times more than deciding which one to drive to. It is
+   * optimistic by about a tenth in speed, which is the safe direction for a
+   * screen: it never rules out a shot that is actually possible.
+   */
+  freeSolutionFor(target, angle = this.hoodAngle, mass = POLLEN_MASS, origin = null) {
+    if (!origin && !this.robot) return null;
+    const { x, y } = origin ?? this.pose;
+    const range = Math.max(
+      0.01,
+      Math.hypot(target.x - x, target.y - y) - this.exitOffset,
+    );
+    const rise = target.z - this.exitHeight;
+    const free = freeFlightSolution(range, rise, angle);
+    if (!free) return null;
+    return {
+      range,
+      rise,
+      speed: free.speed,
+      rpm: this.rpmForExitSpeed(free.speed, mass),
+      angle,
+      descending: free.descending,
+      apexRange: free.apexRange,
+    };
+  }
+
+  /**
+   * Whether a shot at `target` is worth walking to a spot for, drag-free.
+   *
+   * The screen the AI's position search uses. `aimFor` then does the real
+   * solve, once, at the spot it chose.
+   */
+  couldReach(target, mass = POLLEN_MASS, origin = null) {
+    const steps = 20;
+    const span = this.maxHoodAngle - this.minHoodAngle;
+    for (let i = 0; i <= steps; i++) {
+      const free = this.freeSolutionFor(
+        target,
+        this.minHoodAngle + (span * i) / steps,
+        mass,
+        origin,
+      );
+      if (free && free.descending && free.rpm <= this.maxRpm) return true;
+    }
+    return false;
   }
 
   /**
@@ -494,6 +638,7 @@ export class Launcher extends Subsystem {
    *   angle?: number,
    *   samples?: number,
    *   floor?: number,
+   *   step?: number,
    * }} [opts]
    * @returns {{
    *   points: {x:number,y:number,z:number}[],
@@ -522,29 +667,27 @@ export class Launcher extends Subsystem {
     const vy0 = vy + sin * horizontal;
     const vz0 = speed * Math.sin(angle);
 
-    const at = (t) => ({
-      x: ox + vx0 * t,
-      y: oy + vy0 * t,
-      z: oz + vz0 * t - 0.5 * G * t * t,
-    });
+    // Integrated, not solved: with drag there is no closed form, and this uses
+    // the same gravity-then-drag-then-position sequence `BallWorld` does, at
+    // the same step. So the guide is not an approximation of the shot, it is
+    // the shot.
+    const radius = this.elementRadius(mass);
+    const arc = integrateArc(
+      { x: ox, y: oy, z: oz, vx: vx0, vy: vy0, vz: vz0, mass, radius },
+      { step: opts.step ?? 1 / 480, floor, maxTime: 6 },
+    );
 
-    // Time to fall back to `floor`, from the larger root of the height
-    // quadratic. A stationary wheel gives vz0 = 0 and a short drop, not a
-    // divide by zero.
-    const disc = vz0 * vz0 + 2 * G * Math.max(0, oz - floor);
-    const flightTime = disc > 0 ? (vz0 + Math.sqrt(disc)) / G : 0;
-
+    const at = (t) => sampleArc(arc, t);
     const points = [];
-    for (let i = 0; i <= samples; i++) points.push(at((flightTime * i) / samples));
+    for (let i = 0; i <= samples; i++) points.push(at((arc.flightTime * i) / samples));
 
-    const tApex = Math.max(0, Math.min(flightTime, vz0 / G));
     return {
       points,
       at,
-      flightTime,
+      flightTime: arc.flightTime,
       speed,
       angle,
-      apex: { ...at(tApex), t: tApex },
+      apex: arc.apex,
       origin: { x: ox, y: oy, z: oz },
     };
   }

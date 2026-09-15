@@ -26,6 +26,7 @@ export class Ball {
    *   x?: number, y?: number, z?: number,
    *   restitution?: number,
    *   rollingResistance?: number,
+   *   dragCoefficient?: number,
    * }} opts
    */
   constructor(opts) {
@@ -38,6 +39,23 @@ export class Ball {
     this.restitution = opts.restitution ?? 0.45;
     /** Fraction of weight lost to rolling on foam tiles, per unit speed. */
     this.rollingResistance = opts.rollingResistance ?? 0.06;
+
+    /**
+     * Drag coefficient.
+     *
+     * These are *wiffle balls*, and that matters more than it looks. A smooth
+     * sphere in this Reynolds range sits near 0.5; the perforations push a
+     * wiffle ball up towards 0.6, and it is very light for its size -- a 45 g
+     * POLLEN is 71 mm across. At 7 m/s the drag on one is 0.070 N against a
+     * weight of 0.44 N, so it decelerates at 1.6 m/s^2, a sixth of gravity.
+     * Ignoring that overstates the range of a shot by about a fifth.
+     *
+     * A NECTAR is heavier for its frontal area, so it is less affected -- but
+     * only by about a tenth, since what matters is `r^2 / m` and 1.81 in at
+     * 85 g is not far off 1.4 in at 45 g. A small consistent bias between the
+     * two element types rather than a large one.
+     */
+    this.dragCoefficient = opts.dragCoefficient ?? 0.6;
 
     this.x = opts.x ?? 0;
     this.y = opts.y ?? 0;
@@ -53,6 +71,20 @@ export class Ball {
     this.vx = 0;
     this.vy = 0;
     this.vz = 0;
+
+    /**
+     * Angular velocity, rad/s.
+     *
+     * Modelled because it is what makes a landing look right. A ball that
+     * arrives with horizontal speed and no spin has to *scrub* against the
+     * tiles until its contact point stops sliding, and that transition -- skid,
+     * then roll -- is most of what "it bounced and rolled away" looks like.
+     * Without it a ball landed and slid, and a pile pushed apart along clean
+     * lines of centres instead of scattering.
+     */
+    this.wx = 0;
+    this.wy = 0;
+    this.wz = 0;
 
     /**
      * What currently owns this ball, or null when it is loose on the field.
@@ -71,6 +103,28 @@ export class Ball {
 
   get speed() {
     return Math.hypot(this.vx, this.vy, this.vz);
+  }
+
+  /** Frontal area, for drag. */
+  get area() {
+    return Math.PI * this.radius * this.radius;
+  }
+
+  /**
+   * Moment of inertia about a diameter: a hollow-ish plastic sphere.
+   *
+   * A solid sphere is `0.4 m r^2` and a thin shell `2/3 m r^2`. A wiffle ball
+   * is a shell with holes in it, so it sits near the shell value -- 0.6 here,
+   * which matters because it sets how quickly a skidding ball spins up into a
+   * roll.
+   */
+  get spinInertia() {
+    return 0.6 * this.mass * this.radius * this.radius;
+  }
+
+  /** How fast it is spinning, rad/s. */
+  get spinRate() {
+    return Math.hypot(this.wx, this.wy, this.wz);
   }
 
   /** Horizontal speed only; used to decide when a ball has settled. */
@@ -96,6 +150,16 @@ export class Ball {
     this.vx = 0;
     this.vy = 0;
     this.vz = 0;
+    this.wx = 0;
+    this.wy = 0;
+    this.wz = 0;
+    return this;
+  }
+
+  setSpin(wx, wy, wz) {
+    this.wx = wx;
+    this.wy = wy;
+    this.wz = wz;
     return this;
   }
 
@@ -132,18 +196,26 @@ export class Ball {
    * @param {number} [vy]
    * @param {number} [vz]
    */
-  release(vx = 0, vy = 0, vz = 0) {
+  release(vx = 0, vy = 0, vz = 0, spin = null) {
     this._leaveContainer();
     this.container = null;
     this.vx = vx;
     this.vy = vy;
     this.vz = vz;
+    // A launched element leaves a flywheel spinning hard; anything simply let
+    // go leaves with none.
+    this.wx = spin?.wx ?? 0;
+    this.wy = spin?.wy ?? 0;
+    this.wz = spin?.wz ?? 0;
     this.onFloor = false;
     return this;
   }
 
   isFinite() {
     return (
+      Number.isFinite(this.wx) &&
+      Number.isFinite(this.wy) &&
+      Number.isFinite(this.wz) &&
       Number.isFinite(this.x) && Number.isFinite(this.y) && Number.isFinite(this.z) &&
       Number.isFinite(this.vx) && Number.isFinite(this.vy) && Number.isFinite(this.vz)
     );
