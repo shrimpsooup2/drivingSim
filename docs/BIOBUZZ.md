@@ -291,14 +291,101 @@ the same way a referee would. The count shows on the match panel as `G410 xN`.
 | --- | --- |
 | **G** | Toggle BIOBUZZ on/off |
 | **M** | Restart the match from setup |
-| Right bumper | Run the intake |
-| Left bumper | Eject the front element |
+| **T** | Shot trajectory guide |
+| Right bumper (`H`) | Run the intake |
+| Left bumper (`U`) | Place into a FLOWER if lined up, otherwise eject |
 | **Y** | Toggle the flywheel |
-| Right trigger | Fire |
-| D-pad up/down | Trim the hood angle |
-| D-pad left/right | Trim the target RPM |
+| Right trigger (`Space`) | Fire |
+| D-pad up/down (`I`/`K`) | Trim the hood or release angle |
+| D-pad left/right (`J`/`L`) | Trim the target RPM |
 
 The rest of the controls are in [CONTROLS.md](CONTROLS.md).
+
+## The two scoring routes need two different mechanisms
+
+This is the most consequential thing the manual says about robot design, and it
+is easy to miss because the two rules are in different sections.
+
+A **CELL** is 53.5 in above the tiles and Section 1 says robots "LAUNCH them
+into their CELLS". So a CELL needs a thrower: a flywheel, a catapult, a
+puncher. Nothing that lifts is going to reach 53 in and still be a legal robot.
+
+A **FLOWER** is the opposite. G419.A permits a robot "only [to] enter POLLEN and
+NECTAR into the top of a FLOWER", the top ring is 21.25 in up, and the tube's
+clearance for a 2.8 in POLLEN is **0.6 in** — you cannot shoot into that, and
+the simulator will not let you. A FLOWER needs a lift or an arm that raises one
+element over the rim and lets go.
+
+So a robot built for one cannot score in the other, and that is modelled: the
+intake's eject is context-sensitive (lined up with a tube it runs a lift cycle
+taking most of a second; anywhere else it spits on the floor), and a robot with
+no launcher has no way into a CELL at all.
+
+Both routes are also *worth* different things. A CELL pays 2 an element and
+20 for a TIP, but a TIP empties it — anything in there at the buzzer is gone if
+the arm goes over at 0:01. A FLOWER pays 2 for **every** element in it to
+whoever owns it, and cannot be tipped away. Ownership is the top-most NECTAR of
+your colour, so a tube full of your POLLEN pays the other alliance if their
+NECTAR lands on top of it last.
+
+## The other three robots
+
+A match is four robots: you, an alliance partner, and two opponents. Each of the
+other three is configured independently along three axes, in
+*Settings → The other three robots*:
+
+- **Robot** — the archetype, which is really the scoring system. Single
+  flywheel, twin flywheel, heavy flywheel, catapult, three-ball lobber, linear
+  puncher, a wide intake with a lift, a single-element jaw on an arm, a heavy
+  defender, or a stock pushbot. This decides what it can even attempt.
+- **Build** — thrown together, competition ready, or worlds calibre. Motors on
+  the flywheel, how repeatable the hood is, magazine size, winding time, and
+  how often the intake jams. The same robot at two build standards is a
+  different robot.
+- **Driver** — rookie, competent or veteran: reaction time, precision, how much
+  power they dare use, how often they commit to something unhelpful.
+
+Any of the three can be **Random**, so "three random robots" is a different
+match every time. The axes are deliberately separate because they are separate
+at a real event: practising against a rookie on an excellent robot and a
+veteran on a rough one are different exercises, and you meet both.
+
+Every AI drives a full `Robot` through the same subsystems you do — the same
+motor curves, the same battery, the same traction, the same `Intake.command`
+and `Launcher.fire()`. None of them has a shortcut into the ball world, so an
+opponent's shot is subject to the same recovery, droop and aperture as yours,
+and beating one is a driving result rather than a difficulty setting.
+
+Two things about the AI are worth knowing because they are physics, not
+tuning:
+
+- **The A-frame blocks the middle of the field.** The straight line from one
+  side to the other goes through a strut leg, so the AI routes around the frame
+  and has a wedge detector for when it gets stuck anyway. It is not being
+  clever; without it a robot presses itself against a strut at half power for
+  the whole match with a full magazine and a clear shot two metres away.
+- **There is only a narrow band of legal shooting positions.** A CELL faces
+  along the arm and only accepts a *descending* element, so the shot must come
+  from outside its opening plane — which puts the furthest usable stand-off at
+  about 2.15 m, near the far wall. "Long range" on this field means the far
+  corner, not the far wall. A test asserts that every shooting archetype has at
+  least one legal spot on both alliances; the catapult failed it once, and not
+  for lack of energy — its arm stopped at 72° and the lofted solution at those
+  ranges wants 76.
+
+### The opposing alliance's NECTAR
+
+Entering NECTAR is a human action — Section 10.1 gives an alliance one more
+each time its HIVE tips, and all of them in the last 60 seconds. Without
+somebody doing that for the other side, a third of the point table never
+happens in a match against AI: no NECTAR on the field means no FLOWER can be
+owned, so a robot built to fill FLOWERS scores nothing and the bottom-NECTAR
+bonus never exists. *Match → Other side enters its NECTAR* has their drive team
+roll one in every few seconds when they have one available.
+
+Your own alliance's NECTAR stays yours to enter. When to hand it in is a real
+decision — early is a G410 violation — and taking it away would be taking away
+part of the game.
 
 ## What is still a simulation choice
 
@@ -321,6 +408,17 @@ measurements, and they are the places to look first if something feels wrong:
   stack. It makes no difference to scoring.
 - **Intake and launcher geometry** is a plausible robot, not any particular
   robot. Every number is a constructor option so you can put your own in.
+- **The FLOWER lift.** G419 says elements enter through the top of the top ring
+  and the geometry says a shot cannot, so *something* has to raise one over a
+  21.25 in rim. The alignment window (2.5 in), the reach (9 in from the bumper)
+  and the cycle time (0.9 s) are a plausible mechanism, not a measured one.
+- **The AI's archetypes and build qualities** are the shapes of robot you meet
+  at an event, with numbers chosen to make each play differently rather than
+  copied from any particular team. The *physics* underneath them is not a
+  choice: a catapult really does put speed as `sqrt(2*eta*E/m)`, which is why a
+  NECTAR leaves a third slower than a POLLEN, and a twin flywheel really does
+  get most of the surface speed into the ball where a single wheel against a
+  backplate gets about half.
 
 ## Files
 
@@ -333,13 +431,19 @@ src/field/biobuzz/Flower.js      the ordered stack
 src/field/biobuzz/zones.js       LOADING ZONE, GARDEN, ALLIANCE AREA
 src/field/biobuzz/BiobuzzField.js  assembly and Section 10.3.1 staging
 src/field/biobuzz/Match.js       clock, phases, scoring, ranking points, G304
-src/robot/biobuzz/Intake.js      roller intake
+src/robot/biobuzz/Intake.js      roller intake or jaw, and the FLOWER lift
 src/robot/biobuzz/Launcher.js    flywheel launcher and the aiming solver
+src/robot/biobuzz/Thrower.js     catapult and puncher: energy, not speed
+src/robot/biobuzz/launchSystems.js  the launch systems you can be built with
+src/ai/archetypes.js             the other robots: scoring systems and builds
+src/ai/roster.js                 the three seats, and Random
+src/ai/gamePlan.js               what an AI does with the mechanism it has
 src/app/BiobuzzGame.js           attaches the game to a running simulation
-src/ui/MatchPanel.js             clock, score breakdown, shooter readout
+src/ui/MatchPanel.js             clock, score breakdown, shooter readout, line-up
 ```
 
 Tests: `test/biobuzz.test.js` (field structures), `biobuzz-robot.test.js`
 (mechanisms), `biobuzz-match.test.js` (flow and scoring), `biobuzz-game.test.js`
-(integration). `node tools/check.js` drives the whole thing in headless
+(integration), `ai-roster.test.js` (the other three robots),
+`ballphysics.test.js` (contact resolution), `input.test.js` (the bindings). `node tools/check.js` drives the whole thing in headless
 Chromium, including firing a shot into the cell through the real physics loop.

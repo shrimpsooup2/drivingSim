@@ -846,6 +846,109 @@ async function main() {
       return true;
     })()`);
 
+    // Fill the other three seats and let a real MATCH run. This is the one
+    // part of the game that cannot be checked from the model alone: the AIs
+    // drive the same physics, so whether they actually get anywhere depends on
+    // the FIELD's furniture being where the renderer says it is.
+    const roster = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.config.set('view.showTrajectory', false);
+      app.config.set('ai.enabled', true);
+      app.config.set('ai.partner.archetype', 'twinWheel');
+      app.config.set('ai.partner.quality', 'elite');
+      app.config.set('ai.partner.skill', 'veteran');
+      app.config.set('ai.opponent1.archetype', 'gardener');
+      app.config.set('ai.opponent1.quality', 'solid');
+      app.config.set('ai.opponent1.skill', 'competent');
+      app.config.set('ai.opponent2.archetype', 'catapult');
+      app.config.set('ai.opponent2.quality', 'rough');
+      app.config.set('ai.opponent2.skill', 'rookie');
+      // The roster is built when the game is created, so cycle it.
+      app.sim.disableGame();
+      const g = app.sim.enableGame();
+      app.config.set('match.startPhase', 'teleop');
+      g.start();
+      return {
+        participants: g.participants.length,
+        opponents: app.sim.opponents.length,
+        lineup: g.lineup().map((r) => ({
+          slot: r.slot, name: r.name, ally: r.ally, quality: r.quality, skill: r.skill,
+        })),
+        mechanisms: app.sim.opponents.map((o) => ({
+          id: o.id,
+          role: o.role,
+          intake: Boolean(o.intake),
+          launcher: o.launcher ? (o.launcher.kind ?? 'yes') : null,
+        })),
+      };
+    })()`);
+    console.log(`  Roster: ${roster.participants} ROBOTS in the MATCH`);
+    for (const m of roster.mechanisms) {
+      console.log(`    ${m.id} (${m.role}): intake ${m.intake ? 'yes' : 'no'}, launcher ${m.launcher ?? 'none'}`);
+    }
+    if (roster.participants !== 4) failures.push(`expected 4 ROBOTS, got ${roster.participants}`);
+    if (roster.lineup.length !== 3) failures.push(`the panel lists ${roster.lineup.length} other robots`);
+    if (roster.lineup.filter((r) => r.ally).length !== 1) {
+      failures.push('exactly one of the other three should be on your own alliance');
+    }
+    const gardener = roster.mechanisms.find((m) => m.role === 'flowerFiller');
+    if (!gardener) failures.push('the FLOWER robot is missing');
+    else if (gardener.launcher) failures.push('a FLOWER robot should have no launcher');
+    const thrower = roster.mechanisms.find((m) => m.launcher === 'catapult');
+    if (!thrower) failures.push('the catapult built a flywheel instead of a thrower');
+
+    // Long enough for a cycle: collect, cross the FIELD, line up, score.
+    await sleep(45000);
+    const played2 = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const g = app.sim.game;
+      const score = g.match.score();
+      return {
+        phase: g.match.phase,
+        red: score.red.total,
+        blue: score.blue.total,
+        tips: { red: g.field.hives.red.tips, blue: g.field.hives.blue.tips },
+        flowers: g.field.flowers.reduce((n, f) => n + f.stack.length, 0),
+        robots: app.sim.opponents.map((o) => ({
+          id: o.id,
+          shots: o.launcher ? o.launcher.shots : null,
+          jams: o.jams,
+          moved: Math.hypot(o.robot.body.position.x, o.robot.body.position.y),
+        })),
+        lineupRows: document.querySelectorAll('.match-robot').length,
+      };
+    })()`);
+    console.log(
+      `  After 45 s: red ${played2.red} - blue ${played2.blue}, tips ${played2.tips.red}/${played2.tips.blue}, ` +
+        `${played2.flowers} elements in FLOWERS`,
+    );
+    for (const r of played2.robots) {
+      console.log(`    ${r.id}: ${r.shots === null ? 'no launcher' : `${r.shots} shots`}, ${r.jams} jams`);
+    }
+    if (played2.lineupRows !== 3) {
+      failures.push(`the match panel drew ${played2.lineupRows} line-up rows, expected 3`);
+    }
+    const shooters = played2.robots.filter((r) => r.shots !== null);
+    if (shooters.length && shooters.every((r) => r.shots === 0)) {
+      failures.push('no AI shooter took a single shot in 45 s of MATCH');
+    }
+    await sleep(400);
+    const shotRoster = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const rosterPath = shotPath.replace(/\.png$/, '-biobuzz-match.png');
+    await writeFile(rosterPath, Buffer.from(shotRoster.data, 'base64'));
+    console.log(`  Screenshot: ${rosterPath}`);
+
+    // Back to a solo FIELD, so the teardown check below sees what it expects.
+    await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.config.set('ai.enabled', false);
+      app.sim.disableGame();
+      app.sim.enableGame().start();
+      app.config.set('view.showHud', true);
+      app.config.set('view.showGraphs', true);
+      return app.sim.opponents.length;
+    })()`);
+
     // And that it comes back off cleanly.
     const off = await cdp.evaluate(`(() => {
       const app = globalThis.ftcSim;

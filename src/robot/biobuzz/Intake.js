@@ -30,7 +30,10 @@ export class Intake extends Subsystem {
    *   gearRatio?: number,
    *   rollerRadius?: number,
    *   spinUpTime?: number,
+   *   grabber?: boolean,
+   *   graspSpeed?: number,
    *   canPlace?: boolean,
+   *   placeOnly?: boolean,
    *   placeReach?: number,
    *   placeTolerance?: number,
    *   placeSeconds?: number,
@@ -75,7 +78,31 @@ export class Intake extends Subsystem {
      * element and cannot be tipped away, but filling one means stopping still
      * next to it for a second at a time.
      */
+    /**
+     * A jaw rather than a roller.
+     *
+     * A claw has to close on one element, which means the ROBOT has to be
+     * nearly stopped and pointed at it -- you cannot sweep a pile with a
+     * gripper. Everything else about it is the same interaction, so it is a
+     * flag on the intake rather than a class of its own; what makes a clawbot
+     * play differently is the standing still, and this is where that lives.
+     */
+    this.grabber = opts.grabber ?? false;
+    /** How fast a grabber may be moving and still close on something. */
+    this.graspSpeed = opts.graspSpeed ?? 0.18;
+
     this.canPlace = opts.canPlace ?? true;
+    /**
+     * Never spit onto the tiles -- eject means "place into a FLOWER" and
+     * nothing else.
+     *
+     * For a human, one button that puts the element wherever it can go is the
+     * right control. For an automated routine it is not: an AI that drifts an
+     * inch out of alignment part-way through a lift would drop the element on
+     * the floor and go and fetch another, and a FLOWER robot spent its MATCH
+     * moving POLLEN from a tube onto the tiles.
+     */
+    this.placeOnly = opts.placeOnly ?? false;
     /** How far ahead of the bumper the lift can reach a tube axis. */
     this.placeReach = opts.placeReach ?? 9 * INCH;
     /** How far off the tube axis the ROBOT may be and still drop it in. */
@@ -223,6 +250,9 @@ export class Intake extends Subsystem {
     if (this.full || !this.robot) return;
     let changed = false;
     const { x, y, cos, sin, vx, vy } = this.pose;
+    // A jaw has to be still to close on something. A roller does not, which is
+    // most of why a roller robot cycles faster than a clawbot.
+    if (this.grabber && Math.hypot(vx, vy) > this.graspSpeed) return;
     const mouthX = x + cos * this.robot.halfLength;
     const mouthY = y + sin * this.robot.halfLength;
 
@@ -302,6 +332,7 @@ export class Intake extends Subsystem {
     }
     this._cancelPlace();
 
+    if (this.placeOnly) return;
     if (this._ejectCooldown > 0) return;
     const ball = this.held.shift();
     const { x, y, cos, sin, vx, vy } = this.pose;
@@ -367,6 +398,7 @@ export class Intake extends Subsystem {
       'Intake power': this.power.toFixed(2),
       'Intake current': `${this.current.toFixed(1)} A`,
     };
+    if (this.grabber) out['Intake type'] = 'jaw';
     if (this._placingInto) {
       out['Placing'] = `${(this.placeProgress * 100).toFixed(0)}% into FLOWER`;
     }

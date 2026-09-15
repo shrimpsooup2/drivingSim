@@ -142,7 +142,13 @@ can crash into, slots you have to reverse into blind, and AI robots actively
 getting in your way. Each has gold, silver and bronze par times, and your best
 is saved so you can race yourself and your teammates. Press `R` to run it again.
 
-When you want a real test, try **Match simulation**: two minutes, two opponents,
+You are alone on the field to start with, which is the right way to learn the
+cycle. When you want a real match, open **Settings → The other three robots**
+and turn on *Fill the other three seats*: a partner and two opponents, each
+with a scoring system, a build standard and a driver you pick — or leave them
+all on Random for a different match every time.
+
+For a timed exercise, try **Match simulation** in the drills: two minutes, two opponents,
 and the score is how many cycles you complete — not how fast one lap was.
 
 ### Playing BIOBUZZ
@@ -152,11 +158,17 @@ four FLOWERS on the walls, and all 56 POLLEN and NECTAR staged where they are at
 the start of a real match. Your robot has an intake and a flywheel launcher, and
 the clock runs: 30 seconds of auto, then two minutes of driving.
 
-The controls are the right bumper to intake, `Y` to spin the flywheel up, and
-the right trigger to fire. `M` restarts the match, and `?` brings up the full
-list any time. **The match panel also tells you which one to press next** — it
-reads your own robot and says "hold to intake", "spin the flywheel up", "wait
-for the wheel", or "fire".
+On a controller: the right bumper to intake, `Y` to spin the flywheel up, and
+the right trigger to fire. On the keyboard those are `H`, `Y` and `Space`. `M`
+restarts the match and `?` brings up the full list any time.
+
+**The match panel down the right-hand side tells you which one to press next**
+— it reads your own robot and says "hold to intake", "spin the flywheel up",
+"wait for the wheel", or "fire", naming the key you actually have rather than a
+button you may not.
+
+Press `T` for the trajectory guide if you want to *see* where a shot would go:
+green means it scores, amber means it does not, and the arc shows you why.
 
 Three things to know before your first shot, because they catch everyone:
 

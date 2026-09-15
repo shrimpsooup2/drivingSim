@@ -116,15 +116,16 @@ export class Simulation {
   /**
    * Push match settings into a running game.
    *
-   * Switching ALLIANCE is the one change the game cannot absorb in place --
-   * which HIVE and which GARDEN are yours is wired into every participant and
-   * into the MATCH's entries -- so that one rebuilds, restarting the MATCH.
-   * Everything else applies live.
+   * See `_applyGameSettings` for which changes rebuild and which apply live.
    */
   _applyGameSettings() {
     const game = this.game;
     if (!game) return null;
-    if (game.allianceChanged(this.config)) {
+    // Two changes the game cannot absorb in place: which ALLIANCE is yours
+    // (wired into every participant and into the MATCH's entries) and who else
+    // is on the FIELD (three robots have to be built or taken away). Both
+    // rebuild, restarting the MATCH. Everything else applies live.
+    if (game.needsRebuild(this.config)) {
       this.disableGame();
       return this.enableGame().start();
     }
@@ -181,6 +182,23 @@ export class Simulation {
     this.opponents.push(opponent);
     this.events.emit('opponentsChanged', this.opponents);
     return opponent;
+  }
+
+  /**
+   * Drop the opponents matching `predicate`, leaving the rest.
+   *
+   * The game needs this rather than `clearOpponents`: it created three robots
+   * of its own and has to take exactly those back off, because opponents the
+   * user added by hand or a drill placed are not its to remove.
+   * @param {(opponent: Opponent) => boolean} predicate
+   */
+  removeOpponents(predicate) {
+    const kept = this.opponents.filter((o) => !predicate(o));
+    if (kept.length === this.opponents.length) return this.opponents;
+    this.opponents.length = 0;
+    this.opponents.push(...kept);
+    this.events.emit('opponentsChanged', this.opponents);
+    return this.opponents;
   }
 
   clearOpponents() {
@@ -294,6 +312,10 @@ export class Simulation {
       heading: this.robot.body.rotation.radians,
       target,
       fieldHalfSize: this.field.halfSize,
+      // With BIOBUZZ running an opponent plays the game rather than the
+      // player: it collects, it scores, it tips. Without it the same robot
+      // falls back to the drill behaviour it was created with.
+      game: this.game,
     };
     for (const opponent of this.opponents) opponent.updateControl(dt, world);
   }

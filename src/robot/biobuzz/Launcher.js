@@ -56,10 +56,21 @@ export class Launcher extends Subsystem {
    *   hoodScatter?: number,
    *   rpmScatter?: number,
    *   random?: () => number,
+   *   kind?: string,
    * }} [opts]
    */
   constructor(opts = {}) {
     super({ name: opts.name ?? 'launcher' });
+
+    /**
+     * Which launch system this is, for the UI. A single flywheel runs a ball
+     * against a fixed backplate and spends part of the contact spinning it up,
+     * so only about half the surface speed reaches it; a pair of counter-
+     * rotating wheels grips it from both sides and gets most of the way. That
+     * is the `transferEfficiency` difference, and it is the whole reason a
+     * two-wheel shooter needs less RPM for the same range.
+     */
+    this.kind = opts.kind ?? 'flywheel';
 
     this.motor = opts.motor ?? new DcMotor(MOTOR_PRESETS.gobilda5203);
     /** Two motors on one shaft is the usual answer to recovery time. */
@@ -211,6 +222,11 @@ export class Launcher extends Subsystem {
   /** Exit speed for a POLLEN, the common case. */
   get exitSpeed() {
     return this.exitSpeedFor(POLLEN_MASS);
+  }
+
+  /** A flywheel has to be brought up to speed before it will do anything. */
+  get needsSpinUp() {
+    return true;
   }
 
   /** True when the wheel is close enough to target to shoot. */
@@ -392,12 +408,16 @@ export class Launcher extends Subsystem {
    * @param {{x:number,y:number,z:number}} target
    * @param {number} [angle] hood angle to evaluate; defaults to the current one
    * @param {number} [mass] mass of the element to be shot; POLLEN by default
+   * @param {{x:number,y:number}|null} [origin] evaluate from somewhere other
+   *   than where the ROBOT is standing. The AI needs this to choose a place to
+   *   stand: "would a shot work from over there" cannot be answered by moving
+   *   there and finding out.
    * @returns {{range:number, rise:number, speed:number, rpm:number,
    *            angle:number, descending:boolean, apexRange:number}|null}
    */
-  solutionFor(target, angle = this.hoodAngle, mass = POLLEN_MASS) {
-    if (!this.robot) return null;
-    const { x, y } = this.pose;
+  solutionFor(target, angle = this.hoodAngle, mass = POLLEN_MASS, origin = null) {
+    if (!origin && !this.robot) return null;
+    const { x, y } = origin ?? this.pose;
     const range = Math.max(
       0.01,
       Math.hypot(target.x - x, target.y - y) - this.exitOffset,
@@ -431,11 +451,11 @@ export class Launcher extends Subsystem {
    * @returns {ReturnType<Launcher['solutionFor']>|null} null when the shot
    *   cannot be made from here at all.
    */
-  aimFor(target, mass = POLLEN_MASS) {
+  aimFor(target, mass = POLLEN_MASS, origin = null) {
     const steps = 60;
     for (let i = 0; i <= steps; i++) {
       const angle = this.minHoodAngle + ((this.maxHoodAngle - this.minHoodAngle) * i) / steps;
-      const solution = this.solutionFor(target, angle, mass);
+      const solution = this.solutionFor(target, angle, mass, origin);
       if (solution && solution.descending && solution.rpm <= this.maxRpm) return solution;
     }
     return null;

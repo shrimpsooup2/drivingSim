@@ -18,7 +18,21 @@ import { clamp, wrapAngle } from '../math/MathUtil.js';
  * @property {number} fieldHalfSize
  * @property {number} time
  *
- * @typedef {{point: Vec2, faceTarget?: boolean, aggression?: number}} AiIntent
+ * @property {number} [selfSpeed]     how fast it is going, m/s
+ * @property {number} [selfOmega]     and how fast it is turning, rad/s
+ * @property {object} [game]           the BIOBUZZ game, when one is running
+ * @property {object} [agent]          its own mechanisms; see `gamePlan.js`
+ *
+ * @typedef {object} AiIntent
+ * @property {Vec2} point         where it wants to be
+ * @property {boolean} [faceTarget] point at `point` while driving to it
+ * @property {number} [faceHeading] hold this absolute heading instead, which is
+ *   what aiming needs: a shot leaves along the ROBOT's nose, not along its path
+ * @property {boolean} [arrive]   stop on the point rather than pushing through
+ * @property {number} [aggression]
+ * @property {-1|0|1} [intake]    run the intake in, out, or not at all
+ * @property {boolean} [spin]     bring the launcher up to speed
+ * @property {boolean} [fire]     take the shot now
  */
 
 /**
@@ -112,30 +126,73 @@ export function intentToCommand(intent, ctx, skill, canStrafe, noise) {
   let strafe = dx * sin + dy * cos;
 
   // Ease off close in, so it settles instead of oscillating on the spot.
-  const gain = 2.4;
-  const cap = skill.maxPower * clamp(distance * 1.8, 0.25, 1);
-  forward = clamp(forward * gain, -cap, cap);
-  strafe = canStrafe ? clamp(strafe * gain, -cap, cap) : 0;
+  // `arrive` is for a robot that means to *stand* somewhere -- lined up on a
+  // CELL, or beside a FLOWER with a lift running. Without it the approach caps
+  // out at a quarter power and keeps nudging, which is fine for a blocker
+  // leaning on you and useless for anything that has to hold still and aim.
+  const gain = intent.arrive ? 3.2 : 2.4;
+  const floor = intent.arrive ? 0 : 0.25;
+  const cap = skill.maxPower * clamp(distance * 1.8 * (intent.aggression ?? 1), floor, 1);
+
+  // Scale the pair together rather than clamping each axis.
+  //
+  // Clamping them separately loses the direction: past about 300 mm both axes
+  // saturate at the cap and the robot drives at 45 degrees to wherever it was
+  // actually going, whatever the bearing. An opponent crossing the FIELD
+  // crabbed sideways at 0.15 m/s and took twenty seconds to reach a shooting
+  // spot two metres away.
+  const magnitude = Math.hypot(forward, canStrafe ? strafe : 0) || 1;
+  const wanted = Math.min(cap, magnitude * gain);
+  forward = (forward / magnitude) * wanted;
+  strafe = canStrafe ? (strafe / magnitude) * wanted : 0;
 
   let turn = 0;
   const bearing = Math.atan2(dy, dx);
-  if (!canStrafe) {
+  // Proportional on heading error, damped on the rate. Without the damping term
+  // it is a pure P loop at the control rate against a chassis with plenty of
+  // rotational authority, so it overshoots, comes back, overshoots again -- and
+  // because translation and rotation share the same actuator budget, a robot
+  // oscillating about its heading also stops going anywhere. One crossed the
+  // FIELD at 0.05 m/s doing exactly this.
+  const damping = (ctx.selfOmega ?? 0) * 0.22;
+  const aim = (error, kP, cap) => clamp(error * kP - damping, -cap, cap);
+  if (intent.faceHeading !== undefined) {
+    // Holding an absolute heading, because a shot leaves along the nose.
+    const error = wrapAngle(intent.faceHeading - ctx.selfHeading);
+    turn = aim(error, 2.2, skill.maxPower);
+    // A tank has to choose between pointing and going; pointing wins, because
+    // it cannot shoot sideways at all.
+    if (!canStrafe && Math.abs(error) > 0.35) forward = 0;
+  } else if (!canStrafe) {
     // A tank opponent has to point where it is going.
     const error = wrapAngle(bearing - ctx.selfHeading);
-    turn = clamp(error * 1.8, -skill.maxPower, skill.maxPower);
+    turn = aim(error, 1.8, skill.maxPower);
     if (Math.abs(error) > 1.0) forward = 0;
   } else if (intent.faceTarget) {
     const error = wrapAngle(bearing - ctx.selfHeading);
-    turn = clamp(error * 1.5, -skill.maxPower * 0.8, skill.maxPower * 0.8);
+    // Deliberately gentle: a mecanum does not need to point where it is going,
+    // so facing the objective is a preference and must not cost it the drive.
+    turn = aim(error, 1.1, skill.maxPower * 0.45);
   }
 
-  // Skill noise: a rookie's commands are visibly imprecise.
-  forward += noise * skill.aimNoise;
-  strafe += noise * skill.aimNoise * 0.6;
+  // Skill noise: a rookie's commands are visibly imprecise. Held back while
+  // arriving, or a rookie could never line up on anything at all -- their
+  // imprecision should cost them time, not make a mechanism unusable.
+  const imprecision = intent.arrive ? skill.aimNoise * 0.35 : skill.aimNoise;
+  forward += noise * imprecision;
+  strafe += noise * imprecision * 0.6;
+
+  // Share the available authority between driving and turning the way a real
+  // op-mode does. `driveNormalized` would otherwise desaturate the wheels for
+  // us, but it does that *after* the three terms have been mixed, so a
+  // saturated turn eats most of the translation and the robot spends its match
+  // spinning slowly across the tiles.
+  const sum = Math.abs(forward) + Math.abs(strafe) + Math.abs(turn);
+  const scale = sum > 1 ? 1 / sum : 1;
 
   return {
-    forward: clamp(forward, -1, 1),
-    strafe: clamp(strafe, -1, 1),
-    turn: clamp(turn, -1, 1),
+    forward: clamp(forward * scale, -1, 1),
+    strafe: clamp(strafe * scale, -1, 1),
+    turn: clamp(turn * scale, -1, 1),
   };
 }

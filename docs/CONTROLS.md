@@ -23,12 +23,24 @@ These match what most FTC teams use, so muscle memory built here transfers.
 | Left stick | Drive and strafe |
 | Right stick X | Rotate |
 | Left trigger | Precision mode — analogue, so partial pressure gives partial slowdown |
-| Right trigger | Bypass the acceleration ramp for a burst of full power |
-| Y | Toggle field centric |
-| B | Reset the IMU heading to the current pose |
+| X | Toggle field centric |
+| A | Reset the IMU heading to the current pose |
+| B | Burst: bypass the acceleration ramp for full power |
 | Back | Reset the robot to its starting position |
 
+The driver aids keep off **Y**, the bumpers and the right trigger, because
+those belong to the game. That was not always true and the collisions were
+invisible rather than loud: sharing the right trigger between *fire* and
+*burst* meant every shot came with a wheelspin, and sharing **Y** between
+*flywheel* and *field centric* meant field centric toggled twice per press and
+looked dead.
+
 ### Keyboard
+
+One key, one job. Each pad-emulation key is the single source of truth in
+`src/input/KeyboardSource.js`, and registering an app shortcut on one of them
+throws at startup — because when a key does two things, it does the second one
+silently.
 
 | Key | Action |
 | --- | --- |
@@ -36,33 +48,77 @@ These match what most FTC teams use, so muscle memory built here transfers.
 | `A` / `D` | Strafe left / right |
 | `Q` / `E` | Rotate left / right |
 | Arrow keys | Drive and rotate (alternative) |
-| `Shift` | Precision mode |
-| `Space` | Boost / full power |
+| `Shift` | Precision mode (left trigger) |
+| `H` | Run the intake (right bumper) |
+| `U` | Eject / place in a FLOWER (left bumper) |
+| `Y` | Spin the flywheel up or down |
+| `Space` | **Fire** (right trigger) |
+| `I` / `K` | Trim the hood or release angle (d-pad up/down) |
+| `J` / `L` | Trim the target RPM (d-pad left/right) |
+| `V` | Burst: bypass the acceleration ramp (B) |
+| `X` | Toggle field centric |
+| `Z` | Reset the IMU heading |
+| `Backspace` | Reset the robot to its start |
 | `R` | Restart the drill, or reset the robot |
 | `N` | Driving drills |
-| `G` | Toggle the BIOBUZZ game (on by default) |
-| `M` | Restart the match from setup |
-| `F` | Toggle field centric |
-| `H` | Reset IMU heading |
+| `T` | Shot trajectory guide |
 | `C` | Cycle camera |
 | `B` | Reset the camera framing |
+| `M` | Restart the match from setup |
+| `G` | Toggle the BIOBUZZ game (on by default) |
 | `P` | Pause |
 | `Tab` | Show / hide settings |
 | `?` | Help |
 
+The right hand gets the whole right side of a controller: `I K J L` is the
+d-pad, `H` the right bumper (home row, index finger — it is the key you hold
+longest), `U` the left bumper, `Y` the Y button. `O` is deliberately unused:
+in the panel's monospace font, "O hold to intake" reads as a zero.
+
+The on-screen prompt names whichever one you are actually holding, so it reads
+`H hold to intake` on a keyboard and `RIGHT BUMPER hold to intake` on a pad.
+
 ### Playing BIOBUZZ
 
 BIOBUZZ is what the simulator opens on, and the robot comes with an intake and
-a flywheel launcher:
+a launcher:
 
 | Control | Action |
 | --- | --- |
 | Right bumper | Run the intake |
-| Left bumper | Eject the front element onto the tiles |
-| `Y` | Toggle the flywheel |
+| Left bumper | Place into a FLOWER if lined up, otherwise eject onto the tiles |
+| `Y` | Toggle the flywheel (a catapult has nothing to spin, so it does nothing) |
 | Right trigger | Fire |
-| D-pad up / down | Trim the hood angle |
-| D-pad left / right | Trim the target RPM |
+| D-pad up / down | Trim the hood or release angle |
+| D-pad left / right | Trim the target RPM (nothing to trim on a thrower) |
+
+**Your launch system is a setting.** A CELL is 53.5 in up and has to be
+launched into, and how you launch changes what you are practising more than
+almost anything else on the robot — so *Match → Your launch system* offers a
+single flywheel, twin flywheels, a heavy flywheel, a catapult or a linear
+puncher. A flywheel makes you wait for the wheel and punishes firing early; a
+catapult has no early to fire at, but a fixed reset and a hard maximum range;
+a puncher only reaches from one narrow band. Drilling the wrong one is worse
+than not drilling.
+
+**FLOWERS take a lift, not a shot.** G419.A only lets a robot "enter POLLEN and
+NECTAR into the top of a FLOWER", and the top ring is 21.25 in up with 0.6 in
+of clearance for a POLLEN — you cannot shoot into it. Line the front of the
+robot up with a tube, hold the eject, and the lift cycle takes most of a
+second. Move off part-way and the cycle aborts with the element still held.
+
+### The trajectory guide (`T`)
+
+Draws the arc a shot would actually fly from where you are standing, green when
+it scores and amber when it does not, with a ground shadow and a marker where it
+crosses the CELL's opening. The ball world integrates flight under gravity
+alone, so the launcher's closed form *is* the trajectory rather than an
+approximation of it, and the hit test is the HIVE's own — the colour is a
+prediction, not a hint.
+
+*Overlays → Trajectory shows → Both* also draws the solved shot as a dashed
+line: the gap between the arc you would get and the arc you want is exactly
+what firing early and shooting on the move cost you.
 
 The match panel shows the clock, the score split by achievement, and the
 shooter's recovery bar. Watch that bar: the shot leaves at whatever speed the

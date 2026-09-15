@@ -105,10 +105,26 @@ robot. `Import` loads it back.
   and speed-limited approaches. None are game-specific; they train the skills
   underneath any game. Medal par times, and best times kept per drivetrain,
   because a mecanum time says nothing about the same driver on tank.
-- **AI opponents to out-manoeuvre** — four builds from an 8.5 kg Scout to a
-  21 kg Brick, three skill levels, and five behaviours including a blocker that
-  denies your route rather than chasing you. Each is a *fully simulated robot*,
-  so it accelerates, loses traction and gets shoved like the real thing.
+- **The other three robots in the match, built the way you want them.** A
+  partner and two opponents, each chosen along three separate axes: the
+  *scoring system* (single flywheel, twin flywheel, heavy flywheel, catapult,
+  three-ball lobber, linear puncher, a wide intake with a lift, a jaw on an
+  arm, a heavy defender, a stock pushbot), the *build quality* (thrown
+  together, competition ready, worlds calibre) and the *driver* (rookie,
+  competent, veteran). Any of them can be Random, so it is a different match
+  every time. The axes are separate because they are separate at a real event:
+  a rookie on an excellent robot and a veteran on a rough one are different
+  problems, and you meet both.
+
+  Each one drives a *fully simulated robot* through the same subsystems you do
+  — same motor curves, same battery, same traction, same `Launcher.fire()`. No
+  shortcuts into the ball world, so beating one is a driving result rather than
+  a difficulty setting. They also play the actual game: the field empties while
+  you are busy, your partner helps or does not, and the opposing HIVE tips
+  whether or not you noticed.
+- **AI opponents for the drills** — four chassis builds from an 8.5 kg Scout to
+  a 21 kg Brick and five behaviours, including a blocker that denies your route
+  rather than chasing you.
 - **Live telemetry**: speed, bus voltage, current draw, per-wheel grip usage and
   slip, with strip charts.
 - **Debug overlays**: per-wheel force vectors coloured by how much grip is left,
@@ -181,7 +197,7 @@ src/
     biobuzz/   roller intake, flywheel launcher
   field/       FTC field, FieldElement extension point
     biobuzz/   HIVE, FLOWER, zones, field assembly, match and scoring
-  ai/          opponent robots: builds, skill levels, behaviours
+  ai/          the other three robots: scoring systems, builds, skill, plans
   challenges/  timed driving drills: geometry, state machine, records
   input/       Gamepad API with FTC semantics, keyboard, latency model
   teleop/      OpMode extension point, drive schemes, driver-feel processing
@@ -189,7 +205,7 @@ src/
   ui/          schema-driven settings panel, HUD, telemetry graphs
   config/      parameter schema, config store, motor and robot presets
   app/         simulation loop, application wiring, BIOBUZZ coordinator
-test/          228 tests: unit, physics validation, drills, AI, the game, end-to-end
+test/          281 tests: unit, physics validation, drills, AI, the game, end-to-end
 tools/         static server, headless browser check
 ```
 

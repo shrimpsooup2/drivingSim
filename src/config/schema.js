@@ -1,6 +1,13 @@
 import { DEG, INCH } from '../math/MathUtil.js';
 import { MOTOR_PRESETS, DEFAULT_MOTOR_ID, GOBILDA_GEARBOXES } from './presets/motors.js';
 import { LAYOUT_LABELS } from '../drivetrain/layouts.js';
+import {
+  ROSTER_SLOTS,
+  ARCHETYPE_OPTIONS,
+  QUALITY_OPTIONS,
+  SKILL_OPTIONS,
+} from '../ai/roster.js';
+import { LAUNCH_SYSTEM_OPTIONS } from '../robot/biobuzz/launchSystems.js';
 
 /**
  * The single source of truth for every tunable in the simulator.
@@ -49,6 +56,52 @@ import { LAYOUT_LABELS } from '../drivetrain/layouts.js';
 const motorOptions = Object.values(MOTOR_PRESETS).map((m) => ({ value: m.id, label: m.name }));
 const gearboxOptions = GOBILDA_GEARBOXES.map((g) => ({ value: g.ratio, label: g.label }));
 const layoutOptions = Object.entries(LAYOUT_LABELS).map(([value, label]) => ({ value, label }));
+
+/**
+ * Parameters for one AI slot.
+ *
+ * Generated rather than written out three times, so the partner and the two
+ * opponents cannot drift apart -- and because they genuinely are the same
+ * question asked three times. A partner who cannot shoot is every bit as much
+ * a thing to practise around as an opponent who can; arguably more, since you
+ * cannot push your partner out of the way.
+ */
+function rosterParams(slot) {
+  const { id, label, help } = slot;
+  return [
+    {
+      path: `ai.${id}.enabled`,
+      label: `${label}: on the field`,
+      type: 'boolean',
+      default: true,
+      help,
+    },
+    {
+      path: `ai.${id}.archetype`,
+      label: `${label}: robot`,
+      type: 'enum',
+      options: ARCHETYPE_OPTIONS,
+      default: 'random',
+      help: 'What the machine is, and specifically what it can score with. A CELL has to be LAUNCHED into and a FLOWER has to be placed into by hand (G419), so a robot built for one cannot do the other -- and a pushbot does neither.',
+    },
+    {
+      path: `ai.${id}.quality`,
+      label: `${label}: build`,
+      type: 'enum',
+      options: QUALITY_OPTIONS,
+      default: 'random',
+      help: 'How well it is built: motors on the flywheel, how repeatable the hood is, how often the intake jams. The same robot at two build standards scores twice as much.',
+    },
+    {
+      path: `ai.${id}.skill`,
+      label: `${label}: driver`,
+      type: 'enum',
+      options: SKILL_OPTIONS,
+      default: 'random',
+      help: 'The human: reaction time, precision, how much power they dare use, how often they commit to something unhelpful.',
+    },
+  ];
+}
 
 /** @type {ParamGroup[]} */
 export const SCHEMA = [
@@ -1297,6 +1350,21 @@ export const SCHEMA = [
         help: 'G410: NECTAR may not enter a FLOWER until this much time is left, and at that point an ALLIANCE may enter all of its remaining NECTAR. Set it to the whole TELEOP length to have the FLOWERS open from the start; set it to 0 to keep them shut.',
       },
       {
+        path: 'match.launchSystem',
+        label: 'Your launch system',
+        type: 'enum',
+        options: LAUNCH_SYSTEM_OPTIONS,
+        default: 'flywheel',
+        help: 'How your ROBOT gets an element into a CELL. This changes what you are practising, not just how well it works: a flywheel makes you wait for the wheel and punishes firing early, a catapult has no early to fire at but a fixed reset and a hard maximum range, and a puncher only reaches from close in. Takes effect on the next MATCH (M).',
+      },
+      {
+        path: 'match.aiDriveTeam',
+        label: 'Other side enters its NECTAR',
+        type: 'boolean',
+        default: true,
+        help: 'Entering NECTAR is a human action, so somebody has to do it for the opposing ALLIANCE or a third of the point table never happens: no NECTAR on the FIELD means no FLOWER can be owned, because ownership is the top-most NECTAR and POLLEN confers none. Your own ALLIANCE\'s NECTAR stays yours to enter -- when to hand it in is a real decision, and handing it in early is a G410 violation.',
+      },
+      {
         path: 'match.moveTolerance',
         label: 'Shot drift tolerance',
         type: 'number',
@@ -1308,6 +1376,23 @@ export const SCHEMA = [
         advanced: true,
         help: 'How fast the ROBOT may be moving before the panel tells you to stop before shooting. It does not change the physics -- a shot always inherits the ROBOT\'s velocity -- only the point at which the prompt starts warning you.',
       },
+    ],
+  },
+
+  {
+    id: 'ai',
+    label: 'The other three robots',
+    description:
+      'A MATCH is four ROBOTS: you, a partner, and two opponents. Each of the other three is a real simulated robot -- same physics, same motors, same battery, same mechanisms, driven through the same subsystem calls you are -- so beating one is a driving result and not a difficulty setting. Pick what each one is, how well it is built and who is driving it, or leave any of it on Random for a different MATCH every time.',
+    params: [
+      {
+        path: 'ai.enabled',
+        label: 'Fill the other three seats',
+        type: 'boolean',
+        default: false,
+        help: 'Off gives you an empty FIELD to learn the cycle on. On is a real MATCH, and much harder -- there are three other robots in the way and the POLLEN runs out.',
+      },
+      ...ROSTER_SLOTS.flatMap(rosterParams),
     ],
   },
 

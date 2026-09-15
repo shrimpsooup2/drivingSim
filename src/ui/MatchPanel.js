@@ -61,6 +61,11 @@ export class MatchPanel {
     this.prompt = el('div', 'match-prompt');
     this.element.append(this.prompt);
 
+    /** The other three ROBOTS: what they are and whose side they are on. */
+    this.lineup = el('div', 'match-lineup');
+    this.element.append(this.lineup);
+    this._lineupKey = '';
+
     this.notes = el('div', 'match-notes');
     this.element.append(this.notes);
 
@@ -106,9 +111,14 @@ export class MatchPanel {
 
     const s = t.shooter;
     const solution = t.solution;
-    this.shooterText.textContent = s.ready
-      ? `SHOOTER READY  ${Math.round(s.rpm)} rpm`
-      : `spinning up  ${Math.round(s.rpm)} / ${Math.round(s.target)} rpm`;
+    // A thrower has no RPM to report; what it has is a reset to wait out.
+    this.shooterText.textContent = t.needsSpinUp === false
+      ? s.ready
+        ? `${(t.launchSystem ?? 'thrower').toUpperCase()} LOADED`
+        : `winding  ${Math.round(s.recovery * 100)}%`
+      : s.ready
+        ? `SHOOTER READY  ${Math.round(s.rpm)} rpm`
+        : `spinning up  ${Math.round(s.rpm)} / ${Math.round(s.target)} rpm`;
     this.shooterText.classList.toggle('ready', s.ready);
     this.shooterBar.style.width = `${(s.recovery * 100).toFixed(1)}%`;
     this.shooterBar.style.background = s.ready ? '#47d18a' : '#f2a33c';
@@ -118,9 +128,27 @@ export class MatchPanel {
     this.prompt.textContent = step.text;
     this.prompt.classList.toggle('urgent', step.urgent);
 
+    // Rebuilt only when the line-up actually changes, which is at the start of
+    // a MATCH -- not sixty times a second.
+    const key = t.lineup.map((r) => `${r.slot}:${r.name}:${r.quality}:${r.skill}`).join('|');
+    if (key !== this._lineupKey) {
+      this._lineupKey = key;
+      this.lineup.innerHTML = '';
+      for (const robot of t.lineup) {
+        const row = el('div', `match-robot ${robot.ally ? 'ally' : 'foe'}`);
+        row.append(el('span', 'match-robot-name', robot.name));
+        const detail = [robot.quality, robot.skill].filter(Boolean).join(', ');
+        if (detail) row.append(el('span', 'match-robot-detail', detail));
+        row.title = [robot.ally ? 'Your partner' : 'Opponent', robot.system]
+          .filter(Boolean)
+          .join(' - ');
+        this.lineup.append(row);
+      }
+    }
+
     const notes = [];
     notes.push(`held ${t.held}/${t.capacity}`);
-    notes.push(`hood ${s.hoodDegrees.toFixed(0)} deg`);
+    notes.push(`${t.needsSpinUp === false ? 'release' : 'hood'} ${s.hoodDegrees.toFixed(0)} deg`);
     if (solution) {
       notes.push(`shot: ${solution.rpm.toFixed(0)} rpm at ${((solution.angle * 180) / Math.PI).toFixed(0)} deg`);
     } else {
@@ -174,7 +202,10 @@ export function nextStep(t, source = 'gamepad') {
   const name = (control) => controlLabel(control, source);
   if (t.phase === 'ended') return { text: 'MATCH OVER', urgent: false };
   if (t.held === 0) return { text: `${name('right_bumper')}  hold to intake`, urgent: false };
-  if (!t.shooter.spinning) {
+  // A catapult has nothing to spin up, so telling anyone to spin it would be
+  // worse than saying nothing: they would go looking for a control that has no
+  // effect on their robot.
+  if (t.needsSpinUp !== false && !t.shooter.spinning) {
     return { text: `${name('y')}  spin the flywheel up`, urgent: false };
   }
   if (!t.solution) {

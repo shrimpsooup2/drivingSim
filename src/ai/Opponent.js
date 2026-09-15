@@ -3,6 +3,15 @@ import { Vec2 } from '../math/Vec2.js';
 import { DelayLine } from '../math/filters.js';
 import { BEHAVIORS, intentToCommand } from './behaviors.js';
 import { PROFILE_BY_ID, SKILL_BY_ID } from './profiles.js';
+import {
+  ARCHETYPE_BY_ID,
+  QUALITY_BY_ID,
+  chassisConfig,
+  intakeOptions,
+  launcherOptions,
+  throwerOptions,
+} from './archetypes.js';
+import { biobuzzPlan } from './gamePlan.js';
 
 /**
  * An AI-driven opponent robot.
@@ -16,11 +25,23 @@ import { PROFILE_BY_ID, SKILL_BY_ID } from './profiles.js';
  */
 export class Opponent {
   /**
+   * Two ways to specify the machine, because two different callers need them.
+   *
+   * `profileId` is the drills' way: a chassis build and nothing else, because a
+   * manoeuvring exercise wants a shape to get around, not a robot with a
+   * scoring plan. `archetypeId` plus `qualityId` is the match roster's way: a
+   * scoring system, a build standard, and a role in the game.
+   *
+   * An archetype wins when both are given.
+   *
    * @param {{
    *   id?: string,
-   *   profileId: string,
+   *   profileId?: string,
+   *   archetypeId?: string,
+   *   qualityId?: string,
+   *   alliance?: 'red'|'blue',
    *   skillId: string,
-   *   behavior: keyof typeof BEHAVIORS,
+   *   behavior?: keyof typeof BEHAVIORS,
    *   start: {x:number, y:number, heading:number},
    *   waypoints?: Vec2[],
    *   baseConfig: import('../config/schema.js').SimConfig,
@@ -34,16 +55,48 @@ export class Opponent {
      * regression-test, because every run differs.
      */
     this.random = opts.random ?? Math.random;
-    this.profile = PROFILE_BY_ID[opts.profileId] ?? PROFILE_BY_ID.rival;
     this.skill = SKILL_BY_ID[opts.skillId] ?? SKILL_BY_ID.competent;
-    this.behaviorName = opts.behavior;
-    this.id = opts.id ?? `${this.profile.id}-${this.behaviorName}`;
+    this.behaviorName = opts.behavior ?? 'chaser';
+
+    /** @type {import('./archetypes.js').RobotArchetype|null} */
+    this.archetype = opts.archetypeId ? ARCHETYPE_BY_ID[opts.archetypeId] ?? null : null;
+    /** @type {import('./archetypes.js').BuildQuality|null} */
+    this.quality = this.archetype
+      ? QUALITY_BY_ID[opts.qualityId] ?? QUALITY_BY_ID.solid
+      : null;
+    this.profile = this.archetype ? null : PROFILE_BY_ID[opts.profileId] ?? PROFILE_BY_ID.rival;
+
+    /** Which side it is on, when it is playing a MATCH rather than a drill. */
+    this.alliance = opts.alliance ?? null;
+
+    this.id = opts.id ?? `${(this.archetype ?? this.profile).id}-${this.behaviorName}`;
     this.start = opts.start;
     this.state = { waypoints: opts.waypoints ?? [], waypointIndex: 0 };
 
-    this.config = buildConfig(opts.baseConfig, this.profile.config);
+    const overrides = this.archetype
+      ? chassisConfig(this.archetype, this.quality)
+      : this.profile.config;
+    this.config = buildConfig(opts.baseConfig, overrides);
     this.robot = new Robot(this.config);
     this.robot.reset(this.start.x, this.start.y, this.start.heading);
+
+    /**
+     * Mechanisms, attached by `BiobuzzGame` when a MATCH starts -- the drills
+     * run on a bare field and an opponent there has none.
+     * @type {import('../robot/biobuzz/Intake.js').Intake|null}
+     */
+    this.intake = null;
+    /** @type {import('../robot/biobuzz/Launcher.js').Launcher|import('../robot/biobuzz/Thrower.js').Thrower|null} */
+    this.launcher = null;
+    /** Set while a jam is costing it a cycle. */
+    this._jammedUntil = 0;
+    /** How many times its intake has seized this MATCH. */
+    this.jams = 0;
+
+    /** Wedged-detector state. See `_avoidWedging`. */
+    this._stuckTimer = 0;
+    this._detourUntil = 0;
+    this._detourSign = 1;
 
     // The opponent only ever sees a delayed picture of the player.
     this.perception = new DelayLine(this.skill.reactionSeconds);
@@ -55,7 +108,63 @@ export class Opponent {
   }
 
   get color() {
-    return this.profile.color;
+    return (this.archetype ?? this.profile).color;
+  }
+
+  /** What this robot is, for the roster UI. */
+  get label() {
+    if (!this.archetype) return this.profile.name;
+    return `${this.archetype.name} (${this.quality.name}, ${this.skill.name})`;
+  }
+
+  /** What it tries to do in a MATCH. */
+  get role() {
+    return this.archetype?.role ?? 'defender';
+  }
+
+  /**
+   * Build the mechanisms this archetype has and hang them on the robot.
+   *
+   * Called by `BiobuzzGame`, which then wires them to the ball world -- the AI
+   * gets exactly the subsystems the player gets, driven through exactly the
+   * same methods. It has no way to score that the player does not have.
+   *
+   * @param {{Intake: any, Launcher: any, Thrower: any}} classes injected so the
+   *   AI layer does not have to import the game's mechanisms and stay loadable
+   *   without them
+   */
+  buildMechanisms(classes) {
+    if (!this.archetype) return { intake: null, launcher: null };
+    const random = this.random;
+
+    const intakeOpts = intakeOptions(this.archetype, this.quality);
+    if (intakeOpts && !this.intake) {
+      this.intake = this.robot.addSubsystem(new classes.Intake(intakeOpts));
+    }
+
+    if (!this.launcher) {
+      const flywheel = launcherOptions(this.archetype, this.quality);
+      const thrower = throwerOptions(this.archetype, this.quality);
+      if (flywheel) {
+        this.launcher = this.robot.addSubsystem(new classes.Launcher({ ...flywheel, random }));
+      } else if (thrower) {
+        this.launcher = this.robot.addSubsystem(new classes.Thrower({ ...thrower, random }));
+      }
+    }
+    if (this.launcher) this.launcher.intake = this.intake;
+    return { intake: this.intake, launcher: this.launcher };
+  }
+
+  /** Take the mechanisms back off, so a drill gets a bare robot again. */
+  removeMechanisms() {
+    if (!this.intake && !this.launcher) return this;
+    this.robot.subsystems = this.robot.subsystems.filter(
+      (s) => s !== this.intake && s !== this.launcher,
+    );
+    this.intake = null;
+    this.launcher = null;
+    this.robot.updateMassProperties();
+    return this;
   }
 
   get halfLength() {
@@ -77,7 +186,10 @@ export class Opponent {
    * @param {boolean} [rebuild]
    */
   applyBaseConfig(baseConfig, rebuild = true) {
-    this.config = buildConfig(baseConfig, this.profile.config);
+    const overrides = this.archetype
+      ? chassisConfig(this.archetype, this.quality)
+      : this.profile.config;
+    this.config = buildConfig(baseConfig, overrides);
     this.robot.applySettings(this.config, rebuild);
   }
 
@@ -87,8 +199,14 @@ export class Opponent {
     this._command = { forward: 0, strafe: 0, turn: 0 };
     this._replanTimer = 0;
     this._mistakeUntil = 0;
+    this._jammedUntil = 0;
+    this._stuckTimer = 0;
+    this._detourUntil = 0;
+    this.jams = 0;
     this.time = 0;
     this.state.waypointIndex = 0;
+    this.state.phase = undefined;
+    this.state.shootingSpot = undefined;
   }
 
   /**
@@ -117,6 +235,21 @@ export class Opponent {
       }
     }
 
+    // And a worse *robot* jams. That is the build, not the driver: an intake
+    // that seizes on a POLLEN costs a cycle however well it is being driven.
+    //
+    // Rolled per second of elapsed time, not per re-plan. Per re-plan it was
+    // scaled by the *driver's* skill, because a veteran re-plans at 12 Hz and a
+    // rookie at 2.5 -- so a rough robot with a good driver jammed about once a
+    // second and never scored at all, while the same robot with a poor driver
+    // was mechanically reliable. Exactly backwards, and it made every rough
+    // build take zero shots in a two-minute MATCH.
+    const perMinute = this.quality?.jamsPerMinute ?? 0;
+    if (perMinute > 0 && !this.jammed && this.random() < (perMinute / 60) * dt) {
+      this._jammedUntil = this.time + 0.5 + this.random() * 1.2;
+      this.jams += 1;
+    }
+
     const lead = this.skill.prediction;
     const predicted = new Vec2(seen.x + seen.vx * lead, seen.y + seen.vy * lead);
 
@@ -127,12 +260,21 @@ export class Opponent {
       playerTarget: world.target,
       selfPosition: new Vec2(this.robot.body.position.x, this.robot.body.position.y),
       selfHeading: this.robot.body.rotation.radians,
+      selfSpeed: this.robot.body.speed,
+      selfOmega: this.robot.body.angularVelocity,
       fieldHalfSize: world.fieldHalfSize,
       time: this.time,
+      game: world.game ?? null,
+      agent: this.agentView,
     };
 
+    // With a MATCH running the robot plays the game; on a bare field it falls
+    // back to the drill behaviour it was created with. Both go through the same
+    // intent, so skill and imprecision apply the same way to either.
+    const planned = this.jammed ? null : biobuzzPlan(ctx, this.state);
     const behavior = BEHAVIORS[this.behaviorName] ?? BEHAVIORS.chaser;
-    const intent = behavior(ctx, this.state);
+    const intent = planned ?? behavior(ctx, this.state);
+    this._avoidWedging(dt, intent, ctx);
 
     if (this.time < this._mistakeUntil) {
       // Mid-mistake: drive somewhere unhelpful rather than freezing, because a
@@ -156,7 +298,122 @@ export class Opponent {
       this._command.strafe,
       this._command.turn,
     );
+    this._applyMechanisms(intent);
+    // No gamepad: the subsystems are driven by the intent above, not by a
+    // controller, and passing one would have the intake read buttons that are
+    // never pressed and switch itself off again every cycle.
     this.robot.updateControl(dt);
+  }
+
+  /**
+   * Notice when it is wedged and go around.
+   *
+   * None of the behaviours know about the FIELD's furniture -- they name a
+   * place to be and leave the driving to this. Drive straight at a point and
+   * the HIVE's A-frame is squarely in the way of half the FIELD: one opponent
+   * pressed itself against a strut at half power for the whole MATCH,
+   * commanding 0.7 forward and travelling at 0.00 m/s, four POLLEN in the
+   * magazine and a clear shot two metres away.
+   *
+   * So: if it is asking to move, is not moving, and has been like that for
+   * most of a second, commit to a sidestep for a moment. Which side is
+   * arbitrary, and that is fine -- it is what a driver does when they feel the
+   * robot stop. Sliding perpendicular is also the right move specifically for
+   * the A-frame, whose legs are narrow.
+   *
+   * Cheaper and more general than pathfinding, and it works on the other three
+   * ROBOTS too, which no static map would.
+   *
+   * @param {number} dt
+   * @param {import('./behaviors.js').AiIntent} intent mutated in place
+   * @param {import('./behaviors.js').AiContext} ctx
+   */
+  _avoidWedging(dt, intent, ctx) {
+    const dx = intent.point.x - ctx.selfPosition.x;
+    const dy = intent.point.y - ctx.selfPosition.y;
+    const distance = Math.hypot(dx, dy);
+    const wants = distance > 0.22;
+    const moving = ctx.selfSpeed > 0.12 || Math.abs(ctx.selfOmega ?? 0) > 0.5;
+
+    if (wants && !moving) this._stuckTimer += dt;
+    else this._stuckTimer = Math.max(0, this._stuckTimer - dt * 2);
+
+    if (this._stuckTimer > 0.7 && this.time > this._detourUntil) {
+      this._detourUntil = this.time + 1.4;
+      // Sidestep toward open FIELD rather than to a coin-flip side. Half the
+      // time a random sign pushes it further into the wall it is already on,
+      // and it sits there grinding until the timer runs out and flips again.
+      const nx = -dy / (distance || 1);
+      const ny = dx / (distance || 1);
+      const toCentre = -(ctx.selfPosition.x * nx + ctx.selfPosition.y * ny);
+      this._detourSign =
+        Math.abs(toCentre) > 0.2 ? Math.sign(toCentre) : this.random() < 0.5 ? 1 : -1;
+      this._stuckTimer = 0;
+    }
+
+    if (this.time < this._detourUntil && distance > 1e-6) {
+      // Perpendicular to where it was trying to go, by more than a robot
+      // width, *and* a little backwards. Backing off first is what actually
+      // unwedges it: sliding sideways while still leaning on the obstacle just
+      // scrubs along it.
+      const nx = -dy / distance;
+      const ny = dx / distance;
+      intent.point = new Vec2(
+        ctx.selfPosition.x + nx * this._detourSign * 0.9 - (dx / distance) * 0.3,
+        ctx.selfPosition.y + ny * this._detourSign * 0.9 - (dy / distance) * 0.3,
+      );
+      // Free to point wherever suits the detour: holding an aim while wedged is
+      // how it stayed wedged.
+      intent.faceHeading = undefined;
+      intent.faceTarget = false;
+      intent.arrive = false;
+      intent.fire = false;
+    }
+    return intent;
+  }
+
+  /** Whether it is currently working its way out of being wedged. */
+  get detouring() {
+    return this.time < this._detourUntil;
+  }
+
+  /** Whether a jam is currently costing it a cycle. */
+  get jammed() {
+    return this.time < this._jammedUntil;
+  }
+
+  /** What `gamePlan` needs to know about this machine. */
+  get agentView() {
+    if (!this.archetype) return null;
+    return {
+      alliance: this.alliance ?? 'blue',
+      role: this.archetype.role,
+      intake: this.intake,
+      launcher: this.launcher,
+      preferredRange: this.archetype.preferredRange ?? 1.7,
+      jammed: this.jammed,
+    };
+  }
+
+  /**
+   * Hand the intent to the mechanisms.
+   *
+   * Exactly the calls a driver's buttons make: set the intake's command, ask
+   * the launcher to spin, ask it to fire. The AI has no shortcut into the ball
+   * world, so an opponent's shot is subject to the same recovery, the same
+   * droop and the same aperture as the player's.
+   *
+   * @param {import('./behaviors.js').AiIntent} intent
+   */
+  _applyMechanisms(intent) {
+    if (this.intake) {
+      const jammed = this.jammed;
+      this.intake.command = jammed ? 0 : (intent.intake ?? 0);
+    }
+    if (this.launcher) {
+      if (this.launcher.needsSpinUp) this.launcher.spinning = Boolean(intent.spin);
+      if (intent.fire && !this.jammed) this.launcher.fire();
+    }
   }
 
   /** Physics-rate update. */

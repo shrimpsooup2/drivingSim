@@ -312,7 +312,17 @@ export class Match {
    */
   _checkFlowerLock() {
     if (this.phase === 'teleop' && this.teleopRemaining <= this.flowerUnlockRemaining) {
-      this.flowerUnlocked = true;
+      if (!this.flowerUnlocked) {
+        this.flowerUnlocked = true;
+        // Section 10.1: "With 60 seconds left in the MATCH, ALLIANCES can
+        // enter all remaining NECTAR." The per-TIP release was wired up and
+        // this half of the same sentence was not, so an ALLIANCE that never
+        // TIPPED could not enter a single NECTAR all MATCH -- and with no
+        // NECTAR on the FIELD no FLOWER can be owned, because ownership is the
+        // top-most NECTAR and POLLEN confers none. A third of the point table
+        // was unreachable.
+        for (const alliance of ['red', 'blue']) this.field.unlockNectar(alliance, 'all');
+      }
       return;
     }
     for (const flower of this.field.flowers) {

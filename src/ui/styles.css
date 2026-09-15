@@ -572,3 +572,32 @@ select { width: 100%; }
   text-align: center;
   color: var(--muted);
 }
+
+/* The other three ROBOTS, listed under the prompt. */
+.match-lineup {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.match-robot {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 8px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border-left: 2px solid transparent;
+  background: rgba(255, 255, 255, 0.04);
+}
+.match-robot.ally { border-left-color: #47d18a; }
+.match-robot.foe { border-left-color: #ff6b5e; }
+.match-robot-name { opacity: 0.85; white-space: nowrap; }
+.match-robot-detail {
+  opacity: 0.45;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
