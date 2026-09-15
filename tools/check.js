@@ -630,6 +630,67 @@ async function main() {
     await writeFile(gamePath, Buffer.from(shot6.data, 'base64'));
     console.log(`  Screenshot: ${gamePath}`);
 
+    // Tie the drawn CELL to Figure 9-9: transform the cell mesh's own corners
+    // through the render matrix and check they land on the figure's heights.
+    // This is what stops the visual drifting away from the model.
+    const cellDraw = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const g = app.sim.game;
+      const hive = g.field.hives[g.alliance];
+      const opening = hive.cellOpening(hive.up);
+      const normal = hive.openingNormal(hive.up);
+      const up = hive.openingUp(hive.up);
+      const m = new Float32Array(16);
+      app.renderer._cellMatrix(m, opening.x, opening.y, opening.z, normal, up);
+      // Mesh z runs 0 at the opening's lower edge to 1 at the apex; mesh y runs
+      // 0 at the opening plane to 1 at the back of the cell.
+      const at = (x, y, z) => [0, 1, 2].map(
+        (i) => m[i] * x + m[4 + i] * y + m[8 + i] * z + m[12 + i],
+      );
+      const IN = 0.0254;
+      const lower = at(0, 0, 0);
+      const apex = at(0, 0, 1);
+      const back = at(0, 1, 0);
+      return {
+        lowerZ: lower[2] / IN,
+        apexZ: apex[2] / IN,
+        widthIn: (at(1, 0, 0)[0] - at(-1, 0, 0)[0]) / IN,
+        depthIn: Math.hypot(back[1] - lower[1], back[2] - lower[2]) / IN,
+      };
+    })()`);
+    console.log(`  CELL as drawn: opening ${cellDraw.lowerZ.toFixed(1)} to ${cellDraw.apexZ.toFixed(1)} in, ${cellDraw.widthIn.toFixed(1)} in wide, ${cellDraw.depthIn.toFixed(1)} in deep`);
+    if (Math.abs(cellDraw.lowerZ - 53.5) > 0.1) {
+      failures.push(`drawn CELL opening bottom is ${cellDraw.lowerZ.toFixed(2)} in, Figure 9-9 says 53.5`);
+    }
+    if (Math.abs(cellDraw.apexZ - 65.6) > 0.1) {
+      failures.push(`drawn CELL apex is ${cellDraw.apexZ.toFixed(2)} in, Figure 9-9 says 65.6`);
+    }
+    if (Math.abs(cellDraw.widthIn - 20) > 0.1) {
+      failures.push(`drawn CELL is ${cellDraw.widthIn.toFixed(2)} in wide, should be 20`);
+    }
+    if (Math.abs(cellDraw.depthIn - 12) > 0.1) {
+      failures.push(`drawn CELL is ${cellDraw.depthIn.toFixed(2)} in deep, should be 12`);
+    }
+
+    // An overhead plan view with the panels hidden, to put next to the
+    // manual's own field figure.
+    await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.config.set('view.showHud', false);
+      app.config.set('view.showGraphs', false);
+      app.config.set('view.camera', 'overhead');
+      // Frame the whole field, the way the manual's figure does.
+      app.config.set('view.overheadFollow', false);
+      app.config.set('view.overheadZoom', 1);
+      app.sim.robot.reset(-1.55, 0.6, 0);
+      return true;
+    })()`);
+    await sleep(700);
+    const shotTop = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const planPath = shotPath.replace(/\.png$/, '-biobuzz-plan.png');
+    await writeFile(planPath, Buffer.from(shotTop.data, 'base64'));
+    console.log(`  Screenshot: ${planPath}`);
+
     // A second angle with the panels hidden, so the field geometry itself can
     // be eyeballed rather than guessed at through a HUD.
     await cdp.evaluate(`(() => {

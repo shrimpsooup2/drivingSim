@@ -28,6 +28,7 @@ import {
   FRAME_STRUT_BASE,
   FRAME_STRUT_TOP,
   HIVE_PIVOT_HEIGHT,
+  TILE_THICKNESS,
 } from '../field/biobuzz/constants.js';
 
 const ACCENT = [0.16, 0.62, 0.86, 1];
@@ -421,15 +422,12 @@ export class Renderer {
         const up = hive.up === side;
         // The prism runs from the opening inward along the arm, so its own
         // axes are the opening's normal and the in-plane up.
-        this._cellMatrix(
-          m,
-          opening.x,
-          opening.y,
-          opening.z,
-          n,
-          hive === game.field.hives[alliance] ? 1 : 1,
-        );
-        this._draw(this.meshes.cell, m, tint, this.textures.plate, up ? 0.2 : 0.04);
+        // Pale panels inside a bright frame, the way the real CELL looks: it is
+        // clear polycarbonate on an alliance-coloured rib. A solid slab in the
+        // alliance colour reads as a wall rather than a basket you can aim into.
+        this._cellMatrix(m, opening.x, opening.y, opening.z, n, hive.openingUp(side));
+        const panel = up ? [0.82, 0.84, 0.88, 1] : [0.5, 0.52, 0.56, 1];
+        this._draw(this.meshes.cell, m, panel, this.textures.plate, up ? 0.14 : 0.02);
       }
     }
 
@@ -445,28 +443,25 @@ export class Renderer {
         [-FLOWER_PIPE_OFFSET, FLOWER_PIPE_OFFSET],
         [FLOWER_PIPE_OFFSET, FLOWER_PIPE_OFFSET],
       ]) {
-        mat4.composeZ(
+        this._uprightCylinder(
           m,
           flower.x + ox,
           flower.y + oy,
           flower.scoringBottom + volume / 2,
-          1,
-          0,
-          FLOWER_PIPE_RADIUS * 2,
-          FLOWER_PIPE_RADIUS * 2,
+          FLOWER_PIPE_RADIUS,
           volume,
         );
-        this._draw(this.meshes.cylinder, m, [0.88, 0.9, 0.93, 1], this.textures.white);
+        this._draw(this.meshes.cylinder, m, [0.55, 0.78, 0.4, 1], this.textures.white);
       }
       // The rings sit on the pipe square, so they are barely wider than it --
       // drawing them much wider turns a slim tube into a stack of plates.
       const ringRadius = FLOWER_PIPE_OFFSET + FLOWER_PIPE_RADIUS * 1.6;
-      for (const [z, radius, colour] of [
-        [flower.scoringBottom, ringRadius, [0.24, 0.52, 0.3, 1]],
-        [flower.scoringTop, ringRadius, [0.32, 0.66, 0.36, 1]],
-        [0.01, ringRadius * 1.15, [0.22, 0.42, 0.26, 1]],
+      for (const [z, radius, thickness, colour] of [
+        [flower.scoringBottom, ringRadius, 0.03, [0.2, 0.2, 0.22, 1]],
+        [flower.scoringTop, ringRadius, 0.035, [0.92, 0.66, 0.16, 1]],
+        [0.012, ringRadius * 1.15, 0.024, [0.24, 0.25, 0.28, 1]],
       ]) {
-        mat4.composeZ(m, flower.x, flower.y, z, 1, 0, radius * 2, radius * 2, 0.02);
+        this._uprightCylinder(m, flower.x, flower.y, z, radius, thickness);
         this._draw(this.meshes.cylinder, m, colour, this.textures.white);
       }
       // Backstop, on the wall side -- the thing that makes a long shot forgiving.
@@ -484,6 +479,26 @@ export class Renderer {
       this._draw(this.meshes.box, m, [0.95, 0.78, 0.22, 1], this.textures.white, 0.1);
     }
 
+    // --- ALLIANCE AREAS, on the venue floor outside the perimeter. They carry
+    // no game function, but the manual's own field figure shows them and they
+    // are what tells you at a glance which end you are driving from.
+    for (const zone of [game.field.zones.redAllianceArea, game.field.zones.blueAllianceArea]) {
+      const colour =
+        zone.alliance === 'red' ? [0.62, 0.13, 0.15, 1] : [0.12, 0.24, 0.6, 1];
+      mat4.composeZ(
+        m,
+        zone.centerX,
+        zone.centerY,
+        -TILE_THICKNESS,
+        1,
+        0,
+        zone.width,
+        zone.depth,
+        1,
+      );
+      this._draw(this.meshes.plane, m, colour, this.textures.white);
+    }
+
     // --- SCORING ELEMENTS.
     for (const ball of game.field.allBalls) {
       if (ball.container?.kind === 'preload' || ball.container?.kind === 'allianceArea') continue;
@@ -499,24 +514,43 @@ export class Renderer {
   }
 
   /**
+   * Model matrix for a cylinder standing on its end.
+   *
+   * `cylinderMesh` is built with its axis along **mesh Y** because the wheels
+   * want it that way, so composing it with a plain scale lays it on its side.
+   * This swaps the axes so the length runs up world Z.
+   */
+  _uprightCylinder(out, x, y, z, radius, height) {
+    out[0] = radius; out[1] = 0; out[2] = 0; out[3] = 0;
+    out[4] = 0; out[5] = 0; out[6] = height; out[7] = 0;
+    out[8] = 0; out[9] = radius; out[10] = 0; out[11] = 0;
+    out[12] = x; out[13] = y; out[14] = z; out[15] = 1;
+    return out;
+  }
+
+  /**
    * Model matrix for a CELL: the unit `cellMesh` scaled to the real opening and
    * planted on the opening plane, with its prism axis running inward along the
    * arm.
    *
    * @param {{y:number,z:number}} normal outward unit normal of the opening
+   * @param {{y:number,z:number}} up in-plane up, toward the pentagon's apex
    */
-  _cellMatrix(out, x, y, z, normal) {
+  _cellMatrix(out, x, y, z, normal, up) {
     const halfWidth = CELL_OPENING_WIDTH / 2;
+    const upY = up.y;
+    const upZ = up.z;
+
     // Mesh x -> field x (across the field, the opening's width).
     out[0] = halfWidth; out[1] = 0; out[2] = 0; out[3] = 0;
     // Mesh y -> inward along the arm, over the CELL's depth.
     out[4] = 0; out[5] = -normal.y * CELL_DEPTH; out[6] = -normal.z * CELL_DEPTH; out[7] = 0;
-    // Mesh z -> up the opening's own face: the normal turned a quarter turn.
-    out[8] = 0; out[9] = -normal.z * CELL_OPENING_HEIGHT; out[10] = normal.y * CELL_OPENING_HEIGHT; out[11] = 0;
-    // Mesh origin sits at the middle of the opening's base edge.
+    // Mesh z -> up the opening's own face.
+    out[8] = 0; out[9] = upY * CELL_OPENING_HEIGHT; out[10] = upZ * CELL_OPENING_HEIGHT; out[11] = 0;
+    // Mesh origin sits at the middle of the opening's lower edge.
     out[12] = x;
-    out[13] = y + normal.z * (CELL_OPENING_HEIGHT / 2);
-    out[14] = z - normal.y * (CELL_OPENING_HEIGHT / 2);
+    out[13] = y - upY * (CELL_OPENING_HEIGHT / 2);
+    out[14] = z - upZ * (CELL_OPENING_HEIGHT / 2);
     out[15] = 1;
     return out;
   }
@@ -576,6 +610,43 @@ export class Renderer {
         const [ax, ay] = corners[i];
         const [bx, by] = corners[(i + 1) % 4];
         this.lines.line(ax, ay, z, bx, by, z, r, g, b, 1);
+      }
+    }
+
+    // Rib outlines on every CELL, so the pentagon reads as an open basket and
+    // you can see which way its mouth faces from any angle.
+    for (const alliance of ['red', 'blue']) {
+      const hive = game.field.hives[alliance];
+      const [r, g, b] = alliance === 'red' ? [0.95, 0.3, 0.32] : [0.35, 0.58, 1];
+      for (const side of ['fore', 'aft']) {
+        const o = hive.cellOpening(side);
+        const n = hive.openingNormal(side);
+        const u = hive.openingUp(side);
+        const shoulder = CELL_SHOULDER_HEIGHT;
+        const apex = CELL_OPENING_HEIGHT;
+        const hw = CELL_OPENING_WIDTH / 2;
+        // Pentagon corners, in the opening's own plane.
+        const rib = [
+          [-hw, 0],
+          [hw, 0],
+          [hw, shoulder],
+          [0, apex],
+          [-hw, shoulder],
+        ];
+        // Both rib planes: the opening itself and the back of the CELL. The
+        // normal points *out* of the CELL, so stepping back into it subtracts.
+        for (const depth of [0, CELL_DEPTH]) {
+          const at = (across, along) => ({
+            x: o.x + across,
+            y: o.y + u.y * (along - apex / 2) - n.y * depth,
+            z: o.z + u.z * (along - apex / 2) - n.z * depth,
+          });
+          for (let i = 0; i < rib.length; i++) {
+            const a = at(rib[i][0], rib[i][1]);
+            const c = at(rib[(i + 1) % rib.length][0], rib[(i + 1) % rib.length][1]);
+            this.lines.line(a.x, a.y, a.z, c.x, c.y, c.z, r, g, b, 1);
+          }
+        }
       }
     }
 

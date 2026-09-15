@@ -306,6 +306,22 @@ export class Hive {
   }
 
   /**
+   * The opening's in-plane "up": from its lower edge toward the pentagon's apex.
+   *
+   * This is body-frame `(0, 1)` for *both* CELLS, because they are mirror
+   * images and each opens upward when its own end is raised. It cannot be
+   * recovered from the normal alone -- turning the normal a quarter turn gives
+   * the right answer for one CELL and the upside-down one for the other, which
+   * draws that CELL mirrored through its own opening.
+   *
+   * @param {'fore'|'aft'} side
+   */
+  openingUp(side) {
+    const sign = this._sideSign(side);
+    return { y: -sign * Math.sin(this.angle), z: sign * Math.cos(this.angle) };
+  }
+
+  /**
    * Upward component of a CELL's opening normal: 1 facing straight up, negative
    * once the opening has rolled past horizontal and cannot hold anything.
    *
@@ -378,10 +394,9 @@ export class Hive {
     const through = dy * normal.y + dz * normal.z;
     if (through < -CELL_DEPTH || through > ball.radius + margin) return false;
 
-    // Height up the opening, measured in its own plane: the in-plane "up" is
-    // the arm's perpendicular, which is the normal turned a quarter turn.
-    const up = -dy * normal.z + dz * normal.y;
-    const v = up * this._sideSign(side) + CELL_OPENING_HEIGHT / 2;
+    // Height up the opening, measured in its own plane.
+    const upVec = this.openingUp(side);
+    const v = dy * upVec.y + dz * upVec.z + CELL_OPENING_HEIGHT / 2;
     if (v < -margin || v > CELL_OPENING_HEIGHT + margin) return false;
 
     // And within the pentagon at that height, which is narrower than the full
