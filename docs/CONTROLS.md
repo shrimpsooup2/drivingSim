@@ -40,6 +40,8 @@ These match what most FTC teams use, so muscle memory built here transfers.
 | `Space` | Boost / full power |
 | `R` | Restart the drill, or reset the robot |
 | `N` | Driving drills |
+| `G` | Toggle the BIOBUZZ game |
+| `M` | Restart the match from setup |
 | `F` | Toggle field centric |
 | `H` | Reset IMU heading |
 | `C` | Cycle camera |
@@ -47,6 +49,26 @@ These match what most FTC teams use, so muscle memory built here transfers.
 | `P` | Pause |
 | `Tab` | Show / hide settings |
 | `?` | Help |
+
+### Playing BIOBUZZ
+
+With the game on (`G`), the robot gains an intake and a flywheel launcher:
+
+| Control | Action |
+| --- | --- |
+| Right bumper | Run the intake |
+| Left bumper | Eject the front element onto the tiles |
+| `Y` | Toggle the flywheel |
+| Right trigger | Fire |
+| D-pad up / down | Trim the hood angle |
+| D-pad left / right | Trim the target RPM |
+
+The match panel shows the clock, the score split by achievement, and the
+shooter's recovery bar. Watch that bar: the shot leaves at whatever speed the
+wheel is actually doing, so firing before it comes back throws the ball short.
+See [BIOBUZZ.md](BIOBUZZ.md) for what the geometry of the game implies — in
+particular that a CELL only accepts a *descending* ball, which means there is a
+minimum range inside which no hood angle can score.
 
 A key is on or off, so keyboard input is a square wave. The acceleration ramp
 smooths it, which makes the keyboard fine for learning the field and useless for

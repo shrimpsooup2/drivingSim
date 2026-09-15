@@ -1,8 +1,10 @@
 /**
  * Base class for robot mechanisms beyond the drivetrain.
  *
- * The season's game is not known yet, so no mechanisms ship with the simulator.
- * This is the seam they plug into. A subsystem gets the same two-rate treatment
+ * The core ships no mechanisms; BIOBUZZ's intake and launcher are built on this
+ * class and add nothing to it, which is the seam working as intended.
+ *
+ * A subsystem gets the same two-rate treatment
  * the drivetrain does -- `updateControl` at the op-mode loop rate,
  * `applyForces` at the physics rate -- so an arm that shifts the centre of
  * gravity or a flywheel that draws current is modelled correctly rather than

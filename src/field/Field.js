@@ -10,7 +10,9 @@ import { fieldWalls, resolveHalfPlanes, resolveObstacles } from '../physics/coll
  * positive. That matches the FTC field coordinate system, so poses read here
  * mean the same thing they do in your op-mode.
  *
- * Game elements are deliberately absent: the season has not started. Everything
+ * Game elements are deliberately absent from this class. BIOBUZZ wraps it
+ * rather than modifying it (see `src/field/biobuzz/BiobuzzField.js`), so the
+ * drills and free driving still run on a bare field. Everything
  * needed to add them is in place -- see `addElement` and FieldElement.
  */
 export class Field {

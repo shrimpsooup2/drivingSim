@@ -1,6 +1,8 @@
 # Extending the simulator
 
-The season has not started, so nothing here is game-specific. This document
+Nothing in the core is game-specific. BIOBUZZ is built entirely on the seams
+below -- `src/field/biobuzz/` and `src/robot/biobuzz/` add no core machinery --
+so the worked examples here are the same ones the game itself uses. This document
 covers the four extension points, each with a worked example you can paste and
 run. None of them require changing core code.
 

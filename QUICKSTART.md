@@ -145,6 +145,29 @@ is saved so you can race yourself and your teammates. Press `R` to run it again.
 When you want a real test, try **Match simulation**: two minutes, two opponents,
 and the score is how many cycles you complete — not how fast one lap was.
 
+### Then play BIOBUZZ
+
+Press `G`. The HIVE appears in the middle of the field, four FLOWERS on the
+walls, and all 56 POLLEN and NECTAR staged where they are at the start of a real
+match. Your robot gets an intake and a flywheel launcher, and the clock starts:
+30 seconds of auto, then two minutes of driving.
+
+The controls are the right bumper to intake, `Y` to spin the flywheel up, and
+the right trigger to fire. `M` restarts the match.
+
+Three things to know before your first shot, because they catch everyone:
+
+1. **Watch the recovery bar** under the shooter readout. The ball leaves at
+   whatever speed the wheel is actually doing, so firing before it comes back
+   throws the shot short.
+2. **You can be too close.** A CELL faces upward, so the ball has to *drop* into
+   it. Inside about a metre there is no hood angle that works — back off.
+3. **Stop before you shoot.** The ball keeps your robot's velocity, so sliding
+   sideways at walking pace is enough to miss. Drift far enough and it lands in
+   the opposing alliance's CELL and tips their hive for them.
+
+Press `G` again to put it away and go back to the drills.
+
 ### Move the camera
 
 Drag with the mouse to look around, and scroll to zoom. From the driver station

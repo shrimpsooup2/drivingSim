@@ -3,7 +3,8 @@ import { Vec2 } from '../math/Vec2.js';
 /**
  * Base class for anything that lives on the field beyond the perimeter.
  *
- * The current season's game is not known yet, so nothing here is game-specific.
+ * Nothing here is game-specific. BIOBUZZ's structures are built on this class,
+ * which is the point: a game should not need changes to the core.
  * The interface is deliberately small: an element has a pose, optional
  * collision geometry, an optional physics step, and a way to describe itself to
  * the renderer. When kickoff happens, a goal, a game piece or a scoring zone is

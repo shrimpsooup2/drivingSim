@@ -94,7 +94,7 @@ robot. `Import` loads it back.
 
 - **Drivetrains**: mecanum, tank (4 and 6 wheel drop-centre), plus-omni and
   X-drive. All from one generic wheel model — no per-layout physics code.
-- **91 parameters** across 11 groups, every one with a range, a unit and an
+- **110 parameters** across 12 groups, every one with a range, a unit and an
   explanation of what it changes. The settings panel is generated from the
   schema, so adding a tunable is one entry in `src/config/schema.js`.
 - **Presets** for common chassis, including a deliberately tippy one for
@@ -118,13 +118,40 @@ robot. `Import` loads it back.
   in any view; the driver-station camera can be set to your real eye height and
   where you actually stand along the wall.
 
+## BIOBUZZ
+
+The 2026 game is in, built from the Competition Manual V1 and measured against
+the official field CAD. Press **G**.
+
+- **The field**: the HIVE on its A-frame, four FLOWERS, the taped zones, and all
+  56 SCORING ELEMENTS staged exactly where Section 10.3.1 puts them.
+- **3D ball physics** for POLLEN and NECTAR — they bounce off the tiles, the
+  walls and the robots, using the robot's *surface* velocity at the contact, so
+  a spinning robot flicks them.
+- **The scoring loop**: fill the upward CELL until the HIVE tips, the contents
+  spill, the opposite CELL arrives empty. FLOWERS keep an ordered stack, because
+  the top-most NECTAR owns the tube and the bottom-most takes the bonus — so one
+  late NECTAR can take a FLOWER the other alliance spent the match filling.
+- **A flywheel launcher** where recovery is the real limit, with an aiming solver
+  that knows a CELL only accepts a descending ball.
+- **Full match flow and scoring**: 30 s AUTO, 8 s transition, 2:00 TELEOP, the
+  whole point table, the four ranking points, the G410 NECTAR lock, and a G304
+  check that tells you which clause your start position breaks.
+
+Every dimension is marked with where it came from — quoted from the manual with
+its section, or measured from the CAD. See
+**[docs/BIOBUZZ.md](docs/BIOBUZZ.md)**, which also records the four things the
+manual's prose alone led me to get wrong before the CAD arrived.
+
 ## What is deliberately *not* in the box
 
-No game elements, no scoring, no autonomous routines, no mechanisms. The drills
-and the opponents are about driving, not about a game. The season has not
-started. The extension points for all of them exist and are documented
-in [docs/EXTENDING.md](docs/EXTENDING.md) — adding a game piece or an arm should
-not require touching the core.
+No autonomous routines, and no attempt to model any *particular* robot's
+mechanisms — the intake and launcher are a plausible robot with every number
+exposed as an option, not a copy of yours. The drills and the opponents remain
+game-agnostic: they train the skills underneath any game, and they still run on
+a bare field with the game switched off. The extension points are documented in
+[docs/EXTENDING.md](docs/EXTENDING.md); adding a mechanism should not require
+touching the core, and the game itself is built entirely on those seams.
 
 ---
 
@@ -138,6 +165,8 @@ not require touching the core.
   elements, op-modes and parameters, with worked examples.
 - **[docs/CONTROLS.md](docs/CONTROLS.md)** — controller setup and a guide to
   tuning the driver-feel parameters.
+- **[docs/BIOBUZZ.md](docs/BIOBUZZ.md)** — how the game is modelled, where every
+  dimension came from, and what the field geometry turns out to imply.
 
 ## Layout
 
@@ -148,7 +177,9 @@ src/
   hardware/    DC motor, gearbox, battery, encoder, IMU, FTC-style motor controller
   drivetrain/  wheel layouts, generic kinematics, drivetrain assembly
   robot/       robot assembly, Subsystem extension point
+    biobuzz/   roller intake, flywheel launcher
   field/       FTC field, FieldElement extension point
+    biobuzz/   HIVE, FLOWER, zones, field assembly, match and scoring
   ai/          opponent robots: builds, skill levels, behaviours
   challenges/  timed driving drills: geometry, state machine, records
   input/       Gamepad API with FTC semantics, keyboard, latency model
@@ -156,8 +187,8 @@ src/
   render/      WebGL2 renderer, cameras, procedural geometry and textures
   ui/          schema-driven settings panel, HUD, telemetry graphs
   config/      parameter schema, config store, motor and robot presets
-  app/         simulation loop, application wiring
-test/          157 tests: unit, physics validation, drills, AI, and end-to-end
+  app/         simulation loop, application wiring, BIOBUZZ coordinator
+test/          228 tests: unit, physics validation, drills, AI, the game, end-to-end
 tools/         static server, headless browser check
 ```
 
