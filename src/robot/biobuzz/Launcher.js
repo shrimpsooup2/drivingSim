@@ -53,6 +53,9 @@ export class Launcher extends Subsystem {
    *   readyTolerance?: number,
    *   feedInterval?: number,
    *   drag?: number,
+   *   hoodScatter?: number,
+   *   rpmScatter?: number,
+   *   random?: () => number,
    * }} [opts]
    */
   constructor(opts = {}) {
@@ -89,6 +92,21 @@ export class Launcher extends Subsystem {
     this.readyTolerance = opts.readyTolerance ?? 0.97;
     /** Minimum time between shots, set by the feeder rather than the wheel. */
     this.feedInterval = opts.feedInterval ?? 0.35;
+
+    /**
+     * Shot-to-shot repeatability, as the spread on the hood angle (radians) and
+     * on the effective wheel speed (fraction).
+     *
+     * Zero by default, so the player's shooter does exactly what it is told and
+     * a missed shot is theirs. It is the one number that separates a rough
+     * build from a good one more than anything else, so the AI robots carry a
+     * real value here -- an opponent that never misses because its hardware is
+     * perfect is not an opponent you learn anything from.
+     */
+    this.hoodScatter = opts.hoodScatter ?? 0;
+    this.rpmScatter = opts.rpmScatter ?? 0;
+    /** Injectable so a seeded test gets the same spread every run. */
+    this.random = opts.random ?? Math.random;
 
     this.controller = new PIDF();
     this.retune();
@@ -290,14 +308,23 @@ export class Launcher extends Subsystem {
     const R = this.wheelRadius;
 
     const after = (this.inertia * this.omega) / (this.inertia + k * ball.mass * R * R);
-    const speed = k * after * R;
+    // The wheel loses exactly the angular momentum the ball carries away; the
+    // scatter is on what comes *out*, not on the mechanism's book-keeping, so
+    // a sloppy shooter still conserves momentum.
     this.omega = after;
+    const speed = k * after * R * (1 + this.rpmScatter * this._jitter());
+    const angle = clamp(
+      this.hoodAngle + this.hoodScatter * this._jitter(),
+      this.minHoodAngle,
+      this.maxHoodAngle,
+    );
     this.lastExitSpeed = speed;
+    this.lastHoodAngle = angle;
     this.shots += 1;
     this._feedTimer = this.feedInterval;
 
-    const horizontal = speed * Math.cos(this.hoodAngle);
-    const vertical = speed * Math.sin(this.hoodAngle);
+    const horizontal = speed * Math.cos(angle);
+    const vertical = speed * Math.sin(angle);
 
     ball.release(
       // A shot taken on the move inherits the robot's velocity, which is what
@@ -500,6 +527,16 @@ export class Launcher extends Subsystem {
       apex: { ...at(tApex), t: tApex },
       origin: { x: ox, y: oy, z: oz },
     };
+  }
+
+  /**
+   * Symmetric jitter in [-1, 1], triangular rather than flat.
+   *
+   * Two uniforms summed: a real shooter's error clusters near nominal and
+   * occasionally throws a wide one, which a flat distribution does not do.
+   */
+  _jitter() {
+    return this.random() + this.random() - 1;
   }
 
   massContribution() {

@@ -15,7 +15,8 @@ const GRAVITY = 9.80665;
  */
 export class BallWorld {
   /**
-   * @param {{fieldSize: number, wallHeight: number, restitution?: number}} opts
+   * @param {{fieldSize: number, wallHeight: number, restitution?: number,
+   *          maxSpeed?: number}} opts
    */
   constructor(opts) {
     /** @type {Ball[]} */
@@ -25,6 +26,14 @@ export class BallWorld {
     this.wallHeight = opts.wallHeight;
     /** Tile bounce. Foam is dead, so a ball dropped on it barely returns. */
     this.floorRestitution = opts.restitution ?? 0.35;
+    /**
+     * Hard ceiling on a free element's speed, m/s. See `_capSpeed`: this is a
+     * divergence backstop, set above anything a mechanism here can produce, not
+     * a tuning knob.
+     */
+    this.maxSpeed = opts.maxSpeed ?? 25;
+    /** How many times the cap has fired. Should stay zero; useful if it does not. */
+    this.speedCapHits = 0;
 
     /**
      * Things that may claim a ball before free physics runs: intakes, CELLS,
@@ -96,7 +105,15 @@ export class BallWorld {
       if (!ball.free || ball.outOfBounds) continue;
       this._integrate(ball, dt);
       this._resolveFloor(ball);
-      this._resolveWalls(ball);
+    }
+
+    // What each ball was doing before anything touched it, and how fast the
+    // fastest surface that touches it this step is moving. Together those bound
+    // what a step of contact resolution is allowed to leave it doing -- see
+    // `_boundContactSpeed`.
+    for (const ball of this.balls) {
+      if (!ball.free || ball.outOfBounds) continue;
+      ball.contactSpeedBound = ball.speed;
     }
 
     for (const entry of this.bodies) {
@@ -108,17 +125,88 @@ export class BallWorld {
 
     this._resolveBallPairs();
 
+    for (const ball of this.balls) {
+      if (!ball.free || ball.outOfBounds) continue;
+      this._boundContactSpeed(ball);
+    }
+
+    // Containment last, so the FIELD has the final word on where an element is.
+    // Resolved before the ROBOTS, a ball squeezed between a ROBOT and the wall
+    // was pushed out of the ROBOT and then left there -- outside the
+    // perimeter, because nothing clamped it again that step.
+    for (const ball of this.balls) {
+      if (!ball.free || ball.outOfBounds) continue;
+      this._resolveFloor(ball);
+      this._resolveWalls(ball);
+    }
+
     let moving = false;
     for (const ball of this.balls) {
       if (!ball.isFinite()) {
         // A diverged ball would poison the score; drop it to the floor at rest.
         ball.setPosition(0, 0, ball.radius).stop();
       }
+      if (ball.free && !ball.outOfBounds) this._capSpeed(ball);
       if (ball.free && !ball.outOfBounds && ball.speed > 0.05) moving = true;
     }
     // The manual assesses most scoring "after all SCORING ELEMENTS and ROBOTS
     // have come to rest", so the match needs to know when that is.
     this.settled = !moving;
+  }
+
+  /**
+   * Hold a ball to what the surfaces touching it could actually have done.
+   *
+   * Each individual contact is already energy-correct: against a body orders
+   * of magnitude heavier, the ball leaves at `e` times the speed it arrived,
+   * measured in the surface's frame. What is *not* bounded is a sequence of
+   * them inside one step. A ball trapped in a corner by a turning ROBOT is
+   * resolved against the face, then the x wall, then the y wall, and the face's
+   * normal has rotated slightly by the time it comes round again -- so each
+   * contact does a little work along a slightly different axis and the ball
+   * ratchets upward. It reached 6 m/s off a 2 m/s ROBOT.
+   *
+   * The bound is physical and tight: within one step a ball cannot end up
+   * faster than it started, nor faster than `(1 + e)` times the quickest
+   * surface that touched it. Nothing legitimate is clipped -- a ball in free
+   * flight touches nothing, a launched ball is set by the launcher, and a
+   * single honest bounce already satisfies it.
+   */
+  _boundContactSpeed(ball) {
+    const bound = ball.contactSpeedBound;
+    if (bound === undefined) return false;
+    const speed = ball.speed;
+    if (speed <= bound || speed < 1e-6) return false;
+    const scale = bound / speed;
+    ball.vx *= scale;
+    ball.vy *= scale;
+    ball.vz *= scale;
+    return true;
+  }
+
+  /**
+   * Backstop against a solver artefact, not a physical effect.
+   *
+   * Nothing on this FIELD can legitimately move an element faster than a
+   * flywheel does: the fastest shooter here is 4500 rpm on a 2 in wheel at 0.62
+   * transfer, which is 14.8 m/s at the muzzle. Anything past `maxSpeed` did not
+   * come from a mechanism, it came from a contact resolution going wrong, and
+   * letting it through means a POLLEN leaving the FIELD or tunnelling through a
+   * wall in one substep.
+   *
+   * The contact code is written so this should never fire -- see
+   * `resolveBallVsBox` -- so it scales the velocity down rather than zeroing
+   * it, keeping the direction in case something does reach here.
+   */
+  _capSpeed(ball) {
+    const speed = ball.speed;
+    if (speed <= this.maxSpeed) return false;
+    const scale = this.maxSpeed / speed;
+    ball.vx *= scale;
+    ball.vy *= scale;
+    ball.vz *= scale;
+    this.speedCapHits += 1;
+    return true;
   }
 
   _integrate(ball, dt) {
@@ -296,30 +384,45 @@ export function resolveBallVsBox(ball, body, halfLength, halfWidth, height) {
 
   const closestX = Math.max(-halfLength, Math.min(halfLength, localX));
   const closestY = Math.max(-halfWidth, Math.min(halfWidth, localY));
-  let offsetX = localX - closestX;
-  let offsetY = localY - closestY;
-  let distance = Math.hypot(offsetX, offsetY);
+  const offsetX = localX - closestX;
+  const offsetY = localY - closestY;
+  const distance = Math.hypot(offsetX, offsetY);
 
   if (distance >= ball.radius) return false;
 
-  if (distance < 1e-9) {
-    // Centre is inside the box: push out along whichever face is nearest.
+  let normalLocalX;
+  let normalLocalY;
+  let push;
+  if (distance > 1e-9) {
+    // Touching a face, an edge or a corner from outside.
+    normalLocalX = offsetX / distance;
+    normalLocalY = offsetY / distance;
+    push = ball.radius - distance;
+  } else {
+    // The centre is *inside* the box -- a ball run over, or squeezed under a
+    // ROBOT that drove onto it. Push it out through the nearest face.
+    //
+    // The normal has to be built as a unit vector directly. Deriving it from a
+    // sign-valued offset divided by a 1e-9 stand-in distance produced a normal
+    // a billion units long, which the position correction then multiplied by
+    // the ball's radius: a POLLEN pinched between a ROBOT and the wall was
+    // teleported 3.6e7 m down the field and every impulse after that was
+    // scaled by 1e9 as well. That is where the "pinched to absurd speed"
+    // behaviour came from -- not from the contact model, from this normalize.
     const toX = halfLength - Math.abs(localX);
     const toY = halfWidth - Math.abs(localY);
     if (toX < toY) {
-      offsetX = Math.sign(localX) || 1;
-      offsetY = 0;
-      distance = 1e-9;
+      normalLocalX = Math.sign(localX) || 1;
+      normalLocalY = 0;
+      // Out through the near face *and* clear of it, or the next substep finds
+      // the centre inside again and does this forever.
+      push = ball.radius + toX;
     } else {
-      offsetX = 0;
-      offsetY = Math.sign(localY) || 1;
-      distance = 1e-9;
+      normalLocalX = 0;
+      normalLocalY = Math.sign(localY) || 1;
+      push = ball.radius + toY;
     }
   }
-
-  const normalLocalX = offsetX / (distance || 1);
-  const normalLocalY = offsetY / (distance || 1);
-  const push = ball.radius - distance;
 
   // Back to world.
   const nx = normalLocalX * cos - normalLocalY * sin;
@@ -335,19 +438,44 @@ export function resolveBallVsBox(ball, body, halfLength, halfWidth, height) {
 
   const relativeVx = ball.vx - surfaceVx;
   const relativeVy = ball.vy - surfaceVy;
+
+  // Tell `BallWorld._boundContactSpeed` how fast the quickest thing touching
+  // this ball is going, so a sequence of contacts in one step cannot ratchet it
+  // past what any of them could have imparted.
+  if (ball.contactSpeedBound !== undefined) {
+    const restitution = ball.restitution * 0.6;
+    const surfaceSpeed = Math.hypot(surfaceVx, surfaceVy);
+    const possible = (1 + restitution) * surfaceSpeed;
+    if (possible > ball.contactSpeedBound) ball.contactSpeedBound = possible;
+  }
+
   const approaching = relativeVx * nx + relativeVy * ny;
   if (approaching < 0) {
+    // Bounce off a much heavier body: the ball leaves at `e` times the speed it
+    // arrived, measured against the moving face.
     const restitution = ball.restitution * 0.6;
     const impulse = -(1 + restitution) * approaching;
     ball.vx += nx * impulse;
     ball.vy += ny * impulse;
   } else {
-    // Already separating, but a robot driving into a resting ball should still
-    // carry it along rather than sliding through.
-    const closing = surfaceVx * nx + surfaceVy * ny;
-    if (closing > 0) {
-      ball.vx += nx * closing * 0.6;
-      ball.vy += ny * closing * 0.6;
+    // Already separating, but a face driving into a ball should carry it along
+    // rather than sliding through it.
+    //
+    // Written as a *target* rather than as an addition, and this matters: the
+    // additive form ran on every contact, every substep. A ball pinched between
+    // a ROBOT and the wall cannot move away, so it took another fraction of the
+    // closing speed two thousand times a second and left at whatever speed you
+    // like -- it reached 1e302 m/s in three seconds. A pushing plate cannot
+    // make a ball travel faster than the plate, so bring it up to the face's
+    // own normal speed and no further. That bound is also what makes the pinch
+    // converge instead of diverge: each cycle of ROBOT-bounce and wall-bounce
+    // now loses energy to both restitutions.
+    const faceSpeed = surfaceVx * nx + surfaceVy * ny;
+    const ballSpeed = ball.vx * nx + ball.vy * ny;
+    if (faceSpeed > ballSpeed) {
+      const delta = faceSpeed - ballSpeed;
+      ball.vx += nx * delta;
+      ball.vy += ny * delta;
     }
   }
   return true;

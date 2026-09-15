@@ -42,6 +42,14 @@ export class Ball {
     this.x = opts.x ?? 0;
     this.y = opts.y ?? 0;
     this.z = opts.z ?? this.radius;
+    /**
+     * Ceiling on this ball's speed for the current physics step, set by
+     * `BallWorld.step` and raised by each contact to what that contact could
+     * have imparted. Undefined outside a step; see
+     * `BallWorld._boundContactSpeed` for why it exists.
+     * @type {number|undefined}
+     */
+    this.contactSpeedBound = undefined;
     this.vx = 0;
     this.vy = 0;
     this.vz = 0;

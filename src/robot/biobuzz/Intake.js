@@ -30,6 +30,10 @@ export class Intake extends Subsystem {
    *   gearRatio?: number,
    *   rollerRadius?: number,
    *   spinUpTime?: number,
+   *   canPlace?: boolean,
+   *   placeReach?: number,
+   *   placeTolerance?: number,
+   *   placeSeconds?: number,
    * }} [opts]
    */
   constructor(opts = {}) {
@@ -55,6 +59,30 @@ export class Intake extends Subsystem {
     /** Roller inertia reflected to the motor; small, so it spins up fast. */
     this.spinUpTime = opts.spinUpTime ?? 0.15;
 
+    /**
+     * Whether this ROBOT has a lift that can put an element into a FLOWER.
+     *
+     * Section 9.7 and G419: "The FLOWERS are designed and intended to only
+     * allow POLLEN and NECTAR to enter through the top of the top ring", and
+     * G419.A permits a ROBOT only to "enter POLLEN and NECTAR into the top of
+     * a FLOWER". The top ring is 21.25 in up, so scoring in a FLOWER needs
+     * something that lifts an element over that rim and lets go -- a shot
+     * cannot do it, because the tube's clearance for a POLLEN is 0.6 in.
+     *
+     * Modelled as a cost rather than as geometry: line the front of the ROBOT
+     * up with the tube, hold the eject, and the lift cycle takes
+     * `placeSeconds`. That is the trade a real one makes -- a FLOWER pays 2 per
+     * element and cannot be tipped away, but filling one means stopping still
+     * next to it for a second at a time.
+     */
+    this.canPlace = opts.canPlace ?? true;
+    /** How far ahead of the bumper the lift can reach a tube axis. */
+    this.placeReach = opts.placeReach ?? 9 * INCH;
+    /** How far off the tube axis the ROBOT may be and still drop it in. */
+    this.placeTolerance = opts.placeTolerance ?? 2.5 * INCH;
+    /** One lift-and-release cycle. */
+    this.placeSeconds = opts.placeSeconds ?? 0.9;
+
     /** -1 eject, 0 off, +1 intake. */
     this.command = 0;
     /** Ramped version of `command`, so the roller is not instantly at speed. */
@@ -68,6 +96,10 @@ export class Intake extends Subsystem {
     this.flowers = [];
 
     this._ejectCooldown = 0;
+    /** Seconds into the current FLOWER lift cycle. */
+    this._placeTimer = 0;
+    /** @type {import('../../field/biobuzz/Flower.js').Flower|null} */
+    this._placingInto = null;
   }
 
   get full() {
@@ -133,10 +165,58 @@ export class Intake extends Subsystem {
 
     this._ejectCooldown = Math.max(0, this._ejectCooldown - dt);
 
-    if (this.power > 0.4) this._collect();
-    else if (this.power < -0.4) this._eject();
+    if (this.power > 0.4) {
+      this._cancelPlace();
+      this._collect();
+    } else if (this.power < -0.4) {
+      this._eject(dt);
+    } else {
+      this._cancelPlace();
+    }
 
     return this.current;
+  }
+
+  /**
+   * The FLOWER this ROBOT is lined up to place into, if any.
+   *
+   * Measured from the mouth of the intake to the tube axis: ahead of the
+   * bumper, within reach, and within the alignment window across. Public
+   * because the HUD says "LEFT BUMPER place in FLOWER" when it is non-null,
+   * and because the AI uses the same test to decide it has arrived.
+   */
+  alignedFlower() {
+    if (!this.canPlace || !this.robot || this.held.length === 0) return null;
+    const { x, y, cos, sin } = this.pose;
+    const mouthX = x + cos * this.robot.halfLength;
+    const mouthY = y + sin * this.robot.halfLength;
+    let best = null;
+    let bestAhead = Infinity;
+    for (const flower of this.flowers) {
+      const dx = flower.x - mouthX;
+      const dy = flower.y - mouthY;
+      const ahead = dx * cos + dy * sin;
+      const across = -dx * sin + dy * cos;
+      if (ahead < -this.placeTolerance || ahead > this.placeReach) continue;
+      if (Math.abs(across) > this.placeTolerance) continue;
+      if (flower.restHeightFor(this.held[0].radius) === null) continue;
+      if (ahead < bestAhead) {
+        bestAhead = ahead;
+        best = flower;
+      }
+    }
+    return best;
+  }
+
+  /** Progress through the current FLOWER lift, 0 to 1, for a HUD bar. */
+  get placeProgress() {
+    if (!this._placingInto) return 0;
+    return Math.min(1, this._placeTimer / Math.max(1e-3, this.placeSeconds));
+  }
+
+  _cancelPlace() {
+    this._placingInto = null;
+    this._placeTimer = 0;
   }
 
   _collect() {
@@ -192,8 +272,37 @@ export class Intake extends Subsystem {
   }
 
   /** Spit the front element out onto the tiles, one at a time. */
-  _eject() {
-    if (this.held.length === 0 || this._ejectCooldown > 0 || !this.robot) return;
+  _eject(dt = 0) {
+    if (this.held.length === 0 || !this.robot) {
+      this._cancelPlace();
+      return;
+    }
+
+    // Lined up with a FLOWER, the eject means "put it in there" instead of
+    // "spit it on the floor". It takes a moment, and moving out of alignment
+    // part-way through abandons the cycle with the element still held.
+    const flower = this.alignedFlower();
+    if (flower) {
+      if (this._placingInto !== flower) {
+        this._placingInto = flower;
+        this._placeTimer = 0;
+      }
+      this._placeTimer += dt;
+      if (this._placeTimer < this.placeSeconds) return;
+      const ball = this.held.shift();
+      // `add` rather than `interactBall`: the lift has carried it over the rim,
+      // so the question was whether the ROBOT was lined up, and that is what
+      // `alignedFlower` just answered. Dropping it from the floor could never
+      // enter -- the tube's clearance for a POLLEN is 0.6 in.
+      if (!flower.add(ball)) this.held.unshift(ball);
+      this._cancelPlace();
+      this._ejectCooldown = 0.25;
+      this._contentsChanged();
+      return;
+    }
+    this._cancelPlace();
+
+    if (this._ejectCooldown > 0) return;
     const ball = this.held.shift();
     const { x, y, cos, sin, vx, vy } = this.pose;
     const d = this.robot.halfLength + ball.radius + 1 * INCH;
@@ -253,11 +362,15 @@ export class Intake extends Subsystem {
   }
 
   telemetry() {
-    return {
+    const out = {
       'Intake held': `${this.held.length}/${this.capacity}`,
       'Intake power': this.power.toFixed(2),
       'Intake current': `${this.current.toFixed(1)} A`,
     };
+    if (this._placingInto) {
+      out['Placing'] = `${(this.placeProgress * 100).toFixed(0)}% into FLOWER`;
+    }
+    return out;
   }
 
   reset() {
@@ -268,6 +381,7 @@ export class Intake extends Subsystem {
     this.power = 0;
     this.current = 0;
     this._ejectCooldown = 0;
+    this._cancelPlace();
     this._contentsChanged();
   }
 }
