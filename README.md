@@ -121,7 +121,8 @@ robot. `Import` loads it back.
 ## BIOBUZZ
 
 The 2026 game is in, built from the Competition Manual V1 and measured against
-the official field CAD. Press **G**.
+the official field CAD. **It is what the simulator opens on** -- press **G** to
+put it away and get a bare field back for the drills.
 
 - **The field**: the HIVE on its A-frame, four FLOWERS, the taped zones, and all
   56 SCORING ELEMENTS staged exactly where Section 10.3.1 puts them.

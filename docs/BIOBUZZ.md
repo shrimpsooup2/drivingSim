@@ -4,8 +4,11 @@ This is how the 2026 game is modelled, where every number came from, and the
 handful of things the geometry turns out to imply that are not obvious from
 reading the manual.
 
-Press **G** to switch the game on, **M** to restart the match. Off, you get a
-bare field, which is what the drills and free driving use.
+BIOBUZZ is what the simulator opens on. **G** puts it away and brings it back,
+**M** restarts the match. With it off you get a bare field, which is what the
+drills and free driving use — and selecting a drill switches the game off for
+you and turns it back on when you clear the drill, so you can dip into a drill
+and come back to the match.
 
 ## Where the numbers come from
 
@@ -53,15 +56,40 @@ A bi-stable see-saw per alliance, pivots 43.95 in up at x = ±12.7 in, resting
 at 30°. Fill the upward CELL until it tips (20 points), the contents spill, and
 the opposite CELL arrives empty ready to fill again.
 
-The CAD stages three NECTAR in each upward CELL and they must not tip it, which
-is the only hard constraint the manual gives on the tip threshold — so the
-threshold is modelled as a mass and calibrated against it (0.300 kg against
-0.255 kg of staged NECTAR). The real mechanism is a bi-stable balance, so mass
-is the right thing for it to respond to; the exact figure is not published.
+### How the tip works
 
-Elements come to rest **9.4 in from the pivot, 50.2 in above the tiles**. That
-is the point a launcher has to put a ball on, measured straight off the three
-staged NECTAR, and it is the single most important number for a shooter.
+The HIVE is a rigid body rotating about its pivot, not a mass compared against
+a threshold. Its centre of gravity sits **above** the pivot, which makes level
+an *unstable* equilibrium: the arm runs to whichever stop it is nearest and
+latches there. That over-centre latch is the bi-stability the manual describes,
+and weight in the raised CELL fights it:
+
+```
+structure torque = +M*g*h*sin(t)          holds the arm on its stop
+element torque   = -m*g*(u*cos t - v*sin t)   u is the element's lever arm
+```
+
+Three things follow that a threshold cannot give you:
+
+- **Where a ball lands matters.** `u` is the lever arm, so an element that
+  settles deep in the CELL tips the HIVE more readily than one resting near the
+  lip. Accurate shooting is worth something beyond just landing it.
+- **The rotation takes real time** — about 0.9 s for a full CELL and 2.3 s for a
+  marginal load, because an over-centre mechanism is slowest just off its latch.
+  You can launch into a CELL that is already going over.
+- **Elements fall out because the CELL rolls past horizontal**, leaving with the
+  speed that point of the arm is actually doing.
+
+`M*h` cannot be measured — a STEP file carries no density — so it is
+parameterised by `holdMass`: the load in the raised CELL the latch will just
+hold. That is directly interpretable and pinned at one end by the manual, since
+three NECTAR are staged there and must not tip it. At 0.28 kg the HIVE holds
+exactly those three and goes over on the next element.
+
+The four Blumotion soft-close dampers in the CAD are modelled as engaging over
+the last part of the travel rather than as a constant dashpot, which is what a
+soft-close damper is — as a constant one it made the tip crawl for nearly three
+seconds through the middle of its stroke.
 
 ### Only the first TIP is cheap
 
@@ -70,14 +98,21 @@ After that the CELL arrives **empty** and needs a full load again — about seve
 POLLEN. With 40 POLLEN on the field, reaching the 7-TIP POLLINATOR 2 ranking
 point means re-collecting your own spillage.
 
-### A robot drives straight through the HIVE structure
+### There is a corridor through the middle, but only front to back
 
-The A-frame is two open triangles at x = ±24.3 in, each 38.1 in deep at the
-tiles, joined by a crossbar at 43.95 in. Between them there is nothing below
-the hanging CELLs, so a robot crosses the middle of the field straight through
-the frame. The collider is the two leg footprints only, and the renderer draws
-the frame open rather than drawing its collider — a solid box there would both
-look wrong and teach the wrong routes.
+The A-frame is two open trusses at x = ±24.3 in, each 38.9 in deep, joined by
+a crossbar at 43.95 in. Nothing hangs below the CELLS, so the middle of the
+field looks wide open — and front to back it is. A **corridor about 38 in wide
+runs the full depth of the field under the HIVE**, open at both ends.
+
+Side to side it is not open, which I had wrong at first. Each frame side sits on
+a **continuous foot bar**: 2.00 in thick, the full 38.94 in depth, 2.15 in tall.
+A bumper stops dead against it. So crossing from the red half to the blue half
+means going *around* the frame, past the end of it at |y| > 19.5 in.
+
+Above the foot bar the struts lean up and inward, so their collider is clipped
+to the part below the 18 in robot limit — past that the strut is overhead and
+you drive underneath it.
 
 ## The FLOWER
 
@@ -85,8 +120,21 @@ A vertical tube on each wall holding a single-file stack. Elements go in the
 top; only POLLEN comes out the bottom.
 
 The **scoring volume is 4.25 in to 21.25 in** — not a derivation, but the exact
-span of the four HDPE pipes in the CAD, which run from the middle ring to the
-top ring and so *are* the volume.
+span of the four HDPE pipes, which run from the middle ring to the top ring and
+so *are* the volume.
+
+The pipes are what actually hold an element, so the tube's clear radius follows
+from them rather than from the manual's "approximately 4 in" opening: axes on a
+square at ±1.725 in with a 1.05 in outside diameter give
+
+```
+clear radius = 1.725*sqrt(2) - 0.525 = 1.9146 in
+```
+
+A NECTAR is 1.81 in in radius, so it goes in with **0.105 in to spare** — which
+is why NECTAR barely fits and why a stack of it sits almost dead straight while
+POLLEN zig-zags. The gap between two adjacent pipes is 2.40 in, and a 2.8 in
+POLLEN cannot squeeze out sideways through it.
 
 Two rules read the stack by position (Section 10.5.2), which is why the stack is
 ordered rather than counted:
@@ -112,6 +160,11 @@ alliance spent the match filling can be taken whole by one late NECTAR.
    stuck there for the rest of the match.
 3. **Aim long.** The backstop is on the wall side only, so an overshot comes off
    it and drops in while the same error short of the tube misses entirely.
+4. **G418 is enforced by the geometry with room to spare.** The retrieval
+   opening measures 3.19 in, tighter than the 3.55 in the manual quotes: POLLEN
+   at 2.80 in comes out with 0.39 in of clearance and NECTAR at 3.62 in cannot.
+   The two square supports sit on the *wall* side of that opening, which is why
+   a robot collects from the field side.
 
 ## Shooting
 
@@ -125,6 +178,13 @@ J*w0 = J*w1 + m*v*R,    v = k*w1*R    =>    w1 = J*w0 / (J + k*m*R^2)
 so the next shot is slower until the motor puts it back. NECTAR costs nearly
 twice what POLLEN does. More inertia bites less per shot but spins up slower,
 which is the real trade when a team adds a heavier wheel.
+
+The wheel also has to be spun up *past* the speed the shot needs, because the
+ball takes its share on the way out. A POLLEN leaves at about 94 percent of the
+wheel's pre-shot surface speed, and range goes as the square of speed, so
+ignoring that puts the shot 13 percent short — six inches at CELL range. The
+aiming solver divides by that droop factor and takes the element's mass, so
+NECTAR correctly asks for more RPM than POLLEN for the same target.
 
 At the stock settings the robot is **feeder-limited, not wheel-limited** — the
 wheel is back inside about 0.25 s and the feeder needs 0.35 s — so you cannot
@@ -212,14 +272,16 @@ measurements, and they are the places to look first if something feels wrong:
 - **Ball masses** (POLLEN 0.045 kg, NECTAR 0.085 kg) are not published. They
   only affect how far a robot shoves a pile and how the flywheel behaves, not
   scoring.
-- **The HIVE tip threshold**, calibrated as described above.
+- **The HIVE's `holdMass`**, and through it `M*h`, calibrated as above. Its
+  structure mass (for inertia) and the angle its CELL opening is tilted at are
+  the other two numbers a part bounding box cannot pin down.
 - **The CELL capture margin** (1.5 in), because the manual defines scoring by
   what is in the CELL at rest, not by a capture volume.
 - **Flower stack pitch.** A column of balls in a tube wider than the balls
-  zig-zags, giving 2.53 in for POLLEN rather than 2.80 in. The CAD lays its
-  staged POLLEN out at a flat 2.89 in, which is wider than a POLLEN — those
-  balls are not touching, so that is a drawing layout rather than a settled
-  stack. It makes no difference to scoring either way.
+  zig-zags, giving 2.60 in for POLLEN against their 2.80 in diameter. The CAD
+  lays its staged POLLEN out at a flat 2.89 in, which is *wider* than a POLLEN,
+  so those balls are not touching — a drawing layout rather than a settled
+  stack. It makes no difference to scoring.
 - **Intake and launcher geometry** is a plausible robot, not any particular
   robot. Every number is a constructor option so you can put your own in.
 

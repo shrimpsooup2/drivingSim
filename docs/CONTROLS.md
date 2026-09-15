@@ -40,7 +40,7 @@ These match what most FTC teams use, so muscle memory built here transfers.
 | `Space` | Boost / full power |
 | `R` | Restart the drill, or reset the robot |
 | `N` | Driving drills |
-| `G` | Toggle the BIOBUZZ game |
+| `G` | Toggle the BIOBUZZ game (on by default) |
 | `M` | Restart the match from setup |
 | `F` | Toggle field centric |
 | `H` | Reset IMU heading |
@@ -52,7 +52,8 @@ These match what most FTC teams use, so muscle memory built here transfers.
 
 ### Playing BIOBUZZ
 
-With the game on (`G`), the robot gains an intake and a flywheel launcher:
+BIOBUZZ is what the simulator opens on, and the robot comes with an intake and
+a flywheel launcher:
 
 | Control | Action |
 | --- | --- |
