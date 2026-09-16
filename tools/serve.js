@@ -10,14 +10,22 @@
  * it picks a free port on its own, opens the browser for you, and prints
  * plain-English messages rather than stack traces.
  *
- * Usage: node tools/serve.js [--port 8080] [--host 127.0.0.1] [--no-open]
+ * It also carries the multiplayer relay on `/ws`, because the alternative is
+ * telling everyone two port numbers. `--lan` binds every interface so the rest
+ * of the room can reach it and prints the address they should type; without it
+ * the server stays on localhost, which is the right default for a machine that
+ * is only ever driving on its own.
+ *
+ * Usage: node tools/serve.js [--port 8080] [--host 127.0.0.1] [--lan] [--no-open]
  */
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { extname, join, normalize, resolve, sep } from 'node:path';
+import { networkInterfaces } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { Relay } from './relay.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -37,13 +45,42 @@ const MIME = {
 };
 
 function parseArgs(argv) {
-  const out = { port: 8080, host: '127.0.0.1', open: true };
+  const out = { port: 8080, host: '127.0.0.1', open: true, lan: false };
   for (let i = 0; i < argv.length; i++) {
     if ((argv[i] === '--port' || argv[i] === '-p') && argv[i + 1]) out.port = Number(argv[++i]);
     else if (argv[i] === '--host' && argv[i + 1]) out.host = argv[++i];
     else if (argv[i] === '--no-open') out.open = false;
+    else if (argv[i] === '--lan') out.lan = true;
   }
+  // `--lan` is shorthand for "listen on every interface", and it must not
+  // silently lose an explicit `--host` given alongside it.
+  if (out.lan && out.host === '127.0.0.1') out.host = '0.0.0.0';
   return out;
+}
+
+/**
+ * The address to read out to the rest of the room.
+ *
+ * `0.0.0.0` is not something anyone can type into a browser, so when the
+ * server is listening on everything this finds the actual LAN address. Private
+ * ranges only: a public address here would mean the machine is directly
+ * exposed, and printing it as "tell your team this" would be bad advice.
+ */
+function lanAddress() {
+  const candidates = [];
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const entry of addresses ?? []) {
+      if (entry.family !== 'IPv4' || entry.internal) continue;
+      const ip = entry.address;
+      if (/^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip)) {
+        candidates.push(ip);
+      }
+    }
+  }
+  // 192.168.x.x first: on a machine with both, that is nearly always the one
+  // the phones and laptops in the room are on.
+  candidates.sort((a, b) => Number(b.startsWith('192.168.')) - Number(a.startsWith('192.168.')));
+  return candidates[0] ?? null;
 }
 
 /** Resolve a URL path to a file inside ROOT, or null if it escapes the root. */
@@ -107,6 +144,11 @@ const server = createServer(async (req, res) => {
   }
 });
 
+const relay = new Relay({
+  log: (line) => console.log(`  [multiplayer] ${line}`),
+});
+relay.attach(server);
+
 /**
  * Try the requested port, then walk upward.
  *
@@ -135,7 +177,10 @@ server.on('error', (err) => {
 server.listen(options.port, options.host, () => {
   const address = server.address();
   const port = typeof address === 'object' && address ? address.port : options.port;
-  const url = `http://${options.host}:${port}/`;
+  // `0.0.0.0` is a bind address, not somewhere a browser can go, so the line
+  // this window prints for the person sitting at it is always localhost.
+  const localHost = options.host === '0.0.0.0' || options.host === '::' ? 'localhost' : options.host;
+  const url = `http://${localHost}:${port}/`;
 
   console.log('');
   console.log('  FTC Driving Simulator is running.');
@@ -148,7 +193,20 @@ server.listen(options.port, options.host, () => {
   } else {
     console.log('  Open that address in your browser.');
   }
-  console.log('');
+  if (options.lan) {
+    const ip = lanAddress();
+    console.log('  Multiplayer is on. Everyone else on this network opens:');
+    console.log('');
+    console.log(`      http://${ip ?? '<this machine\u2019s address>'}:${port}/`);
+    console.log('');
+    if (!ip) {
+      console.log('  (No private network address found -- are you connected to Wi-Fi?)');
+      console.log('');
+    }
+  } else {
+    console.log('  For multiplayer, stop this and run:  npm run lan');
+    console.log('');
+  }
   console.log('  Leave this window open while you drive.');
   console.log('  Press Ctrl+C (or just close this window) to stop.');
   console.log('');

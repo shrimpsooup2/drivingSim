@@ -7,9 +7,10 @@
   "scripts": {
     "start": "node tools/serve.js",
     "dev": "node tools/serve.js",
-    "test": "node --test",
+    "test": "node --test --test-timeout=60000",
     "check": "node tools/check.js",
-    "rules:doc": "node tools/rules-doc.js"
+    "rules:doc": "node tools/rules-doc.js",
+    "lan": "node tools/serve.js --lan"
   },
   "engines": {
     "node": ">=18"
