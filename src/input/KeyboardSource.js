@@ -138,8 +138,10 @@ export class KeyboardSource {
  * is the Y button. The left hand stays on `WASD` and reaches `Z X V` for the
  * driver aids and `Shift` / `Space` for the two triggers.
  *
- * `O` is deliberately not used. It was the right bumper for one commit, and in
- * the panel's monospace font "O hold to intake" reads as a zero.
+ * `O` is deliberately not a *pad* key. It was the right bumper for one commit,
+ * and in the panel's monospace font "O hold to intake" reads as a zero. It is
+ * an app shortcut (the multiplayer panel), where it appears in a labelled table
+ * rather than inline in a sentence, and the ambiguity does not arise.
  */
 export const BUTTON_KEYS = {
   a: 'KeyZ',
@@ -182,6 +184,7 @@ export const APP_SHORTCUTS = [
   'KeyR',
   'KeyN',
   'KeyF',
+  'KeyO',
   'KeyG',
   'KeyM',
   'KeyB',
@@ -275,6 +278,7 @@ export const KEYBOARD_HELP = [
   ['R', 'Restart drill, or reset the robot'],
   ['N', 'Driving drills'],
   ['F', 'Autonomous editor'],
+  ['O', 'Multiplayer'],
   ['T', 'Shot trajectory guide'],
   ['C', 'Cycle camera'],
   ['B', 'Reset the camera framing'],

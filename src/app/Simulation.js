@@ -93,6 +93,18 @@ export class Simulation {
      */
     this.random = null;
 
+    /**
+     * A `NetHost`, a `NetClient`, or null for a machine driving on its own.
+     *
+     * A host simulates as usual and additionally drives whichever robots have
+     * a human on them. A client does not simulate at all -- `step` skips the
+     * physics and the mirror is written from snapshots instead -- because
+     * running physics that is about to be overwritten is both wasted work and
+     * a source of visible fighting between the two.
+     * @type {any}
+     */
+    this.net = null;
+
     this._bindConfig();
     this.resetRobot();
 
@@ -274,6 +286,15 @@ export class Simulation {
     const t0 = now();
     const cfg = this.config;
 
+    if (this.net?.role === 'client') {
+      // A joiner draws the host's FIELD. It still polls its own gamepad at the
+      // op-mode rate and sends it, and it still runs the local clocks the HUD
+      // reads, but nothing here integrates anything: the snapshot is the truth.
+      this._mirrorFrame(frameSeconds);
+      this.stepCostMs = now() - t0;
+      return;
+    }
+
     // Cap the frame so a stall in the browser cannot teleport the robot.
     const scaled = Math.min(frameSeconds, cfg.sim.maxFrameSeconds) * cfg.sim.timeScale;
     this._physicsAccumulator += scaled;
@@ -316,11 +337,35 @@ export class Simulation {
     // time, so the MATCH clock cannot drift away from the world when the
     // browser stutters or a substep budget is hit.
     this.game?.update(advanced);
+    this.net?.update(advanced);
     this.field.update(advanced);
     this.robot.updateStats(advanced);
     this.challenges.update(advanced);
     this._updateTrail(advanced);
     this.stepCostMs = now() - t0;
+  }
+
+  /**
+   * One frame as a joiner: poll, send, and draw the host's world.
+   *
+   * The control period is kept because the input rate should not depend on the
+   * frame rate -- a 144 Hz machine must not flood the host, and a 30 Hz one
+   * must not starve it.
+   * @param {number} frameSeconds
+   */
+  _mirrorFrame(frameSeconds) {
+    const dt = Math.min(frameSeconds, this.config.sim.maxFrameSeconds);
+    const controlPeriod = 1 / clamp(this.config.control.loopRateHz, 1, 1000);
+    this._controlAccumulator += dt;
+    while (this._controlAccumulator >= controlPeriod) {
+      const gamepad = this.input.update(controlPeriod);
+      this.net.sendInput(gamepad);
+      this._controlAccumulator -= controlPeriod;
+    }
+    this.net.update(dt);
+    this.time += dt;
+    this.substepsLastFrame = 0;
+    this._updateTrail(dt);
   }
 
   _runControlCycle(dt) {
@@ -359,7 +404,16 @@ export class Simulation {
       // falls back to the drill behaviour it was created with.
       game: this.game,
     };
-    for (const opponent of this.opponents) opponent.updateControl(dt, world);
+    const host = this.net?.role === 'host' ? this.net : null;
+    host?.ageSeats(dt);
+    for (const opponent of this.opponents) {
+      // A robot with a human on it is driven exactly the way the player's is
+      // -- see `NetHost.driveSeat`. Without a live seat it is the AI's again,
+      // which is also what happens the moment a joiner's input dries up.
+      const seat = host?.seatFor(opponent);
+      if (seat) host.driveSeat(seat, dt);
+      else opponent.updateControl(dt, world);
+    }
   }
 
   /**

@@ -450,6 +450,119 @@ A routine that loops forever without yielding will hang the tab exactly as it
 would in any other JavaScript; what the runner can do is notice afterwards and
 stop it, so it does not happen again on every frame.
 
+## Driving against each other over the network
+
+Four people, four robots, one match. One machine runs it:
+
+```
+npm run lan
+```
+
+That binds every interface instead of just localhost and prints the
+`http://192.168...` address to read out to everybody else. Then press **O**,
+hit **Host a match**, and read out the four-character code as well. Everyone
+else opens that address, presses **O**, types the code and their name, and
+clicks **Join**.
+
+A joiner does not get a new robot. It takes over one of the three that are
+already on the field — an AI opponent, with its own chassis, its own mechanisms
+and its own entry in the match. Nothing about the field changes when somebody
+joins or leaves; only who is deciding what that robot does. So there is no
+"add a robot mid-match" path to get wrong, the referee and the scoring never
+see a difference, and somebody whose Wi-Fi drops leaves an AI driving their
+robot rather than a dead weight parked on the tiles. Half a second of silence
+is enough to hand it back, and their seat is still theirs when they return.
+
+A remote driver goes through *exactly* the host's own control path: a
+`TeleOpDrive` bound to that robot, then `robot.updateControl(dt, pad)`. Same
+driver processor, same acceleration ramp, same field-centric toggle, same
+voltage sag. A second, simpler control path for remote seats would have made a
+joiner's robot subtly better or worse than the host's, which is the one thing a
+practice tool cannot afford.
+
+### Why one machine simulates everything
+
+The tempting design is lockstep: everybody runs the same physics on the same
+inputs and only inputs cross the network. It does not work here, and not for a
+subtle reason. The physics calls `Math.sin`, `Math.cos` and `Math.exp` on every
+substep, and ECMA-262 does not specify their results — an implementation is
+allowed to return an approximation. Two browsers, or two versions of one
+browser, may differ in the last bit, and at 2000 substeps a second a last-bit
+difference is a visibly different match inside a minute. There would be no way
+to tell that from a bug.
+
+So the host simulates and the joiners mirror. A joiner still *builds* the whole
+game — the same field, the same hive meshes, the same fifty-six elements — and
+then stops stepping the physics and writes each snapshot over the top instead.
+Nothing in the renderer, the HUD or the match panel has to know it is looking
+at a mirror. The alternative, a lightweight "what to draw" structure, sounds
+cheaper and is not: it means a second description of every object on the field,
+and every time the real one changes the mirror silently stops matching it.
+
+The cost is latency. A joiner draws the state *between* the last two snapshots
+rather than guessing past the newest one, so it is about 50 ms behind the host
+plus whatever the network adds. That is deliberate: every frame drawn is a
+state that really happened. Extrapolating would hide the delay and pay for it
+with elements going through hive walls whenever a packet was late, then
+snapping back — a bad trade for something people are using to learn where
+things are. There is no client-side prediction of your own robot either;
+prediction without rollback jitters when it guesses wrong, and rollback needs
+the determinism the first paragraph just ruled out. The upshot is a consistent
+frame or two of lag, which is in the same range as a real Control Hub's own
+command latency and is a thing a driver adapts to within a match.
+
+### What actually crosses the wire
+
+Two channels. The binary one carries what moves every frame — robot poses,
+element positions and spins, hive angles, flower contents — at about a kilobyte
+a snapshot, twenty times a second, which is 20 kB/s. The JSON one carries what
+a human reads: the score breakdown, the phase, referee citations. That is
+`match.status()` and `match.score()` passed through verbatim, so there is
+exactly one description of what a score is and a joiner's panel cannot disagree
+with the host's about who is winning.
+
+Elements are matched by array index, with no id, which saves about 350 bytes a
+packet. That works because both sides build their elements in the same order
+from the same constants and never reorder the array. The joiner checks the
+count and refuses a mismatch rather than writing nectar positions onto pollen —
+that failure would look like broken physics rather than two different builds.
+
+Node ships a WebSocket client and no server, and this project has no
+dependencies, so `tools/websocket.js` is an RFC 6455 server written out: a
+SHA-1 handshake and a frame header. The handshake is the easy half. What makes
+hand-rolled implementations fail is framing, and specifically the three things
+a localhost test never shows you — that TCP is a stream, so a frame can arrive
+in two chunks and two frames in one chunk; that client frames are masked and
+server frames must not be; and that one message can arrive as a run of
+continuation frames with pings interleaved. There is a test for each.
+
+`tools/relay.js` is the rendezvous, and is deliberately the least clever thing
+here: it knows about rooms, roles and who is connected, and forwards every byte
+unopened. If it understood the game it would be tempting to let it arbitrate,
+and then the rules would have a second implementation that is not tested
+against the manual. Routing needs no header because role decides it — snapshots
+go host to everyone, inputs go joiner to host.
+
+Room codes have no vowels, so a code cannot spell anything, and no `I`, `O`,
+`0` or `1`, because the whole job of a room code is that somebody reads it off
+one screen and types it on another, and those four are what get mixed up when
+they do.
+
+### Limits worth knowing
+
+- **It is one LAN, not the internet.** There is no NAT traversal, no STUN and
+  no TURN — the relay is the machine one of you is sitting at. Over the
+  internet you would need a public host or a hole punched through, and neither
+  is something this should do by default.
+- **Nothing is authenticated.** Anybody who can reach the port and guess a
+  four-character code can join. On a team's own Wi-Fi that is the right
+  trade; on a public network, do not host.
+- **The host's machine does all the work.** Four robots' physics, four sets of
+  mechanisms and the snapshot encoding all land on one browser, so the host
+  should be the fastest laptop in the room.
+- **Autonomous is the host's.** A pasted routine runs on the host's robot.
+  Joiners drive in teleop; their robots are AI-driven during auto.
+
 ## Controls
 
 | Key | Does |
@@ -457,6 +570,7 @@ stop it, so it does not happen again on every frame.
 | **G** | Toggle BIOBUZZ on/off |
 | **M** | Restart the match from setup |
 | **F** | Autonomous editor |
+| **O** | Multiplayer |
 | **T** | Shot trajectory guide |
 | Right bumper (`H`) | Run the intake |
 | Left bumper (`U`) | Place into a FLOWER if lined up, otherwise eject |
@@ -707,6 +821,15 @@ src/teleop/AutoRunner.js         compiles and steps a pasted AUTO routine
 src/teleop/autoApi.js            the `robot` object a routine is handed
 src/teleop/autoExample.js        the worked example the editor starts with
 src/ui/AutoPanel.js              the editor, its errors and its log
+src/net/protocol.js              the wire format, and why it is host-authoritative
+src/net/snapshot.js              a live game to a snapshot, and back to a mirror
+src/net/NetLink.js               one connection, and a loopback pair for tests
+src/net/NetHost.js               seats a joiner on a robot already on the field
+src/net/NetClient.js             sends a gamepad, draws what it is told
+src/net/roomCode.js              the code alphabet, shared with the relay
+src/ui/NetPanel.js               host, join, and is-it-me-or-the-network
+tools/websocket.js               an RFC 6455 server, by hand
+tools/relay.js                   rooms and roles; forwards every byte unopened
 src/ui/MatchPanel.js             clock, score breakdown, shooter readout, line-up
 ```
 

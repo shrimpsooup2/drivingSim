@@ -31,6 +31,7 @@
  */
 import { attachWebSocket } from './websocket.js';
 import { INPUT_SENDER_OFFSET } from '../src/net/protocol.js';
+import { normaliseCode, freshCode } from '../src/net/roomCode.js';
 
 /** Four robots on a FIELD, so the host plus three. */
 export const MAX_PEERS = 3;
@@ -243,24 +244,7 @@ function toUint8(data) {
   return new Uint8Array(data);
 }
 
-/** Room codes are short, case-insensitive and unambiguous when read aloud. */
-export function normaliseCode(value) {
-  if (typeof value !== 'string') return null;
-  const code = value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (code.length < 3 || code.length > 12) return null;
-  return code;
-}
-
-/**
- * A fresh room code.
- *
- * No vowels, so it cannot spell anything; no `I`, `O`, `0` or `1`, because the
- * point of a code is that somebody reads it off one screen and types it on
- * another, and those are the four characters that get mistyped.
- */
-export function freshCode(random = Math.random) {
-  const alphabet = 'BCDFGHJKLMNPQRSTVWXYZ23456789';
-  let out = '';
-  for (let i = 0; i < 4; i++) out += alphabet[Math.floor(random() * alphabet.length)];
-  return out;
-}
+// Room codes are shared with the browser that displays one, so they live in
+// `src/net/roomCode.js`; re-exported here because this is where a reader of
+// the relay looks for them.
+export { normaliseCode, freshCode };

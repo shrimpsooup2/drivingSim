@@ -309,6 +309,78 @@ select { width: 100%; }
   .graphs { display: none; }
 }
 
+/* ---------- Multiplayer ---------- */
+
+/*
+ * Leftmost of the toggles: settings at 12, drills at 92, auto at 168, this at
+ * 244. Hand-placed rather than laid out, because each one is positioned
+ * absolutely over the viewport -- a flex wrapper spanning the top would sit
+ * over the field and swallow drags meant for the camera.
+ */
+.net-toggle { right: 244px; }
+.net-toggle.live { border-color: #47d18a; color: #47d18a; }
+
+.net-card { max-width: 560px; }
+.net-head { display: flex; align-items: baseline; gap: 10px; }
+.net-state {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--muted);
+}
+.net-state[data-tone='good'] { color: #47d18a; background: rgba(71, 209, 138, 0.14); }
+.net-state[data-tone='bad'] { color: #ff9a95; background: rgba(217, 67, 63, 0.18); }
+.net-blurb { font-size: 11px; }
+
+.net-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.net-input {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+}
+.net-input:focus { outline: none; border-color: var(--accent-2); }
+/* A code gets read out loud and typed, so it is spaced and upper case. */
+.net-input.net-code { text-transform: uppercase; letter-spacing: 0.18em; width: 7em; }
+.net-name { width: 10em; }
+
+.net-share { margin-top: 14px; text-align: center; }
+.net-share-line { font-size: 11px; color: var(--muted); }
+.net-share-hint { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+.net-share .net-code {
+  display: block;
+  font-family: var(--mono);
+  font-size: 34px;
+  letter-spacing: 0.22em;
+  color: var(--accent-2);
+  margin: 4px 0 6px;
+  width: auto;
+}
+
+.net-error {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #ff9a95;
+  background: rgba(217, 67, 63, 0.12);
+  border-left: 2px solid #d9433f;
+  padding: 6px 8px;
+}
+.net-readout, .net-log {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  margin-top: 10px;
+}
+.net-log { color: rgba(255, 255, 255, 0.45); max-height: 88px; overflow-y: auto; }
+
 /* ---------- Autonomous editor ---------- */
 
 .auto-toggle { right: 168px; }

@@ -29,6 +29,7 @@ For development:
 
 ```
 npm start      # serves locally and opens your browser
+npm run lan    # same, but reachable from the rest of your network (multiplayer)
 npm test       # 157 unit and integration tests
 npm run check  # headless browser smoke test + screenshots
 ```

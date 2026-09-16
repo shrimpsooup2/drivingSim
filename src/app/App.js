@@ -6,6 +6,7 @@ import { MatchPanel } from '../ui/MatchPanel.js';
 import { ParamPanel } from '../ui/ParamPanel.js';
 import { ChallengePanel } from '../ui/ChallengePanel.js';
 import { AutoPanel } from '../ui/AutoPanel.js';
+import { NetPanel } from '../ui/NetPanel.js';
 import { InputManager } from '../input/InputManager.js';
 import { Overlay2d } from '../render/Overlay2d.js';
 import { defaultConfig } from '../config/schema.js';
@@ -55,6 +56,7 @@ export class App {
     this.panel = new ParamPanel(this.panelRoot, this.config);
     this.drills = new ChallengePanel(this.viewport, this.sim.challenges);
     this.auto = new AutoPanel(this.viewport, this.sim);
+    this.net = new NetPanel(this.viewport, this.sim);
 
     /** Schema defaults, so a camera can be reset to its as-shipped framing. */
     this._defaultView = defaultConfig().view;
@@ -175,6 +177,11 @@ export class App {
     // a collision rather than quietly shadowing a control, which is how this
     // was caught -- J is the d-pad's left.
     keyboard.on('KeyF', () => this.auto.toggle());
+    // `O` is the only letter left: every other one is either an app shortcut
+    // or a gamepad key, and `on()` throws rather than let two things share a
+    // key. It was kept off the *gamepad* map because "press O to intake" reads
+    // as a zero in the panel font; in a labelled shortcut table it is fine.
+    keyboard.on('KeyO', () => this.net.toggle());
     keyboard.on('KeyG', () => this._toggleGame());
     keyboard.on('KeyM', () => {
       // Restart the MATCH from setup. Only meaningful with the game running.
@@ -198,6 +205,7 @@ export class App {
       this.toggleHelp(false);
       this.drills.toggle(false);
       this.auto.toggle(false);
+      this.net.toggle(false);
     });
 
     // Field centric and the heading reset are deliberately not here. They are
@@ -327,6 +335,7 @@ export class App {
       this._drawLabels();
       this.drills.update();
       this.auto.update();
+      this.net.update();
       const view = this.config.values.view;
       this.hud.setVisible(view.showHud, view.showGraphs);
       if (view.showHud || view.showGraphs) this.hud.update(this.sim, dt);

@@ -695,6 +695,195 @@ async function main() {
     // "Object reference chain is too long".
     await cdp.evaluate('(() => { globalThis.ftcSim.auto.toggle(false); return true; })()');
 
+    // --- Multiplayer, over a real WebSocket.
+    //
+    // The session logic is covered against a loopback link in
+    // `test/net-session.test.js`, which is where the game-level bugs are. What
+    // that cannot reach is the transport: the hand-written RFC 6455 server, the
+    // browser's own WebSocket, the relay's sender stamping, and whether a
+    // snapshot survives the round trip as bytes rather than as objects handed
+    // between two modules in one process. So this hosts and joins for real,
+    // from the page, on the same port the simulator is served from -- and it
+    // joins with a *second* full simulation so the mirror is exercised the way
+    // a second laptop would exercise it.
+    const net = await cdp.evaluate(`(async () => {
+      const app = globalThis.ftcSim;
+      const [{ NetLink }, { NetHost }, { NetClient }, { Config }, { Simulation }] =
+        await Promise.all([
+          import('/src/net/NetLink.js'),
+          import('/src/net/NetHost.js'),
+          import('/src/net/NetClient.js'),
+          import('/src/config/Config.js'),
+          import('/src/app/Simulation.js'),
+        ]);
+
+      const url = 'ws://' + location.host + '/ws';
+      const room = 'CHCK';
+
+      app.config.set('ai.enabled', true);
+      app.sim.disableGame();
+      const hostGame = app.sim.enableGame({ alliance: 'red', startPhase: 'teleop' });
+      hostGame.start();
+      const hostLink = new NetLink({ url, role: 'host', room, name: 'host' });
+      const host = new NetHost({ link: hostLink, sim: app.sim });
+      app.sim.net = host;
+      hostLink.connect();
+
+      const waitFor = async (predicate, ms, label) => {
+        const started = Date.now();
+        while (!predicate()) {
+          if (Date.now() - started > ms) throw new Error('timed out: ' + label);
+          await new Promise((r) => setTimeout(r, 10));
+        }
+      };
+      await waitFor(() => hostLink.open, 5000, 'host connect');
+
+      // A whole second simulation in the same page, standing in for the
+      // second laptop. It never steps its own physics.
+      const joinConfig = new Config();
+      joinConfig.set('ai.enabled', true);
+      const joinSim = new Simulation(joinConfig);
+      const joinGame = joinSim.enableGame({ alliance: 'red', startPhase: 'teleop' });
+      joinGame.start();
+      const joinLink = new NetLink({ url, role: 'join', room, name: 'guest' });
+      const client = new NetClient({ link: joinLink, sim: joinSim });
+      joinSim.net = client;
+      joinLink.connect();
+
+      await waitFor(() => joinLink.open, 5000, 'join connect');
+      await waitFor(() => host.seats.size === 1, 5000, 'the host seating the joiner');
+      await waitFor(() => client.seated, 5000, 'the joiner being told its robot');
+
+      const seat = [...host.seats.values()][0];
+      // Put it somewhere with a clear run first. Set the body directly rather
+      // than calling reset(), which would also re-zero the subsystems and drop
+      // the pre-load -- and what is being measured here is the transport, not
+      // whether this particular robot happens to have an A-frame in front of
+      // it at its start pose.
+      const ownSide = seat.opponent.alliance === 'red' ? -1 : 1;
+      seat.opponent.robot.body.position.x = ownSide * 1.25;
+      seat.opponent.robot.body.position.y = -0.2;
+      seat.opponent.robot.body.rotation.setRadians(Math.PI / 2);
+      seat.opponent.robot.body.velocity.x = 0;
+      seat.opponent.robot.body.velocity.y = 0;
+      const before = {
+        x: seat.opponent.robot.body.position.x,
+        y: seat.opponent.robot.body.position.y,
+      };
+
+      // Drive the remote robot forward for two seconds of frames, sending on
+      // the joiner's own control cycle the way the real loop does.
+      const pad = new (await import('/src/input/FtcGamepad.js')).FtcGamepad();
+      pad.left_stick_y = -1;
+      pad.connected = true;
+      for (let frame = 0; frame < 120; frame++) {
+        client.sendInput(pad);
+        app.sim.step(1 / 60);
+        // client.update, not joinSim.step. Stepping the joiner would make it
+        // send its *own* gamepad too -- an idle keyboard -- so half the
+        // packets reaching the host would say the sticks were centred and the
+        // robot would barely move. That is not a netcode bug, it is two
+        // drivers on one robot, which is what a second laptop is not.
+        client.update(1 / 60);
+        // Let the sockets actually deliver: this is a real network, and a
+        // tight synchronous loop would prove nothing about it.
+        if (frame % 10 === 0) await new Promise((r) => setTimeout(r, 4));
+      }
+      await new Promise((r) => setTimeout(r, 120));
+      for (let frame = 0; frame < 6; frame++) client.update(1 / 60);
+
+      const hostBalls = hostGame.field.ballWorld.balls;
+      const joinBalls = joinGame.field.ballWorld.balls;
+      let worstBall = 0;
+      for (let i = 0; i < hostBalls.length; i++) {
+        worstBall = Math.max(
+          worstBall,
+          Math.hypot(
+            hostBalls[i].x - joinBalls[i].x,
+            hostBalls[i].y - joinBalls[i].y,
+            hostBalls[i].z - joinBalls[i].z,
+          ),
+        );
+      }
+      let worstRobot = 0;
+      const hostEntries = hostGame.match.entries;
+      const joinEntries = joinGame.match.entries;
+      for (let i = 0; i < hostEntries.length; i++) {
+        const a = hostEntries[i].robot.body.position;
+        const b = joinEntries[i].robot.body.position;
+        worstRobot = Math.max(worstRobot, Math.hypot(a.x - b.x, a.y - b.y));
+      }
+
+      const moved = Math.hypot(
+        seat.opponent.robot.body.position.x - before.x,
+        seat.opponent.robot.body.position.y - before.y,
+      );
+      const out = {
+        seats: host.seats.size,
+        label: client.label,
+        alliance: client.alliance,
+        packets: seat.packets,
+        moved,
+        snapshots: client.snapshots,
+        applied: client.applied,
+        mismatch: client.mismatch,
+        worstBall,
+        worstRobot,
+        balls: hostBalls.length,
+        scoreMatches:
+          client.matchState &&
+          client.matchState.score.red.total === hostGame.match.score().red.total,
+        bytesOut: hostLink.stats.sent,
+      };
+
+      // Leave the page hosting, so the panel screenshot below is of a live
+      // session rather than an empty form.
+      app.net.update();
+      globalThis.__netCheck = { client, joinSim };
+      return out;
+    })()`);
+
+    console.log(
+      `  Multiplayer: seated on ${net.label} (${net.alliance}), ` +
+        `${net.packets} input packets moved it ${net.moved.toFixed(2)} m`,
+    );
+    console.log(
+      `    ${net.snapshots} snapshots, ${net.applied} drawn, ${net.balls} elements ` +
+        `within ${(net.worstBall * 1000).toFixed(0)} mm, robots within ` +
+        `${(net.worstRobot * 1000).toFixed(0)} mm, ${(net.bytesOut / 1024).toFixed(0)} kB sent`,
+    );
+    if (net.seats !== 1) failures.push(`the joiner was not seated (${net.seats} seats)`);
+    if (!net.label) failures.push('the joiner was never told which robot it has');
+    if (net.packets < 60) failures.push(`only ${net.packets} input packets arrived`);
+    if (net.moved < 0.3) {
+      failures.push(`a remote driver moved its robot only ${net.moved.toFixed(2)} m`);
+    }
+    if (net.snapshots < 20) failures.push(`only ${net.snapshots} snapshots arrived`);
+    if (net.applied < 1) failures.push('no snapshot was ever drawn');
+    if (net.mismatch) failures.push(`the joiner refused the snapshots: ${net.mismatch}`);
+    if (net.worstBall > 0.3) {
+      failures.push(`the joiner's elements are ${net.worstBall.toFixed(2)} m out`);
+    }
+    if (net.worstRobot > 0.4) {
+      failures.push(`the joiner's robots are ${net.worstRobot.toFixed(2)} m out`);
+    }
+    if (!net.scoreMatches) failures.push('the joiner has a different score from the host');
+
+    await cdp.evaluate('(() => { globalThis.ftcSim.net.toggle(true); return true; })()');
+    await sleep(400);
+    const shotNet = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const netPath = shotPath.replace(/\.png$/, '-multiplayer.png');
+    await writeFile(netPath, Buffer.from(shotNet.data, 'base64'));
+    console.log(`  Screenshot: ${netPath}`);
+    await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.net.toggle(false);
+      app.net._leave();
+      globalThis.__netCheck?.client?.close();
+      globalThis.__netCheck = null;
+      return true;
+    })()`);
+
     // --- The REFEREE, through the real loop.
     //
     // A foul is 20 points and the panel is where a driver finds out about it,
