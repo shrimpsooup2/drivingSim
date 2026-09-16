@@ -53,18 +53,33 @@ const SHOT_HEADING = 0.06;
 const WALL_MARGIN = 0.06;
 
 /**
- * Half-extents of the keep-out box around the HIVE assembly, plus a robot's
- * worth of clearance.
+ * The two things a ROBOT can actually hit in the middle of the FIELD, as
+ * centre-of-robot keep-out boxes.
  *
- * The two A-frames sit at x = +/-0.60 with their feet running from y = -0.49 to
- * +0.49 and their struts leaning inward, so the whole middle of the FIELD is
- * blocked in a band. A straight line from one side to the other goes through a
- * strut leg, and a robot driving it simply stops -- one pressed itself against
- * a strut for a whole MATCH at 0.7 power with four POLLEN aboard and a clear
- * shot two metres away. Going round is not an optimisation, it is the only way
- * across.
+ * **Two boxes, not one.** This was a single box spanning `|x| < 0.78`, which is
+ * wrong in the expensive direction: it declared the whole middle of the FIELD
+ * blocked, including the corridor *between* the A-frames that a ROBOT really
+ * can drive through. Worse, anything inside it was unroutable -- the segment
+ * test reports a crossing whenever an endpoint is inside the box -- so every
+ * element the HIVE dropped when it TIPPED landed in a region the AI would
+ * circle forever without ever reaching. A cycler spent 100 seconds of a
+ * 120-second TELEOP "collecting" without picking anything up.
+ *
+ * The real geometry (`BiobuzzField._buildObstacles`) is a foot bar at
+ * `|x|` 0.578 to 0.629 running from y -0.495 to +0.495, plus the reachable
+ * shadow of each strut leaning in to `|x|` 0.483. Inflated by a robot's
+ * half-extent, that is a box a foot wide either side of centre, with 0.53 m of
+ * clear corridor down the middle and the whole FIELD open beyond `|y| > 0.71`.
  */
-const HIVE_KEEP_OUT = { halfX: 0.78, halfY: 0.66 };
+const FRAME_HALF_X = 0.073 + 0.216;
+const FRAME_HALF_Y = 0.495 + 0.216;
+const FRAME_CENTRE_X = 0.556;
+const HIVE_FRAMES = [
+  { centreX: -FRAME_CENTRE_X, halfX: FRAME_HALF_X, halfY: FRAME_HALF_Y },
+  { centreX: FRAME_CENTRE_X, halfX: FRAME_HALF_X, halfY: FRAME_HALF_Y },
+];
+/** The y a ROBOT runs along to pass the frames: clear of both, inside the wall. */
+const FRAME_LANE = FRAME_HALF_Y + 0.14;
 
 /**
  * Pick a plan for this robot, or null if it has no business in the game (no
@@ -77,6 +92,15 @@ const HIVE_KEEP_OUT = { halfX: 0.78, halfY: 0.66 };
 export function biobuzzPlan(ctx, state) {
   const { game, agent } = ctx;
   if (!game || !agent) return null;
+
+  // PARK is 5 points and it is only judged where the ROBOT is when the buzzer
+  // goes (Section 10.5.4), so there is no reason to be anywhere else at the
+  // end -- and no AI robot was ever collecting it. Long enough before the
+  // buzzer to cross the FIELD, short enough not to give up a cycle.
+  const remaining = game.match?.teleopRemaining ?? Infinity;
+  if (game.match?.driverControl && remaining <= PARK_SECONDS) {
+    return parkInLoadingZone(ctx);
+  }
 
   let intent;
   switch (agent.role) {
@@ -120,42 +144,86 @@ export function biobuzzPlan(ctx, state) {
  * @param {Vec2} to
  */
 export function routeAroundHive(from, to) {
-  if (!segmentCrossesBox(from, to, HIVE_KEEP_OUT)) return to;
+  // A ROBOT that has been shoved into a frame gets itself out first; from
+  // inside, every route "crosses" and nothing else can be decided.
+  const escape = nudgeClearOfFrames(from);
+  if (escape) return escape;
 
-  // Whichever end of the frame makes the shorter way round.
-  const lane = HIVE_KEEP_OUT.halfY + 0.14;
-  const viaPlus = Math.abs(from.y - lane) + Math.abs(to.y - lane);
-  const viaMinus = Math.abs(from.y + lane) + Math.abs(to.y + lane);
-  const yLane = viaPlus <= viaMinus ? lane : -lane;
+  // A destination inside a frame is not a destination -- an element resting
+  // against a foot bar cannot be driven onto. Stand at the edge instead and let
+  // the intake reach the rest of the way; it reaches four to six inches, which
+  // is more than the nudge moves.
+  const target = nudgeClearOfFrames(to) ?? to;
+
+  if (!HIVE_FRAMES.some((f) => segmentCrossesFrame(from, target, f))) return target;
+
+  // Round the end of the frames: whichever side is the shorter way, unless the
+  // target is itself beyond the frames in y, in which case go round on its side
+  // so the last leg does not have to cross back.
+  let yLane;
+  if (Math.abs(target.y) > FRAME_HALF_Y) {
+    yLane = Math.sign(target.y) * FRAME_LANE;
+  } else {
+    const viaPlus = Math.abs(from.y - FRAME_LANE) + Math.abs(target.y - FRAME_LANE);
+    const viaMinus = Math.abs(from.y + FRAME_LANE) + Math.abs(target.y + FRAME_LANE);
+    yLane = viaPlus <= viaMinus ? FRAME_LANE : -FRAME_LANE;
+  }
 
   // Not in the lane yet: get into it without changing x, which is a straight
   // sideways move for a mecanum and a short turn-and-go for a tank.
   if (Math.abs(from.y - yLane) > 0.16) return new Vec2(from.x, yLane);
 
-  // In the lane: run along it until the frame is behind, then hand back over.
-  const heading = Math.sign(to.x - from.x) || 1;
-  const exit = heading * (HIVE_KEEP_OUT.halfX + 0.14);
-  if (from.x * heading < exit * heading) return new Vec2(exit, yLane);
-  return to;
+  // In the lane and clear of both frames in y, so running along it to the
+  // target's own x is always safe. From there the last leg is a straight line
+  // at an x the frames do not occupy, because `target` was nudged out of them.
+  return new Vec2(target.x, yLane);
 }
 
-/** Does the segment from `a` to `b` pass through an origin-centred box? */
-function segmentCrossesBox(a, b, box) {
-  // Cheap rejects first: both ends clear on the same side.
-  if (Math.max(a.x, b.x) < -box.halfX || Math.min(a.x, b.x) > box.halfX) return false;
-  if (Math.max(a.y, b.y) < -box.halfY || Math.min(a.y, b.y) > box.halfY) return false;
+/**
+ * The nearest point outside every frame box, or null if the point is already
+ * clear.
+ *
+ * Pushed out along whichever face is closest, which for an element in the
+ * corridor beside a foot bar means stepping inward into the corridor rather
+ * than all the way round the frame.
+ *
+ * @param {Vec2} p
+ */
+function nudgeClearOfFrames(p) {
+  for (const frame of HIVE_FRAMES) {
+    const dx = p.x - frame.centreX;
+    if (Math.abs(dx) > frame.halfX || Math.abs(p.y) > frame.halfY) continue;
+    const outX = frame.halfX - Math.abs(dx);
+    const outY = frame.halfY - Math.abs(p.y);
+    if (outX <= outY) {
+      const side = Math.sign(dx) || (frame.centreX < 0 ? 1 : -1);
+      return new Vec2(frame.centreX + side * (frame.halfX + 0.02), p.y);
+    }
+    const side = Math.sign(p.y) || 1;
+    return new Vec2(p.x, side * (frame.halfY + 0.02));
+  }
+  return null;
+}
 
-  const inside = (p) => Math.abs(p.x) <= box.halfX && Math.abs(p.y) <= box.halfY;
-  if (inside(a) || inside(b)) return true;
+/** Does the segment from `a` to `b` pass through one frame's keep-out box? */
+function segmentCrossesFrame(a, b, frame) {
+  const ax = a.x - frame.centreX;
+  const bx = b.x - frame.centreX;
+  // Cheap rejects first: both ends clear on the same side.
+  if (Math.max(ax, bx) < -frame.halfX || Math.min(ax, bx) > frame.halfX) return false;
+  if (Math.max(a.y, b.y) < -frame.halfY || Math.min(a.y, b.y) > frame.halfY) return false;
+
+  const inside = (x, y) => Math.abs(x) <= frame.halfX && Math.abs(y) <= frame.halfY;
+  if (inside(ax, a.y) || inside(bx, b.y)) return true;
 
   // Slab test along the segment.
-  const dx = b.x - a.x;
+  const dx = bx - ax;
   const dy = b.y - a.y;
   let t0 = 0;
   let t1 = 1;
   for (const [origin, delta, half] of [
-    [a.x, dx, box.halfX],
-    [a.y, dy, box.halfY],
+    [ax, dx, frame.halfX],
+    [a.y, dy, frame.halfY],
   ]) {
     if (Math.abs(delta) < 1e-9) {
       if (Math.abs(origin) > half) return false;
@@ -191,13 +259,36 @@ export function cycleToCell(ctx, state, volley) {
   if (!launcher || !intake) return defend(ctx, state);
 
   const target = game.field.hiveTarget(agent.alliance);
-  const wanted = volley ? intake.capacity : 1;
+  const wanted = Math.max(1, intake.capacity);
 
-  // Commit, so it does not dither one element short of a volley or turn back
-  // for another POLLEN with a loaded magazine.
-  if (state.phase !== 'shooting' && intake.count >= wanted) state.phase = 'shooting';
-  if (state.phase === 'shooting' && intake.count === 0) state.phase = 'collecting';
+  // Fill up before driving anywhere.
+  //
+  // A cycler used to leave as soon as it had *one* element, which meant paying
+  // the whole drive to a shooting spot and back for every single POLLEN: 100
+  // seconds of a 120-second TELEOP spent collecting and 20 spent shooting. The
+  // drive is the expensive part, so the magazine is what it is for.
+  //
+  // With patience, though -- late in a MATCH there may be nothing left to fill
+  // up with, and a ROBOT holding two POLLEN and waiting for a third scores
+  // nothing at all. `volley` waits longer, because a tipper needs a real load:
+  // seven elements in a raised CELL is what takes the arm over, so trickling
+  // them in never TIPS anything.
   if (!state.phase) state.phase = 'collecting';
+  if (state.phase !== 'shooting') {
+    if (state.fillCount !== intake.count) {
+      state.fillCount = intake.count;
+      state.fillSince = ctx.time;
+    }
+    const patience = volley ? FILL_PATIENCE * 2 : FILL_PATIENCE;
+    const waited = ctx.time - (state.fillSince ?? ctx.time);
+    if (intake.count >= wanted || (intake.count > 0 && waited > patience)) {
+      state.phase = 'shooting';
+    }
+  }
+  if (state.phase === 'shooting' && intake.count === 0) {
+    state.phase = 'collecting';
+    state.fillSince = ctx.time;
+  }
 
   if (state.phase === 'collecting') return collect(ctx, state);
 
@@ -223,6 +314,11 @@ export function cycleToCell(ctx, state, volley) {
   }
 
   const spot = shootingSpot(ctx, state);
+  // Spin up for the shot it is *going* to take, not the one it cannot take
+  // from here. A flywheel has no brake, so arriving 300 rpm fast means sitting
+  // there for three seconds while it coasts down -- and arriving already at
+  // the right speed is exactly what a driver does on the way to their spot.
+  launcher.aimAt(target, undefined, spot);
   return {
     point: spot,
     arrive: true,
@@ -231,6 +327,16 @@ export function cycleToCell(ctx, state, volley) {
     spin: true,
   };
 }
+
+/**
+ * How long a ROBOT keeps trying to fill its magazine before going to shoot
+ * with what it has.
+ *
+ * Two and a half seconds of nothing arriving means nothing is coming: either
+ * everything nearby is gone or the thing it is driving at is not gettable.
+ * Either way, what it is holding is worth more in a CELL than in the intake.
+ */
+const FILL_PATIENCE = 2.5;
 
 /**
  * Collect POLLEN and drop it into the top of a FLOWER.
@@ -298,6 +404,40 @@ export function fillFlowers(ctx, state) {
  * @param {import('./behaviors.js').AiContext & {game: any, agent: AgentView}} ctx
  * @param {Record<string, any>} state
  */
+/**
+ * How long before the buzzer an AI heads for its LOADING ZONE.
+ *
+ * Six seconds crosses the FIELD with something in hand, which is all PARK
+ * needs: it is judged on where the ROBOT is at the buzzer and nothing else.
+ */
+const PARK_SECONDS = 6;
+
+/**
+ * Drive into the middle of this ALLIANCE'S own LOADING ZONE.
+ *
+ * `Match.parked` wants the ROBOT's box overlapping the zone, so the middle of
+ * it is comfortably enough, and it keeps clear of the perimeter wall.
+ *
+ * @param {import('./behaviors.js').AiContext & {game: any, agent: AgentView}} ctx
+ */
+function parkInLoadingZone(ctx) {
+  const zones = ctx.game?.field?.zones;
+  const zone = ctx.agent?.alliance === 'blue' ? zones?.blueLoading : zones?.redLoading;
+  if (!zone) {
+    return { point: ctx.selfPosition.clone(), arrive: true, aggression: 0.2, intake: 0 };
+  }
+  const inward = zone.centerX < 0 ? 1 : -1;
+  const point = new Vec2(zone.centerX + inward * zone.width * 0.25, zone.centerY);
+  return {
+    point: clampToField(point, ctx.fieldHalfSize, 0.24),
+    arrive: true,
+    aggression: 0.85,
+    // Still collecting on the way in: a POLLEN swept up en route is free, and
+    // an element in the intake at the buzzer costs nothing.
+    intake: ctx.agent?.jammed ? 0 : 1,
+  };
+}
+
 /**
  * Whether a point is on this ALLIANCE'S own half of the FIELD, by at least
  * `margin`.
@@ -375,7 +515,10 @@ export function collect(ctx, state) {
   // scores nothing and empties a tube it had already filled.
   const flower = agent.role === 'flowerFiller' ? null : nearestFlower(ctx, intake, true);
   if (!flower) {
-    return { point: ctx.selfPosition.clone(), arrive: true, aggression: 0.2, intake: 0 };
+    // Genuinely nothing to fetch. Standing still was worth nothing; the
+    // LOADING ZONE is worth 5 for PARK (Table 10-2) and is also where a human
+    // rolls NECTAR in, so it is the right place to be waiting.
+    return parkInLoadingZone(ctx);
   }
   const len = Math.hypot(flower.x, flower.y) || 1;
   const standoff = (intake?.robot?.halfLength ?? 0.22) + 0.1;

@@ -261,8 +261,29 @@ export class Launcher extends Subsystem {
   }
 
   /** True when the wheel is close enough to target to shoot. */
+  /**
+   * Whether the wheel is at the speed it was told to hold.
+   *
+   * A *band*, not a floor. This used to be `rpm >= target * tolerance`, which
+   * calls a wheel coasting down from a higher setting ready -- and a flywheel
+   * has no brake, so after one long-range shot it sits above the next
+   * shot's target for seconds. Exit speed is proportional to RPM and range
+   * goes as its square, so a wheel 14 percent fast puts the element a third of
+   * a metre past a 20 in aperture. Two thirds of an AI robot's shots were
+   * fired over the commanded speed and sailed straight over the CELL.
+   *
+   * Symmetric on `readyTolerance` because the aperture is: at 1.7 m, three
+   * percent of speed is about four inches of range either way, which is the
+   * width of the target's margin for error.
+   */
   get ready() {
-    return this.spinning && this.rpm >= this.targetRpm * this.readyTolerance;
+    if (!this.spinning || this.targetRpm <= 0) return false;
+    return Math.abs(this.rpm - this.targetRpm) <= this.targetRpm * (1 - this.readyTolerance);
+  }
+
+  /** True when the wheel is past its target and has to coast back down. */
+  get overSpeed() {
+    return this.spinning && this.rpm > this.targetRpm * (2 - this.readyTolerance);
   }
 
   /** Fraction of the way back to target, for a HUD bar. */
@@ -628,8 +649,15 @@ export class Launcher extends Subsystem {
    * Point the hood and set the target RPM to hit `target`, if it can be hit.
    * @returns {boolean} whether a workable shot was found and dialled in.
    */
-  aimAt(target, mass = POLLEN_MASS) {
-    const solution = this.aimFor(target, mass);
+  /**
+   * @param {{x: number, y: number}|null} [origin] aim for a shot taken from
+   *   *there* rather than from where the ROBOT is now. What a driver does on
+   *   the way to a spot: the wheel has spun up by the time they arrive, and a
+   *   flywheel that has to change speed on arrival costs seconds it cannot
+   *   brake away.
+   */
+  aimAt(target, mass = POLLEN_MASS, origin = null) {
+    const solution = this.aimFor(target, mass, origin);
     if (!solution) return false;
     this.setHoodAngle(solution.angle);
     this.setTargetRpm(solution.rpm);

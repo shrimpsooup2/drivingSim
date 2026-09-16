@@ -428,6 +428,46 @@ match every time. The axes are deliberately separate because they are separate
 at a real event: practising against a rookie on an excellent robot and a
 veteran on a rough one are different exercises, and you meet both.
 
+### How they play, and four things that were wrong with it
+
+An AI robot goes through the same subsystem calls a driver's buttons make —
+there is no shortcut into the ball world, so its shots are subject to the same
+recovery, droop and aperture as yours. What it *decides* is a plan per role:
+collect, fill up, drive to somewhere the mechanism can make the shot, stop,
+aim, fire; or collect and lift into a flower; or get between you and your own
+cell.
+
+A full teleop used to produce about 55 points a side. It now produces 90 to
+130, and the difference was four bugs rather than any cleverness:
+
+- **The keep-out box was one box over the whole middle of the field.** The real
+  geometry is two A-frames a foot wide with a clear corridor between them, and
+  a routing box that covers a target makes it unroutable — the segment test
+  reports a crossing whenever an endpoint is inside. So every element the hive
+  dropped when it tipped landed in a region the AI would circle forever without
+  reaching. One cycler spent 100 seconds of a 120-second teleop "collecting"
+  and picked up nothing.
+- **A coasting flywheel counted as ready.** `ready` tested `rpm >= target`, and
+  a flywheel has no brake, so after one long shot it sits above the next
+  shot's target for seconds. Exit speed goes with RPM and range with its
+  square, so a wheel 14% fast puts the element a third of a metre past a 20 in
+  aperture. Two thirds of every AI robot's shots were fired over the commanded
+  speed and sailed straight over the cell.
+- **Cyclers left as soon as they had one element.** The drive is the expensive
+  part of a cycle; the magazine is what it is for. They now fill up first, and
+  spin the wheel up for the spot they are driving to rather than the one they
+  cannot shoot from — with patience, because late in a match there may be
+  nothing left to fill up with.
+- **Nobody parked.** Park is 5 points and it is judged purely on where the
+  robot is at the buzzer, so there is no reason to be anywhere else at the end.
+
+A flower robot also used to empty the flower it was filling: parked against the
+tube with its roller running, `Intake._collect` pulled POLLEN back out of the
+bottom. And with fewer than four robots on the field, the unclaimed pre-load
+groups were left in limbo — twelve of the forty POLLEN missing from every
+practice session, since the roster is off by default. Section 10.3.1 says where
+they go: the centre of the loading zone, against the wall.
+
 Every AI drives a full `Robot` through the same subsystems you do — the same
 motor curves, the same battery, the same traction, the same `Intake.command`
 and `Launcher.fire()`. None of them has a shortcut into the ball world, so an

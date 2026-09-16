@@ -296,12 +296,29 @@ export class BiobuzzGame {
    */
   loadPreloads() {
     const groups = this.field.preloadGroups;
+    const taken = new Set();
     this.participants.forEach((entry, i) => {
       const group = groups[i];
       if (!group || !entry.intake) return;
+      taken.add(i);
       entry.intake.held.length = 0;
       entry.intake.capacity = Math.max(entry.intake.capacity, group.length);
       for (const ball of group) entry.intake.give(ball);
+    });
+
+    // Every group that has no ROBOT to sit in still belongs on the FIELD.
+    //
+    // Section 10.3.1: "ROBOTS that are not present for their MATCH will have
+    // their pre-load POLLEN placed in approximately the center of the LOADING
+    // ZONE against the perimeter wall." They were simply left in limbo
+    // instead, which quietly removed them from play -- and since the roster is
+    // off by default, that was *twelve* of the forty POLLEN missing from every
+    // practice session. A pushbot's four go the same way: it is present, but
+    // it has nowhere to put them.
+    groups.forEach((group, i) => {
+      if (taken.has(i)) return;
+      const alliance = i % 2 === 0 ? this.alliance : this.alliance === 'red' ? 'blue' : 'red';
+      this.field.placeInLoadingZone(group, alliance);
     });
     return this;
   }

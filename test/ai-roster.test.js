@@ -461,3 +461,133 @@ test('a thrower is loaded or it is not -- there is no firing early', () => {
   thrower.applyForces(0.1, 12);
   assert.equal(thrower.current, 0, 'loaded and idle draws nothing');
 });
+
+// -------------------------------------------------------------- routing
+
+test('the corridor between the A-frames is drivable, so the middle is reachable', () => {
+  // An element the HIVE has just dropped lands right under it. The keep-out
+  // used to be one box over the whole middle of the FIELD, and a target inside
+  // a box is unroutable -- the AI circled it for the rest of the MATCH without
+  // ever reaching it.
+  const from = new Vec2(0, -1.4);
+  const to = new Vec2(0, 0);
+  assert.deepEqual(
+    [routeAroundHive(from, to).x, routeAroundHive(from, to).y],
+    [to.x, to.y],
+    'front to back through the middle is a straight line',
+  );
+});
+
+test('a target inside an A-frame footprint becomes a spot beside it', () => {
+  // Resting against the inner face of the red foot bar: not somewhere a ROBOT
+  // can put its centre, so the plan has to stand at the edge and let the intake
+  // reach. The old routing looped forever on this instead, because the segment
+  // test calls any endpoint inside the box a crossing.
+  const to = new Vec2(-0.55, 0.1);
+  // Approached from inside the corridor, which is where the detour ends up, the
+  // standing spot is right there and the intake covers the rest -- it reaches
+  // four to six inches.
+  const beside = routeAroundHive(new Vec2(-0.1, 0.1), to);
+  assert.notDeepEqual([beside.x, beside.y], [to.x, to.y], 'it is not driven onto');
+  assert.ok(
+    Math.hypot(beside.x - to.x, beside.y - to.y) < 0.35,
+    `stood ${Math.hypot(beside.x - to.x, beside.y - to.y).toFixed(2)} m away`,
+  );
+
+  // And from outside the frame the route converges on that same spot rather
+  // than cycling, which is the behaviour that was broken.
+  let at = new Vec2(-1.5, 0.1);
+  const seen = new Set();
+  for (let i = 0; i < 12; i++) {
+    const next = routeAroundHive(at, to);
+    const key = `${next.x.toFixed(3)},${next.y.toFixed(3)}`;
+    if (key === `${at.x.toFixed(3)},${at.y.toFixed(3)}`) break;
+    assert.ok(!seen.has(key), `route revisited ${key}`);
+    seen.add(key);
+    at = next;
+  }
+  assert.ok(
+    Math.hypot(at.x - to.x, at.y - to.y) < 0.45,
+    `the route ended ${Math.hypot(at.x - to.x, at.y - to.y).toFixed(2)} m from the element`,
+  );
+});
+
+test('crossing the FIELD sideways goes round the end of the frames', () => {
+  const from = new Vec2(-1.5, 0);
+  const to = new Vec2(1.5, 0);
+  const first = routeAroundHive(from, to);
+  assert.notDeepEqual([first.x, first.y], [to.x, to.y], 'the straight line is blocked');
+  assert.ok(Math.abs(first.y) > 0.7, `into a lane clear of the frames: y=${first.y}`);
+
+  // Follow the route and it terminates at the destination rather than cycling.
+  let at = from;
+  const seen = new Set();
+  for (let i = 0; i < 12; i++) {
+    const next = routeAroundHive(at, to);
+    if (next.x === to.x && next.y === to.y) break;
+    const key = `${next.x.toFixed(3)},${next.y.toFixed(3)}`;
+    assert.ok(!seen.has(key), `route revisited ${key}`);
+    seen.add(key);
+    at = next;
+  }
+  assert.ok(
+    Math.hypot(at.x - to.x, at.y - to.y) < 1.2,
+    `the route got to within ${Math.hypot(at.x - to.x, at.y - to.y).toFixed(2)} m`,
+  );
+});
+
+// ----------------------------------------------------------- playing better
+
+test('an AI cycler fills its magazine before driving off to shoot', () => {
+  const config = new Config();
+  config.set('ai.enabled', false);
+  const sim = new Simulation(config);
+  const opponent = sim.addOpponent({
+    id: 'blue1',
+    alliance: 'blue',
+    archetypeId: 'twinWheel',
+    qualityId: 'elite',
+    skillId: 'veteran',
+    start: { x: 1.4, y: 0.4, heading: Math.PI },
+  });
+  const game = sim.enableGame({ alliance: 'red', startPhase: 'teleop' }).start();
+  const intake = opponent._biobuzz.intake;
+  assert.ok(intake.capacity >= 3, 'this archetype has a magazine worth filling');
+
+  // Empty it, then give it one element and let it plan.
+  for (const ball of intake.held.slice()) ball.release();
+  intake.held.length = 0;
+  const pollen = game.field.ballWorld.balls.filter((b) => b.free && b.kind === 'pollen')[0];
+  intake.give(pollen);
+  for (let i = 0; i < 30; i++) sim.step(1 / 60);
+
+  assert.equal(
+    opponent.state.phase,
+    'collecting',
+    'one element is not a cycle -- the drive to the CELL costs more than the pickup',
+  );
+});
+
+test('an AI heads for its LOADING ZONE before the buzzer, which is 5 points', () => {
+  const config = new Config();
+  config.set('ai.enabled', false);
+  const sim = new Simulation(config);
+  const opponent = sim.addOpponent({
+    id: 'blue1',
+    alliance: 'blue',
+    archetypeId: 'twinWheel',
+    qualityId: 'elite',
+    skillId: 'veteran',
+    start: { x: 0.9, y: -1.4, heading: Math.PI },
+  });
+  const game = sim.enableGame({ alliance: 'red', startPhase: 'teleop', teleopSeconds: 8 }).start();
+
+  for (let i = 0; i < 60 * 9; i++) sim.step(1 / 60);
+  assert.equal(game.match.phase, 'ended');
+  assert.ok(
+    game.match.parked(opponent.robot, 'blue'),
+    `expected a PARK, ended at (${opponent.robot.body.position.x.toFixed(2)}, ` +
+      `${opponent.robot.body.position.y.toFixed(2)})`,
+  );
+  assert.equal(game.match.score().blue.parkTeleop, 5);
+});

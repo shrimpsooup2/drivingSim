@@ -445,3 +445,36 @@ test('a drill loaded with no game running leaves it off', () => {
   sim.challenges.clear();
   assert.equal(sim.game, null, 'nothing to restore');
 });
+
+test('a ROBOT that is not there still has its pre-load POLLEN on the FIELD', () => {
+  const config = new Config();
+  // One ROBOT, so three of the four pre-load groups have nobody to sit in.
+  config.set('ai.enabled', false);
+  const sim = new Simulation(config);
+  const game = sim.enableGame({ alliance: 'red' }).start();
+
+  // Section 10.3.1: "ROBOTS that are not present for their MATCH will have
+  // their pre-load POLLEN placed in approximately the center of the LOADING
+  // ZONE against the perimeter wall." They used to be left in limbo, which
+  // silently removed twelve of the forty POLLEN from every practice session --
+  // and the roster is off by default, so that was the default.
+  const stranded = game.field.allBalls.filter((b) => b.container?.kind === 'preload');
+  assert.equal(stranded.length, 0, 'nothing is left off the FIELD');
+
+  const loose = game.field.ballWorld.freeBalls.filter((b) => b.kind === 'pollen');
+  assert.equal(
+    loose.length,
+    POLLEN_COUNT - 16 /* in the FLOWERS */ - PRELOAD_POLLEN /* in this ROBOT */,
+    'and every other POLLEN is loose on the tiles',
+  );
+
+  // The three unclaimed groups are in the two LOADING ZONES, against the wall.
+  const zones = [game.field.zones.redLoading, game.field.zones.blueLoading];
+  const inZones = loose.filter((b) =>
+    zones.some((z) => z.contains?.(b.x, b.y) ?? z.overlapsCircle(b.x, b.y, b.radius)),
+  );
+  assert.equal(inZones.length, 3 * PRELOAD_POLLEN);
+  for (const ball of inZones) {
+    assert.ok(Math.abs(ball.z - ball.radius) < 1e-9, 'resting on the TILES');
+  }
+});

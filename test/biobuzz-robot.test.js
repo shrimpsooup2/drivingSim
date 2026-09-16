@@ -622,3 +622,104 @@ test('the flywheel spins up and idles like a real one', () => {
     'gearing up shrinks the reflected rotor inertia as its square',
   );
 });
+
+test('a flywheel coasting down from a higher setting is not ready', () => {
+  const launcher = new Launcher({ targetRpm: 1400 });
+  launcher.spinning = true;
+  launcher.omega = (1400 * 2 * Math.PI) / 60;
+  assert.ok(launcher.ready, 'on target');
+
+  // Fourteen percent fast. Exit speed goes with RPM and range with its square,
+  // so this puts the element a third of a metre past a 20 in aperture -- and
+  // the old one-sided test called it ready, so two thirds of an AI robot's
+  // shots were fired over the commanded speed and sailed over the CELL.
+  launcher.omega = (1600 * 2 * Math.PI) / 60;
+  assert.equal(launcher.ready, false, 'over the commanded speed is not ready');
+  assert.ok(launcher.overSpeed);
+
+  launcher.omega = (1100 * 2 * Math.PI) / 60;
+  assert.equal(launcher.ready, false, 'and neither is under it');
+
+  // A wheel that is not spinning is never ready, whatever it reads.
+  launcher.spinning = false;
+  launcher.omega = (1400 * 2 * Math.PI) / 60;
+  assert.equal(launcher.ready, false);
+});
+
+test('aimAt can aim for a shot from somewhere the ROBOT has not got to yet', () => {
+  const field = new BiobuzzField({ field: new Field(new Config().values) });
+  const launcher = new Launcher();
+  const robot = new Robot(new Config().values);
+  robot.addSubsystem(launcher);
+  robot.reset(-1.6, 0, 0);
+  const target = field.hiveTarget('red');
+
+  // Aimed from where it stands.
+  assert.ok(launcher.aimAt(target));
+  const here = { rpm: launcher.targetRpm, angle: launcher.hoodAngle };
+
+  // Aimed for a spot half a metre further out, which is where it is driving
+  // to. A
+  // flywheel has no brake, so arriving already at the right speed is the
+  // difference between shooting on arrival and waiting seconds to coast down.
+  // Not closer than about 0.9 m, where no hood angle arrives descending at
+  // all and there is no shot to aim.
+  const spot = { x: -1.5, y: 0.9 };
+  assert.ok(launcher.aimAt(target, undefined, spot));
+  assert.notEqual(launcher.targetRpm, here.rpm, 'a different range needs a different shot');
+  const solution = launcher.aimFor(target, undefined, spot);
+  assert.ok(solution);
+  assert.ok(Math.abs(launcher.targetRpm - solution.rpm) < 1e-6);
+  assert.ok(Math.abs(launcher.hoodAngle - solution.angle) < 1e-6);
+
+  // And it is genuinely a different shot from the one it is standing on.
+  assert.ok(
+    Math.abs(solution.rpm - here.rpm) > 20,
+    `${solution.rpm.toFixed(0)} rpm from the spot against ${here.rpm.toFixed(0)} from here`,
+  );
+});
+
+test('a FLOWER-filling intake does not empty the FLOWER it is filling', () => {
+  const field = new BiobuzzField({ field: new Field(new Config().values) });
+  const intake = new Intake({ placeOnly: true, capacity: 4 });
+  const robot = new Robot(new Config().values);
+  robot.addSubsystem(intake);
+  intake.ballWorld = field.ballWorld;
+  intake.flowers = field.flowers;
+
+  const flower = field.flowers[0];
+  const before = flower.stack.length;
+  assert.ok(before > 0, 'the FLOWER starts with POLLEN in it (Section 10.3.1)');
+
+  // Parked right against the tube with the roller running, which is exactly
+  // where a FLOWER robot spends its MATCH. It used to pull POLLEN back out of
+  // the bottom of the tube it had just filled.
+  const len = Math.hypot(flower.x, flower.y) || 1;
+  const standoff = robot.halfLength + 0.05;
+  robot.reset(
+    flower.x - (flower.x / len) * standoff,
+    flower.y - (flower.y / len) * standoff,
+    Math.atan2(flower.y, flower.x),
+  );
+  intake.command = 1;
+  for (let i = 0; i < 200; i++) {
+    intake.applyForces(1 / 200, 12);
+    field.ballWorld.step(1 / 200);
+  }
+  assert.equal(flower.stack.length, before, 'the tube is untouched');
+
+  // A cycler, which is allowed to (G418 permits POLLEN from the bottom), still
+  // gets one.
+  const cycler = new Intake({ capacity: 4 });
+  const other = new Robot(new Config().values);
+  other.addSubsystem(cycler);
+  cycler.ballWorld = field.ballWorld;
+  cycler.flowers = field.flowers;
+  other.reset(robot.body.position.x, robot.body.position.y, Math.atan2(flower.y, flower.x));
+  cycler.command = 1;
+  for (let i = 0; i < 200; i++) {
+    cycler.applyForces(1 / 200, 12);
+    field.ballWorld.step(1 / 200);
+  }
+  assert.ok(flower.stack.length < before, 'and a CELL robot may take one from the bottom');
+});

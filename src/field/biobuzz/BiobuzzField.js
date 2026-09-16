@@ -357,6 +357,35 @@ export class BiobuzzField {
     return { preload };
   }
 
+  /**
+   * Put a group of elements on the TILES in the middle of a LOADING ZONE,
+   * against the perimeter wall.
+   *
+   * Section 10.3.1's handling for a ROBOT that is not there: its pre-load goes
+   * "in approximately the center of the LOADING ZONE against the perimeter
+   * wall". Spread along the wall rather than stacked, so they do not start the
+   * MATCH resolving an overlap.
+   *
+   * @param {Ball[]} group
+   * @param {'red'|'blue'} alliance
+   */
+  placeInLoadingZone(group, alliance) {
+    const zone = alliance === 'red' ? this.zones.redLoading : this.zones.blueLoading;
+    const inward = zone.centerX < 0 ? 1 : -1;
+    group.forEach((ball, i) => {
+      const spread = (i - (group.length - 1) / 2) * ball.radius * 2.3;
+      ball.release();
+      ball.setPosition(
+        zone.centerX + inward * (ball.radius + 0.01),
+        zone.centerY + spread,
+        ball.radius,
+      );
+      ball.stop();
+    });
+    this.ballWorld.settled = false;
+    return group;
+  }
+
   /** The pre-load POLLEN groups from the last `setup()`. */
   get preloadGroups() {
     return this._preload ?? [];

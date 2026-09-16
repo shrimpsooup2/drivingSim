@@ -323,7 +323,13 @@ export class Intake extends Subsystem {
 
     // Section 8: "ROBOTS can use sensors to collect POLLEN from FLOWERS". G418
     // allows removal from the bottom only, and only POLLEN fits.
-    for (const flower of this.flowers) {
+    //
+    // Not for a ROBOT built to fill them, though. A FLOWER robot spends its
+    // MATCH parked against a tube with its intake running, and this pulled
+    // POLLEN out of the bottom of the very FLOWER it had just filled -- a loop
+    // that scores nothing and empties a tube it had already paid for. One left
+    // a FLOWER on a single element after two minutes of work.
+    for (const flower of this.placeOnly ? [] : this.flowers) {
       if (this.full) break;
       const dx = flower.x - mouthX;
       const dy = flower.y - mouthY;
