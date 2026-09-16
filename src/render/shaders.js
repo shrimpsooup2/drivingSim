@@ -47,6 +47,14 @@ uniform vec3 uLightDir;
 uniform vec3 uSkyColor;
 uniform vec3 uGroundColor;
 uniform float uEmissive;
+/**
+ * Alpha below this is thrown away rather than blended, which is how the
+ * perforations in a POLLEN or NECTAR become real holes: the mask texture has
+ * the holes punched out of its alpha, and a discarded fragment writes no depth,
+ * so the inner shell drawn behind it shows through. Zero switches it off, which
+ * is everything else in the scene.
+ */
+uniform float uAlphaCut;
 
 out vec4 outColor;
 
@@ -60,6 +68,7 @@ void main() {
   vec3 ambient = mix(uGroundColor, uSkyColor, hemi);
 
   vec4 tex = mix(vec4(1.0), texture(uTexture, vUv), uUseTexture);
+  if (uAlphaCut > 0.0 && tex.a < uAlphaCut) discard;
   vec3 base = uColor.rgb * tex.rgb;
   vec3 lit = base * (ambient + key * 0.75);
   outColor = vec4(mix(lit, base, uEmissive), uColor.a * tex.a);

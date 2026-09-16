@@ -881,9 +881,65 @@ async function main() {
     const hivePath = shotPath.replace(/\.png$/, '-biobuzz-hive.png');
     await writeFile(hivePath, Buffer.from(shotHive.data, 'base64'));
     console.log(`  Screenshot: ${hivePath}`);
+
+    // --- A SCORING ELEMENT close up, big enough to see the perforations.
+    //
+    // The holes are cut per pixel from an alpha mask and the dark inside is a
+    // second shell, so "do the elements look like the elements" is a thing that
+    // can break silently. A POLLEN and a NECTAR side by side, turned onto an
+    // angle so the moulding seam and both hole bands are in shot.
+    const elements = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const g = app.sim.game;
+      const pollen = g.field.ballWorld.balls.find((b) => b.kind === 'pollen');
+      const nectar = g.field.nectar[g.alliance][0];
+      for (const b of [pollen, nectar]) {
+        b.release();
+        b.outOfBounds = false;
+        b.stop();
+      }
+      pollen.setPosition(-0.06, 0, pollen.radius);
+      nectar.setPosition(0.08, 0, nectar.radius);
+      // Tipped off axis, so neither a pole nor the seam faces the camera square
+      // on, and rolling, so the orientation integrator is what put it there.
+      pollen.setSpin(2.5, 1.5, 0.8);
+      nectar.setSpin(-1.8, 2.2, -1);
+      const spun = pollen.spinRate;
+      for (let i = 0; i < 60; i++) g.update(1 / 60);
+      app.renderer.camera.orbitTarget[0] = 0;
+      app.renderer.camera.orbitTarget[1] = 0;
+      app.renderer.camera.orbitTarget[2] = 0.05;
+      app.config.set('view.orbitFollow', false);
+      app.config.set('view.orbitPitch', 18);
+      app.config.set('view.orbitYaw', -90);
+      app.config.set('view.orbitDistance', 0.42);
+      return {
+        turned: Math.abs(pollen.ow) < 0.9999,
+        // The spin it was *given*; rolling resistance has taken most of it
+        // back by the time the frame is captured, which is the point -- the
+        // orientation is where that spin went.
+        pollenSpin: +spun.toFixed(2),
+        holes: app.renderer.meshes.ball ? 'ball mesh' : 'missing',
+      };
+    })()`);
+    console.log(
+      `  Elements: close-up at 0.42 m, ${elements.holes}, POLLEN turned ${elements.turned} ` +
+        `while spinning ${elements.pollenSpin} rad/s`,
+    );
+    if (!elements.turned) {
+      failures.push('a spinning element never changed orientation');
+    }
+    if (elements.holes !== 'ball mesh') failures.push('the element mesh is missing');
+    await sleep(700);
+    const shotElement = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const elementPath = shotPath.replace(/\.png$/, '-biobuzz-element.png');
+    await writeFile(elementPath, Buffer.from(shotElement.data, 'base64'));
+    console.log(`  Screenshot: ${elementPath}`);
+
     await cdp.evaluate(`(() => {
       const app = globalThis.ftcSim;
       app.config.set('view.orbitFollow', true);
+      app.config.set('view.orbitDistance', 3.0);
       return true;
     })()`);
 

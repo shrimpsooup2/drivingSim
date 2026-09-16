@@ -10,7 +10,13 @@ import {
 } from './geometry.js';
 import { createCanvasTexture, createLineBatch, createMesh, createProgram, createWhiteTexture } from './gl.js';
 import { LINE_FRAGMENT, LINE_VERTEX, LIT_FRAGMENT, LIT_VERTEX } from './shaders.js';
-import { drawMecanumTread, drawPlate, drawTile, drawTractionTread } from './textures.js';
+import {
+  drawMecanumTread,
+  drawPlate,
+  drawTile,
+  drawTractionTread,
+  drawWiffleBall,
+} from './textures.js';
 import { CameraRig } from './Camera.js';
 import { clamp } from '../math/MathUtil.js';
 import {
@@ -40,6 +46,18 @@ const STATUS_COLOURS = {
   active: [0.20, 0.82, 0.98, 1],
   done: [0.28, 0.78, 0.45, 1],
 };
+
+/**
+ * How far in the inner shell of a SCORING ELEMENT sits, as a fraction of the
+ * radius.
+ *
+ * A real moulded ball's wall is about a twentieth of its radius, but drawn at
+ * that it is a hairline: the eye reads depth through a hole from the *step*
+ * between the two shells, and it needs a few pixels of it at the size these
+ * render. An eighth is what makes the holes read as holes from the driver
+ * station without looking like they go to the centre.
+ */
+const BALL_SHELL = 0.88;
 
 const LIGHT_DIR = [0.45, 0.35, 0.82];
 const SKY = [0.42, 0.46, 0.54];
@@ -81,6 +99,16 @@ export class Renderer {
       arrow: createMesh(gl, arrowMesh(), this.lit.attributes),
       disc: createMesh(gl, discMesh(40), this.lit.attributes),
       sphere: createMesh(gl, sphereMesh(16, 10), this.lit.attributes),
+      /**
+       * A SCORING ELEMENT's outer shell, tessellated finer than the plain
+       * sphere.
+       *
+       * The holes themselves are cut per pixel by the alpha mask, so they stay
+       * round however coarse this is -- but the ball's *silhouette* is
+       * geometry, and at 16 segments a POLLEN filling the screen in the zoomed
+       * camera is visibly a polygon.
+       */
+      ball: createMesh(gl, sphereMesh(28, 18), this.lit.attributes),
       cell: createMesh(gl, cellMesh(CELL_SHOULDER_HEIGHT / CELL_OPENING_HEIGHT), this.lit.attributes),
     };
 
@@ -91,6 +119,10 @@ export class Renderer {
       mecanumLeft: createCanvasTexture(gl, 256, drawMecanumTread(1)),
       mecanumRight: createCanvasTexture(gl, 256, drawMecanumTread(-1)),
       traction: createCanvasTexture(gl, 256, drawTractionTread),
+      // One mask for all three element colours: it is white, and the shader
+      // multiplies it by the ball's own colour. 512 puts about 28 texels
+      // across a hole, which holds up zoomed in.
+      wiffle: createCanvasTexture(gl, 512, drawWiffleBall),
     };
 
     this.lines = createLineBatch(gl, this.lineProgram.attributes, 24576);
@@ -287,7 +319,11 @@ export class Renderer {
    * Issue one draw call.
    * @param {{vao:WebGLVertexArrayObject|null, count:number}} mesh
    */
-  _draw(mesh, model, color, texture = this.textures.white, emissive = 0) {
+  /**
+   * @param {number} [alphaCut] discard fragments whose texture alpha is below
+   *   this, for the perforated SCORING ELEMENTS. See `uAlphaCut`.
+   */
+  _draw(mesh, model, color, texture = this.textures.white, emissive = 0, alphaCut = 0) {
     const gl = this.gl;
     mat4.normalMatrix(this._normal, model);
     gl.uniformMatrix4fv(this.lit.uniforms.uModel, false, model);
@@ -295,6 +331,7 @@ export class Renderer {
     gl.uniform4fv(this.lit.uniforms.uColor, color);
     gl.uniform1f(this.lit.uniforms.uUseTexture, texture === this.textures.white ? 0 : 1);
     gl.uniform1f(this.lit.uniforms.uEmissive, emissive);
+    gl.uniform1f(this.lit.uniforms.uAlphaCut, alphaCut);
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.bindVertexArray(mesh.vao);
     gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
@@ -500,16 +537,38 @@ export class Renderer {
     }
 
     // --- SCORING ELEMENTS.
+    //
+    // Two shells each. The outer one carries the perforation mask and has its
+    // holes discarded, which writes no depth, so the inner one shows through
+    // them -- the darker inside of the far wall, which is what the holes read
+    // as in Figures 9-13 and 9-14. A single solid sphere with the holes painted
+    // on looked flat the moment the camera got close.
+    //
+    // Both are turned by the element's own orientation, which is the part that
+    // matters most: a pattern of holes that does not rotate with a rolling ball
+    // looks like a sticker on the floor.
     for (const ball of game.field.allBalls) {
       if (ball.container?.kind === 'preload' || ball.container?.kind === 'allianceArea') continue;
+      // An element that has left the FIELD is frozen where it crossed the wall,
+      // which is out in the air over the venue floor. It is in FIELD STAFF's
+      // hands until they roll it back (Section 10.8.2), so it is not drawn.
+      if (ball.outOfBounds) continue;
       const colour =
         ball.kind === 'pollen'
           ? [0.97, 0.79, 0.18, 1]
           : ball.alliance === 'red'
             ? [0.88, 0.22, 0.24, 1]
             : [0.22, 0.45, 0.9, 1];
-      mat4.composeZ(m, ball.x, ball.y, ball.z, 1, 0, ball.radius, ball.radius, ball.radius);
-      this._draw(this.meshes.sphere, m, colour, this.textures.white, 0.08);
+
+      mat4.composeQuat(m, ball.x, ball.y, ball.z, ball, ball.radius);
+      this._draw(this.meshes.ball, m, colour, this.textures.wiffle, 0.08, 0.5);
+
+      // The inside, a shell thickness in and much darker. Untextured, so no
+      // second set of holes lines up behind the first and lets you see the
+      // FIELD straight through the ball.
+      const inner = [colour[0] * 0.38, colour[1] * 0.38, colour[2] * 0.38, 1];
+      mat4.composeQuat(m, ball.x, ball.y, ball.z, ball, ball.radius * BALL_SHELL);
+      this._draw(this.meshes.sphere, m, inner, this.textures.white, 0);
     }
   }
 

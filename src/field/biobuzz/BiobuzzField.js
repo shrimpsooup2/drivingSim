@@ -305,6 +305,7 @@ export class BiobuzzField {
       ball.lastTouch = null;
       ball.fromTip = null;
       ball.caughtFromTip = null;
+      ball.resetOrientation();
       ball.setPosition(0, 0, -1);
     }
     this._returns.length = 0;

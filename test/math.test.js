@@ -6,6 +6,8 @@ import { Pose2d } from '../src/math/Pose2d.js';
 import { blendedCurve, deadband, wrapAngle, clamp, powerCurve } from '../src/math/MathUtil.js';
 import { PIDF } from '../src/math/PIDF.js';
 import { DelayLine, SlewRateLimiter, LowPassFilter } from '../src/math/filters.js';
+import * as mat4 from '../src/render/mat4.js';
+import { WIFFLE_HOLE_ANGLE, wiffleHoleAxes } from '../src/render/textures.js';
 
 const near = (a, b, eps = 1e-9) =>
   assert.ok(Math.abs(a - b) < eps, `expected ${a} to be within ${eps} of ${b}`);
@@ -149,4 +151,57 @@ test('clamp handles reversed and equal bounds safely', () => {
   near(clamp(-5, 0, 10), 0);
   near(clamp(50, 0, 10), 10);
   near(clamp(3, 2, 2), 2);
+});
+
+test('mat4.composeQuat places, turns and scales a SCORING ELEMENT', () => {
+  const m = mat4.create();
+
+  // No rotation: a uniform scale with a translation.
+  mat4.composeQuat(m, 1, 2, 3, { ox: 0, oy: 0, oz: 0, ow: 1 }, 0.5);
+  assert.deepEqual([...m.slice(0, 4)], [0.5, 0, 0, 0]);
+  assert.deepEqual([...m.slice(12)], [1, 2, 3, 1]);
+
+  // A quarter turn about z takes the model's x axis onto world y.
+  const a = Math.PI / 2;
+  mat4.composeQuat(m, 0, 0, 0, { ox: 0, oy: 0, oz: Math.sin(a / 2), ow: Math.cos(a / 2) }, 1);
+  const x = [m[0], m[1], m[2]];
+  assert.ok(Math.abs(x[0]) < 1e-6, `x -> ${x}`);
+  assert.ok(Math.abs(x[1] - 1) < 1e-6, `x -> ${x}`);
+
+  // And the columns stay orthonormal, scaled, which is what the normal matrix
+  // relies on.
+  mat4.composeQuat(m, 0, 0, 0, { ox: 0.5, oy: 0.5, oz: 0.5, ow: 0.5 }, 2);
+  for (const col of [0, 4, 8]) {
+    const length = Math.hypot(m[col], m[col + 1], m[col + 2]);
+    assert.ok(Math.abs(length - 2) < 1e-6, `column ${col} length ${length}`);
+  }
+});
+
+test('the SCORING ELEMENT perforations never merge into each other', () => {
+  const axes = wiffleHoleAxes();
+  assert.equal(axes.length, 30);
+  let closest = Math.PI;
+  for (let i = 0; i < axes.length; i++) {
+    const a = axes[i];
+    assert.ok(Math.abs(Math.hypot(a.x, a.y, a.z) - 1) < 1e-12, 'axes are unit vectors');
+    for (let j = i + 1; j < axes.length; j++) {
+      const b = axes[j];
+      const dot = Math.max(-1, Math.min(1, a.x * b.x + a.y * b.y + a.z * b.z));
+      closest = Math.min(closest, Math.acos(dot));
+    }
+  }
+  // Two holes one diameter apart would touch; the layout has to leave a web of
+  // plastic between every pair or the ball falls apart, on screen and in life.
+  assert.ok(
+    closest > 2 * WIFFLE_HOLE_ANGLE * 1.25,
+    `closest pair ${((closest * 180) / Math.PI).toFixed(1)} deg against ` +
+      `${((2 * WIFFLE_HOLE_ANGLE * 180) / Math.PI).toFixed(1)} deg holes`,
+  );
+  // And none of them sits on the moulding seam, which is a lane of its own.
+  for (const a of axes) {
+    assert.ok(
+      Math.abs(a.z) > Math.sin(WIFFLE_HOLE_ANGLE * 1.5),
+      'a hole is cutting through the seam',
+    );
+  }
 });

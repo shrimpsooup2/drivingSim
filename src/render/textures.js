@@ -136,3 +136,168 @@ export function drawPlate(ctx, size) {
     }
   }
 }
+
+/**
+ * Where the holes go on a POLLEN or NECTAR.
+ *
+ * The SCORING ELEMENTS are "Gopher ResisDent polyethylene balls" -- moulded
+ * perforated playground balls -- and Figures 9-13 and 9-14 show what that means:
+ * round holes about a sixth of the ball's diameter, laid out in latitude bands
+ * with a moulding seam running round the equator between the two middle bands.
+ *
+ * Bands rather than an even scatter, because that is what a two-part mould
+ * produces and it is visibly what the figures show: the seam has a clear lane
+ * of its own, and the holes either side of it line up in a ring.
+ *
+ * Returned as unit axes so the mask can be built by measuring the angle from
+ * each one, which keeps the holes round on the sphere rather than round in UV
+ * space -- those are very different things near the poles.
+ *
+ * @returns {{x:number,y:number,z:number}[]}
+ */
+export function wiffleHoleAxes() {
+  /** [latitude in degrees from the equator, holes in the band, phase offset] */
+  const bands = [
+    [90, 1, 0],
+    [60, 6, 0],
+    [30, 8, 0.5],
+    [-30, 8, 0],
+    [-60, 6, 0.5],
+    [-90, 1, 0],
+  ];
+  const out = [];
+  for (const [latDeg, count, phase] of bands) {
+    const lat = (latDeg * Math.PI) / 180;
+    const z = Math.sin(lat);
+    const ring = Math.cos(lat);
+    for (let i = 0; i < count; i++) {
+      const theta = ((i + phase) / count) * Math.PI * 2;
+      out.push({ x: ring * Math.cos(theta), y: ring * Math.sin(theta), z });
+    }
+  }
+  return out;
+}
+
+/** Angular radius of one hole, radians. A sixth of the ball's diameter across. */
+export const WIFFLE_HOLE_ANGLE = (10 * Math.PI) / 180;
+
+/**
+ * The perforation mask for a SCORING ELEMENT, as a white texture with the holes
+ * punched out of its alpha.
+ *
+ * White and not coloured, so one texture serves the yellow POLLEN and both
+ * colours of NECTAR: the fragment shader multiplies it by `uColor`, so the mask
+ * carries only the holes, the wall shading around them and the moulding seam.
+ *
+ * Each texel is turned back into a direction on the sphere and measured against
+ * every hole axis, which is the only way to get holes that are round *on the
+ * ball*. Painting circles in UV space would give lozenges at the equator and
+ * smears at the poles. It is bounded per hole rather than brute-forced over the
+ * whole image -- a hole covers a couple of thousand texels out of a quarter of a
+ * million, so the loop only visits the rows and columns it can reach.
+ *
+ * Alpha below `uAlphaCut` is discarded by the shader, so these are real holes:
+ * you see the inner shell through them, and the ball's silhouette is unbroken
+ * because the mask never reaches the rim it is drawn on.
+ */
+export function drawWiffleBall(ctx, size) {
+  // The canvas is square and the map is equirectangular, so v is stretched: it
+  // covers 180 degrees where u covers 360. Harmless -- it only spends more
+  // texels on latitude than it needs -- and it avoids a second texture shape
+  // for one texture.
+  const width = size;
+  const height = size;
+  const image = ctx.createImageData(width, height);
+  const data = image.data;
+
+  // Base: opaque white, with the mould seam as a bright ridge and a shadow
+  // just below it. Subtle -- it is a moulding line, not a stripe.
+  for (let row = 0; row < height; row++) {
+    const v = (row + 0.5) / height;
+    const fromSeam = Math.abs(v - 0.5);
+    let shade = 1;
+    // A moulding line, not a stripe: one texel row of highlight where the two
+    // mould halves meet and a slightly wider shadow under it. At 1.1 and 0.88
+    // it read as a painted band across the ball.
+    if (fromSeam < 0.004) shade = 1.06;
+    else if (fromSeam < 0.011) shade = 0.93;
+    for (let col = 0; col < width; col++) {
+      const i = (row * width + col) * 4;
+      const value = Math.min(255, Math.round(255 * shade));
+      data[i] = value;
+      data[i + 1] = value;
+      data[i + 2] = value;
+      data[i + 3] = 255;
+    }
+  }
+
+  const holes = wiffleHoleAxes();
+  const R = WIFFLE_HOLE_ANGLE;
+  // A texel of feather on the cut edge, and a rim of wall shading outside it.
+  const feather = Math.PI / height;
+  const rim = R * 0.35;
+  const reach = R + rim;
+
+  for (const hole of holes) {
+    const phiHole = Math.acos(Math.max(-1, Math.min(1, hole.z)));
+    const thetaHole = Math.atan2(hole.y, hole.x);
+    const rowFrom = Math.max(0, Math.floor(((phiHole - reach) / Math.PI) * height));
+    const rowTo = Math.min(height - 1, Math.ceil(((phiHole + reach) / Math.PI) * height));
+
+    for (let row = rowFrom; row <= rowTo; row++) {
+      const phi = ((row + 0.5) / height) * Math.PI;
+      const cosPhi = Math.cos(phi);
+      const sinPhi = Math.sin(phi);
+      // The band of longitudes this row can reach: solve
+      //   cos(angle) = cosPhi*cosPhiHole + sinPhi*sinPhiHole*cos(dTheta)
+      // for cos(angle) = cos(reach). A row through the pole spans every
+      // longitude, which is exactly what `sinPhi -> 0` gives here.
+      const denom = sinPhi * Math.sin(phiHole);
+      let dTheta = Math.PI;
+      if (denom > 1e-6) {
+        const c = (Math.cos(reach) - cosPhi * Math.cos(phiHole)) / denom;
+        if (c > 1) continue; // this row cannot reach the hole at all
+        dTheta = c < -1 ? Math.PI : Math.acos(c);
+      }
+      const span = Math.ceil((dTheta / (Math.PI * 2)) * width) + 1;
+      const centreCol = Math.round(((thetaHole / (Math.PI * 2) + 1) % 1) * width);
+
+      for (let d = -span; d <= span; d++) {
+        const col = ((centreCol + d) % width + width) % width;
+        const theta = ((col + 0.5) / width) * Math.PI * 2;
+        // Exact angle from the hole axis, so the edge is a circle on the ball.
+        const dot =
+          sinPhi * Math.cos(theta) * hole.x +
+          sinPhi * Math.sin(theta) * hole.y +
+          cosPhi * hole.z;
+        const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+        if (angle >= reach) continue;
+
+        const i = (row * width + col) * 4;
+        if (angle <= R - feather) {
+          data[i + 3] = 0;
+          continue;
+        }
+        if (angle < R) {
+          // Feathered cut edge: one texel of partial alpha, so the hole does
+          // not crawl as the ball turns.
+          const t = (angle - (R - feather)) / feather;
+          const alpha = Math.round(255 * t);
+          if (alpha < data[i + 3]) data[i + 3] = alpha;
+          continue;
+        }
+        // Outside the hole: the moulded wall around it, darkest at the edge.
+        const t = (angle - R) / rim;
+        const shade = 0.4 + 0.6 * t * t;
+        const value = Math.round(data[i] * shade);
+        if (value < data[i]) {
+          data[i] = value;
+          data[i + 1] = value;
+          data[i + 2] = value;
+        }
+      }
+    }
+  }
+
+  ctx.putImageData(image, 0, 0);
+}

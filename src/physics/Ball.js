@@ -131,6 +131,62 @@ export class Ball {
     this.caughtFromTip = null;
     /** FIELD clock when this element left the FIELD, or null. @type {number|null} */
     this.leftFieldAt = null;
+
+    /**
+     * Which way up the element is, as a unit quaternion (x, y, z, w).
+     *
+     * The physics never needed this -- a sphere's collision response does not
+     * care how it is turned -- but the *look* does, now that the elements are
+     * drawn with their perforations on. A ball rolling across the TILES with a
+     * fixed pattern of holes reads as a decal sliding along the floor; the same
+     * ball with the holes turning under it reads as a ball. Spin was already
+     * modelled, because it is what makes a landing scrub into a roll, so this
+     * is only integrating what was already there.
+     *
+     * A quaternion rather than a matrix because it renormalises in one line and
+     * cannot shear: over a two-minute MATCH at 2000 steps a second, a matrix
+     * integrated this way drifts out of orthogonality visibly.
+     */
+    this.ox = 0;
+    this.oy = 0;
+    this.oz = 0;
+    this.ow = 1;
+  }
+
+  /**
+   * Turn the element by its angular velocity over `dt`.
+   *
+   * `dq/dt = 0.5 * omega (x) q`, the standard quaternion rate, integrated
+   * explicitly and renormalised. Explicit is fine here: a POLLEN rolling at
+   * 6 m/s spins at 170 rad/s, which over a half-millisecond step is five
+   * degrees -- well inside where the first-order term is the whole story.
+   *
+   * @param {number} dt seconds
+   */
+  integrateSpin(dt) {
+    const { wx, wy, wz } = this;
+    if (wx === 0 && wy === 0 && wz === 0) return this;
+    const h = dt * 0.5;
+    const { ox, oy, oz, ow } = this;
+    const nx = ox + h * (wx * ow + wy * oz - wz * oy);
+    const ny = oy + h * (wy * ow + wz * ox - wx * oz);
+    const nz = oz + h * (wz * ow + wx * oy - wy * ox);
+    const nw = ow - h * (wx * ox + wy * oy + wz * oz);
+    const length = Math.hypot(nx, ny, nz, nw) || 1;
+    this.ox = nx / length;
+    this.oy = ny / length;
+    this.oz = nz / length;
+    this.ow = nw / length;
+    return this;
+  }
+
+  /** Put the element back to no rotation, for a MATCH reset. */
+  resetOrientation() {
+    this.ox = 0;
+    this.oy = 0;
+    this.oz = 0;
+    this.ow = 1;
+    return this;
   }
 
   /**

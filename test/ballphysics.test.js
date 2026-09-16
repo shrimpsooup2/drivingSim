@@ -384,3 +384,67 @@ test('a pile of POLLEN scatters rather than sliding past itself', () => {
   assert.ok(Math.max(...spread) > 0.12, 'the heap spread out');
   for (const ball of balls) assert.ok(ball.isFinite());
 });
+
+// ------------------------------------------------- orientation and the mask
+
+test('a spinning element turns, and the turn matches the spin it was given', () => {
+  const ball = new Ball({
+    id: 'p', kind: 'pollen', radius: POLLEN_RADIUS, mass: POLLEN_MASS,
+  });
+  // A quarter turn about z, integrated in small steps.
+  const rate = Math.PI / 2;
+  ball.setSpin(0, 0, rate);
+  const steps = 2000;
+  for (let i = 0; i < steps; i++) ball.integrateSpin(1 / steps);
+
+  // The quaternion for a rotation of `a` about z is (0, 0, sin(a/2), cos(a/2)).
+  assert.ok(Math.abs(ball.ox) < 1e-9);
+  assert.ok(Math.abs(ball.oy) < 1e-9);
+  assert.ok(
+    Math.abs(ball.oz - Math.sin(rate / 2)) < 1e-4,
+    `oz ${ball.oz} vs ${Math.sin(rate / 2)}`,
+  );
+  assert.ok(Math.abs(ball.ow - Math.cos(rate / 2)) < 1e-4);
+});
+
+test('the orientation quaternion stays a unit quaternion over a whole MATCH', () => {
+  const ball = new Ball({
+    id: 'p', kind: 'pollen', radius: POLLEN_RADIUS, mass: POLLEN_MASS,
+  });
+  // Hard tumbling about all three axes, for two minutes at the physics rate.
+  ball.setSpin(180, -120, 90);
+  for (let i = 0; i < 120 * 2000; i++) ball.integrateSpin(1 / 2000);
+  const length = Math.hypot(ball.ox, ball.oy, ball.oz, ball.ow);
+  assert.ok(Math.abs(length - 1) < 1e-9, `drifted to ${length}`);
+  assert.ok(Number.isFinite(ball.ow));
+});
+
+test('an element with no spin does not turn, and a reset puts it back', () => {
+  const ball = new Ball({
+    id: 'p', kind: 'pollen', radius: POLLEN_RADIUS, mass: POLLEN_MASS,
+  });
+  for (let i = 0; i < 100; i++) ball.integrateSpin(0.01);
+  assert.equal(ball.ow, 1);
+
+  ball.setSpin(3, 0, 0);
+  for (let i = 0; i < 100; i++) ball.integrateSpin(0.01);
+  assert.ok(ball.ow < 0.999, 'it turned');
+  ball.resetOrientation();
+  assert.equal(ball.ow, 1);
+  assert.equal(ball.ox, 0);
+});
+
+test('a landing element ends up turned, because the floor spun it up', () => {
+  const w = world();
+  const ball = w.add(
+    new Ball({ id: 'p', kind: 'pollen', radius: POLLEN_RADIUS, mass: POLLEN_MASS }),
+  );
+  ball.setPosition(0, 0, 0.5);
+  ball.setVelocity(2.5, 0, -1.5);
+  for (let i = 0; i < 400; i++) w.step(1 / 400);
+  assert.ok(ball.spinRate > 1, `scrubbed into a roll: ${ball.spinRate.toFixed(1)} rad/s`);
+  assert.ok(
+    Math.abs(ball.ow) < 0.999,
+    'and the orientation followed it, so the perforations turn with the ball',
+  );
+});

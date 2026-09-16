@@ -121,6 +121,54 @@ export function composeWheel(out, x, y, z, cosT, sinT, spin, radius, width) {
 }
 
 /** out = transpose(inverse(m)), as a 3x3 packed into a 9-float array. */
+/**
+ * Model matrix for a uniformly scaled object at an arbitrary orientation.
+ *
+ * `composeZ` only turns things about world Z, which is all a ROBOT or a wall
+ * ever needs -- they sit on the floor. A SCORING ELEMENT tumbles, so it needs
+ * the whole rotation, and it comes from the physics as a quaternion.
+ *
+ * @param {Float32Array} out
+ * @param {number} x
+ * @param {number} y
+ * @param {number} z
+ * @param {{ox:number,oy:number,oz:number,ow:number}} q unit quaternion
+ * @param {number} scale uniform scale
+ */
+export function composeQuat(out, x, y, z, q, scale) {
+  const { ox: qx, oy: qy, oz: qz, ow: qw } = q;
+  const x2 = qx + qx;
+  const y2 = qy + qy;
+  const z2 = qz + qz;
+  const xx = qx * x2;
+  const xy = qx * y2;
+  const xz = qx * z2;
+  const yy = qy * y2;
+  const yz = qy * z2;
+  const zz = qz * z2;
+  const wx = qw * x2;
+  const wy = qw * y2;
+  const wz = qw * z2;
+
+  out[0] = (1 - (yy + zz)) * scale;
+  out[1] = (xy + wz) * scale;
+  out[2] = (xz - wy) * scale;
+  out[3] = 0;
+  out[4] = (xy - wz) * scale;
+  out[5] = (1 - (xx + zz)) * scale;
+  out[6] = (yz + wx) * scale;
+  out[7] = 0;
+  out[8] = (xz + wy) * scale;
+  out[9] = (yz - wx) * scale;
+  out[10] = (1 - (xx + yy)) * scale;
+  out[11] = 0;
+  out[12] = x;
+  out[13] = y;
+  out[14] = z;
+  out[15] = 1;
+  return out;
+}
+
 export function normalMatrix(out, m) {
   const a00 = m[0], a01 = m[1], a02 = m[2];
   const a10 = m[4], a11 = m[5], a12 = m[6];

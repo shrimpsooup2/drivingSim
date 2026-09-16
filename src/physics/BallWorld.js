@@ -288,6 +288,10 @@ export class BallWorld {
   }
 
   _integrate(ball, dt) {
+    // Orientation first, from the spin this step started with, so the drawn
+    // ball turns by exactly the rate the contact model gave it.
+    ball.integrateSpin(dt);
+
     ball.vz -= GRAVITY * dt;
     applyDrag(ball, dt, this.airDensity);
 

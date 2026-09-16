@@ -285,6 +285,34 @@ NECTAR entering a FLOWER's scoring volume before that mark; an early one still
 scores, so the simulator counts it as a violation rather than preventing it —
 the same way a referee would. The count shows on the match panel as `G410 xN`.
 
+## What the elements look like
+
+Section 9.8 names them: "Gopher ResisDent polyethylene balls", 2.8 in yellow
+POLLEN and 3.6 in red and blue NECTAR. Figures 9-13 and 9-14 show what that
+means — moulded perforated playground balls, round holes about a sixth of the
+diameter across, in latitude bands with a moulding seam running round the
+equator in a lane of its own.
+
+So that is how they are drawn, and the holes are real rather than painted. Each
+element is two shells: an outer one carrying a white alpha mask, and an inner one
+at 0.88 of the radius in a darker shade of the same colour. The shader discards
+any fragment whose mask alpha is below the cut, and a discarded fragment writes
+no depth, so the inner shell shows through — which is what a hole in a hollow
+ball looks like. A single sphere with dark circles painted on it went flat the
+moment the camera got close.
+
+The mask is generated once, from the hole axes, by turning each texel back into a
+direction on the sphere and measuring the angle to every hole. That is the only
+way to get holes that are round *on the ball*: circles drawn in UV space come out
+as lozenges at the equator and smears at the poles.
+
+The other half of this is that the elements now have an **orientation**. Spin was
+already modelled — it is what makes a landing scrub into a roll — but nothing
+read it, so a ball rolling across the tiles kept a fixed pattern of holes and
+looked like a decal sliding along the floor. `Ball.integrateSpin` carries a unit
+quaternion through the same integration the velocities get, and the renderer
+composes it into the model matrix.
+
 ## Fouls, and the rules audit
 
 A MAJOR FOUL is 20 points — ten elements in a CELL — so the fouls are where the
@@ -491,6 +519,7 @@ src/ai/archetypes.js             the other robots: scoring systems and builds
 src/ai/roster.js                 the three seats, and Random
 src/ai/gamePlan.js               what an AI does with the mechanism it has
 src/app/BiobuzzGame.js           attaches the game to a running simulation
+src/render/textures.js           the perforation mask, generated from hole axes
 src/ui/MatchPanel.js             clock, score breakdown, shooter readout, line-up
 ```
 
