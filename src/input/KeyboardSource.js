@@ -165,6 +165,34 @@ export const AXIS_KEYS = {
   right_trigger: ['Space'],
 };
 
+/**
+ * The app's own shortcuts, as key codes.
+ *
+ * Here rather than in `App.js` because this module owns the question "which
+ * key means what", and because the list needs to be readable by something
+ * other than a running app: the help overlay is checked against it, and so is
+ * the collision test. It used to be declared twice -- once in `App` as a set
+ * of `on()` calls and once in the test as a literal -- and adding a shortcut
+ * to one and not the other is exactly the mistake that got made.
+ *
+ * `App` asserts that what it actually registered matches this, so the list
+ * cannot drift from the bindings either.
+ */
+export const APP_SHORTCUTS = [
+  'KeyR',
+  'KeyN',
+  'KeyF',
+  'KeyG',
+  'KeyM',
+  'KeyB',
+  'KeyC',
+  'KeyT',
+  'KeyP',
+  'Tab',
+  'Slash',
+  'Escape',
+];
+
 /** Every key the pad emulation claims, mapped to what it stands for. */
 export const PAD_KEY_CODES = new Map();
 for (const [button, code] of Object.entries(BUTTON_KEYS)) PAD_KEY_CODES.set(code, button);
@@ -246,6 +274,7 @@ export const KEYBOARD_HELP = [
   ['Backspace', 'Reset the robot to its start'],
   ['R', 'Restart drill, or reset the robot'],
   ['N', 'Driving drills'],
+  ['F', 'Autonomous editor'],
   ['T', 'Shot trajectory guide'],
   ['C', 'Cycle camera'],
   ['B', 'Reset the camera framing'],

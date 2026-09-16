@@ -208,7 +208,9 @@ export function heightAtRange(arc, range) {
  *
  * @param {{range: number, rise: number, angle: number, mass: number,
  *          radius: number, dragCoefficient?: number, maxSpeed?: number,
- *          step?: number, airDensity?: number, tolerance?: number}} query
+ *          step?: number, airDensity?: number, tolerance?: number,
+ *          apexMargin?: number}} query `apexMargin` is how far before the
+ *   target the apex has to be for `descending` to be true; see below.
  * @returns {{speed: number, arc: ReturnType<typeof integrateArc>,
  *            descending: boolean, apexRange: number}|null}
  */
@@ -272,10 +274,19 @@ export function solveSpeedForTarget(query) {
 
   const speed = (lo + hi) / 2;
   const arc = fly(speed);
-  // Descending on arrival is what a CELL requires: the apex has to come
-  // before the target.
+  // Descending on arrival is what a CELL requires, and it needs *margin*.
+  //
+  // `apexRange < range` was too weak by exactly the amount that matters. An arc
+  // whose apex lands three centimetres before the target arrives essentially
+  // level, and a CELL's opening is tilted -- its lower lip reaches toward the
+  // shooter by half the opening height times the sine of the tilt. A level
+  // arrival clips that lip and drops on the floor outside. Worse, the angle
+  // sweep in `Launcher.aimFor` takes the *shallowest* workable angle, so it
+  // systematically picked the most marginal arc available: a perfectly aimed
+  // shot from a perfectly spun wheel went in about a quarter of the time.
   const apexRange = Math.hypot(arc.apex.x, arc.apex.y);
-  return { speed, arc, descending: apexRange < range, apexRange };
+  const margin = query.apexMargin ?? 0;
+  return { speed, arc, descending: apexRange < range - margin, apexRange };
 }
 
 /**
@@ -296,14 +307,16 @@ export function solveSpeedForTarget(query) {
  * @param {number} angle
  * @returns {{speed: number, descending: boolean, apexRange: number}|null}
  */
-export function freeFlightSolution(range, rise, angle) {
+export function freeFlightSolution(range, rise, angle, apexMargin = 0) {
   const cos = Math.cos(angle);
   const denom = 2 * cos * cos * (range * Math.tan(angle) - rise);
   if (denom <= 0 || range <= 0) return null;
   const v2 = (GRAVITY * range * range) / denom;
   if (!(v2 > 0)) return null;
   const apexRange = (v2 * Math.sin(angle) * cos) / GRAVITY;
-  return { speed: Math.sqrt(v2), descending: apexRange < range, apexRange };
+  // Same margin as the real solve, or the screen would pass shots the solve
+  // then rejects and the AI would walk to spots it cannot shoot from.
+  return { speed: Math.sqrt(v2), descending: apexRange < range - apexMargin, apexRange };
 }
 
 /**

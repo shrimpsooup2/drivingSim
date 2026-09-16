@@ -624,6 +624,77 @@ async function main() {
       }
     }
 
+    // --- The AUTO editor, through the real UI.
+    //
+    // The whole point of the feature is that you paste a routine in and it
+    // runs, so the check pastes one in and makes sure it does: compiled from
+    // the editor's own text, driving the ROBOT during AUTO with the sticks
+    // ignored, and scoring.
+    const autoRun = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const panel = app.auto;
+      const sim = app.sim;
+      panel.toggle(true);
+      // A deliberately broken routine first: the error has to reach the panel.
+      panel.editor.value = 'function* auto(robot) { yield 1; ';
+      const compileError = panel.compile();
+      const shownError = panel.message.textContent;
+      // Then the example, which is what ships in the box.
+      panel.exampleButton.click();
+      const armed = sim.autoRunner.armed;
+
+      // Run the AUTO period.
+      sim.game.start();
+      const drivingDuringAuto = [];
+      for (let i = 0; i < 60 * 31; i++) {
+        if (i === 60) drivingDuringAuto.push(sim.runningAuto);
+        sim.step(1 / 60);
+      }
+      const status = sim.autoRunner.status();
+      const score = sim.game.match.score()[sim.game.alliance];
+      panel.update();
+      return {
+        compileError,
+        shownError,
+        armed,
+        drovAuto: drivingDuringAuto[0] === true,
+        state: status.state,
+        error: status.error,
+        log: status.log.join(' | '),
+        total: score.total,
+        leave: score.leave,
+        parkAuto: score.parkAuto,
+        tips: score.tips,
+        citations: sim.game.match.referee.citations.map((c) => c.rule + ' ' + c.penalty).join(', '),
+        logRows: panel.readout.querySelectorAll('.auto-log div').length,
+      };
+    })()`);
+    console.log(
+      `  Auto editor: ${autoRun.state}, ${autoRun.total} points ` +
+        `(leave ${autoRun.leave}, park ${autoRun.parkAuto}, tips ${autoRun.tips}), ` +
+        `${autoRun.logRows} log rows`,
+    );
+    console.log(`    routine said: ${autoRun.log}`);
+    if (!/SyntaxError|Unexpected/.test(autoRun.compileError ?? '')) {
+      failures.push(`a broken routine did not report a syntax error: ${autoRun.compileError}`);
+    }
+    if (!autoRun.shownError) failures.push('the compile error never reached the panel');
+    if (!autoRun.armed) failures.push('the example routine did not compile');
+    if (!autoRun.drovAuto) failures.push('the routine was not driving during AUTO');
+    if (autoRun.state !== 'done') failures.push(`the routine ended ${autoRun.state}: ${autoRun.error}`);
+    if (autoRun.total < 20) failures.push(`the example AUTO only scored ${autoRun.total}`);
+    if (autoRun.citations) failures.push(`the example AUTO drew citations: ${autoRun.citations}`);
+
+    await sleep(500);
+    const shotAuto = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const autoPath = shotPath.replace(/\.png$/, '-auto.png');
+    await writeFile(autoPath, Buffer.from(shotAuto.data, 'base64'));
+    console.log(`  Screenshot: ${autoPath}`);
+    // Returns a boolean, not the panel: `toggle` returns `this`, and asking
+    // CDP to serialise a panel that references the whole app fails with
+    // "Object reference chain is too long".
+    await cdp.evaluate('(() => { globalThis.ftcSim.auto.toggle(false); return true; })()');
+
     // --- The REFEREE, through the real loop.
     //
     // A foul is 20 points and the panel is where a driver finds out about it,

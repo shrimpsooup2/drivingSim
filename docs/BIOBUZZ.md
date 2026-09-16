@@ -393,12 +393,70 @@ shoved or spat over the wall — is a MAJOR FOUL per element. Every element
 therefore carries a note of which robot last touched it and how, which is what
 `Ball.lastTouch` is for.
 
+## Pasting in an autonomous routine
+
+AUTO was half the practice and none of it practisable: the sticks were live
+during the AUTO period, which is a G401 violation and not what happens at an
+event. A real auto is code, it runs the same way every time, and the thing a
+team iterates on is that code.
+
+Press **F** (or the *Auto* button) and paste it in. It runs during the 30-second
+AUTO period on the same physics you drive — the same battery sag, the same
+encoder quantisation, the same flywheel recovery — and the sticks do nothing
+while it does, which is both G401 and the point.
+
+Two shapes, because autos are written both ways:
+
+```js
+function* auto(robot) {          // sequential: yield waits
+  robot.drive(0.6, 0, 0);
+  yield 1.2;                     //   a number of seconds
+  robot.stop();
+  robot.shooter.spinUp();
+  yield () => robot.shooter.ready;  //   or until a condition holds
+  robot.shooter.fire();
+  yield;                         //   or one op-mode cycle
+  yield* helper(robot);          //   or another generator, to completion
+}
+
+function loop(robot, dt) { ... } // a state machine, called every cycle
+```
+
+A generator is what makes a *linear* op-mode possible without real time. An FTC
+`LinearOpMode` blocks on `sleep()`; a simulator cannot block, it has to return
+so the world can advance. `yield` is the same idea with the waiting handed back
+to the caller, so the routine reads top to bottom and still steps on the
+simulated clock. No `async`: a promise resolves on the microtask queue, which
+does not line up with a synchronous physics step, and an auto that is one frame
+behind behaves differently every run. Timed waits carry their overshoot into the
+next one, so ten `yield 0.1`s take a second rather than up to 1.2.
+
+`robot` is a façade, not the robot. Everything on it is either a command a
+Control Hub can issue or a reading a sensor can take: the IMU with its drift and
+latency, the encoders quantised to whole ticks, the bus voltage, how many
+elements the intake reports. `robot.truth` is the exact pose, clearly labelled
+and separate — useful for working out why a routine drifted, and steering by it
+means the routine will not survive the trip to a real field.
+
+The editor starts with a worked example, because the useful thing to hand
+somebody is a routine that already scores. It drives until a shot exists (the
+cell's opening is tilted and faces one way, so from the starting wall there is no
+arc at any speed), empties the pre-load into the cell, and parks: 32 points,
+including a tip, with no fouls.
+
+It is compiled with `new Function` and runs with the page's own privileges.
+There is no sandbox and no attempt at one — it is a tool for running *your* auto.
+A routine that loops forever without yielding will hang the tab exactly as it
+would in any other JavaScript; what the runner can do is notice afterwards and
+stop it, so it does not happen again on every frame.
+
 ## Controls
 
 | Key | Does |
 | --- | --- |
 | **G** | Toggle BIOBUZZ on/off |
 | **M** | Restart the match from setup |
+| **F** | Autonomous editor |
 | **T** | Shot trajectory guide |
 | Right bumper (`H`) | Run the intake |
 | Left bumper (`U`) | Place into a FLOWER if lined up, otherwise eject |
@@ -590,6 +648,10 @@ src/ai/roster.js                 the three seats, and Random
 src/ai/gamePlan.js               what an AI does with the mechanism it has
 src/app/BiobuzzGame.js           attaches the game to a running simulation
 src/render/textures.js           the perforation mask, generated from hole axes
+src/teleop/AutoRunner.js         compiles and steps a pasted AUTO routine
+src/teleop/autoApi.js            the `robot` object a routine is handed
+src/teleop/autoExample.js        the worked example the editor starts with
+src/ui/AutoPanel.js              the editor, its errors and its log
 src/ui/MatchPanel.js             clock, score breakdown, shooter readout, line-up
 ```
 

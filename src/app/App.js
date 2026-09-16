@@ -5,10 +5,12 @@ import { Hud } from '../ui/Hud.js';
 import { MatchPanel } from '../ui/MatchPanel.js';
 import { ParamPanel } from '../ui/ParamPanel.js';
 import { ChallengePanel } from '../ui/ChallengePanel.js';
+import { AutoPanel } from '../ui/AutoPanel.js';
 import { InputManager } from '../input/InputManager.js';
 import { Overlay2d } from '../render/Overlay2d.js';
 import { defaultConfig } from '../config/schema.js';
 import {
+  APP_SHORTCUTS,
   KEYBOARD_HELP,
   assertNoKeyboardCollisions,
   keyFor,
@@ -52,6 +54,7 @@ export class App {
     this.matchPanel = new MatchPanel(this.viewport);
     this.panel = new ParamPanel(this.panelRoot, this.config);
     this.drills = new ChallengePanel(this.viewport, this.sim.challenges);
+    this.auto = new AutoPanel(this.viewport, this.sim);
 
     /** Schema defaults, so a camera can be reset to its as-shipped framing. */
     this._defaultView = defaultConfig().view;
@@ -166,6 +169,12 @@ export class App {
       this.hud.clearGraphs();
     });
     keyboard.on('KeyN', () => this.drills.toggle());
+    // F for the AUTO editor, and it is F because F is what is left. Between
+    // the pad bindings and the app's own, F and O are the only free letters on
+    // the keyboard, and O reads as a zero in the panel's font. `on()` throws on
+    // a collision rather than quietly shadowing a control, which is how this
+    // was caught -- J is the d-pad's left.
+    keyboard.on('KeyF', () => this.auto.toggle());
     keyboard.on('KeyG', () => this._toggleGame());
     keyboard.on('KeyM', () => {
       // Restart the MATCH from setup. Only meaningful with the game running.
@@ -188,6 +197,7 @@ export class App {
     keyboard.on('Escape', () => {
       this.toggleHelp(false);
       this.drills.toggle(false);
+      this.auto.toggle(false);
     });
 
     // Field centric and the heading reset are deliberately not here. They are
@@ -196,6 +206,16 @@ export class App {
     // press and appear dead. `on()` throws on a collision with a pad key; this
     // says so out loud for the whole set.
     assertNoKeyboardCollisions(keyboard.actions.keys());
+
+    // And the declared list has to match what was actually bound, or the help
+    // overlay documents a key that does nothing (or misses one that does).
+    const bound = [...keyboard.actions.keys()].sort().join(',');
+    const declared = [...APP_SHORTCUTS].sort().join(',');
+    if (bound !== declared) {
+      throw new Error(
+        `APP_SHORTCUTS does not match the bindings.\n  declared: ${declared}\n  bound:    ${bound}`,
+      );
+    }
   }
 
   /**
@@ -306,6 +326,7 @@ export class App {
       this.renderer.render(this.sim, dt);
       this._drawLabels();
       this.drills.update();
+      this.auto.update();
       const view = this.config.values.view;
       this.hud.setVisible(view.showHud, view.showGraphs);
       if (view.showHud || view.showGraphs) this.hud.update(this.sim, dt);

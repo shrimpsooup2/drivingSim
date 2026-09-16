@@ -392,6 +392,11 @@ export class BiobuzzGame {
   start() {
     this.reset();
     this._endedFor = 0;
+    // A new MATCH means the AUTO routine runs again, from the top. It stays
+    // *compiled* -- running the same auto over and over is the whole activity,
+    // and having to press Compile between goes would be absurd.
+    this.sim.autoRunner?.reset();
+    this.sim.autoRunner?.init();
     this.match.start({ phase: this.settings.startPhase });
     return this;
   }
@@ -412,6 +417,14 @@ export class BiobuzzGame {
       height: entry.robot.config?.chassis?.height ?? 0.35,
       meta: entry.meta ?? this.match.robotMeta(entry.id),
     }));
+
+    // G401 is about a DRIVE TEAM touching the controls during AUTO. With a
+    // pasted routine driving, nobody is -- the ROBOT is running code, which is
+    // what the rule wants -- so the REFEREE must stop calling it. Read each
+    // step rather than set once, because a routine can be compiled or cleared
+    // mid-MATCH.
+    const playerEntry = this.match.entries.find((e) => e.id === 'player');
+    if (playerEntry) playerEntry.driverControlled = !this.sim.runningAuto;
 
     this.match.update(dt, { bodies });
     this._runAiDriveTeam(dt);

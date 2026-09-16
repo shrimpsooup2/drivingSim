@@ -4,6 +4,7 @@ import { Config } from '../src/config/Config.js';
 import { Simulation } from '../src/app/Simulation.js';
 import { InputManager } from '../src/input/InputManager.js';
 import {
+  APP_SHORTCUTS,
   BUTTON_KEYS,
   AXIS_KEYS,
   PAD_KEY_CODES,
@@ -21,20 +22,6 @@ import { nextStep } from '../src/ui/MatchPanel.js';
  * shortcut is added to `App._bindKeys`, it goes here too -- and `on()` throws
  * at startup if it collides, so the app cannot ship a collision either way.
  */
-const APP_SHORTCUTS = [
-  'KeyR',
-  'KeyN',
-  'KeyG',
-  'KeyM',
-  'KeyB',
-  'KeyC',
-  'KeyT',
-  'KeyP',
-  'Tab',
-  'Slash',
-  'Escape',
-];
-
 function rig() {
   const config = new Config();
   const input = new InputManager({ latencySeconds: 0.04, target: new EventTarget() });

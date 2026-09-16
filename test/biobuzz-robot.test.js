@@ -474,12 +474,28 @@ test('a CELL only accepts a descending ball, so close shots need a steep hood', 
   assert.ok(flat.rpm > launcher.maxRpm, `and it wants ${flat.rpm.toFixed(0)} rpm`);
   assert.equal(launcher.solutionFor(target, (45 * Math.PI) / 180), null);
 
-  // The threshold is tan(hood) > 2 * rise / range, and the solver agrees.
+  // The bare geometry puts the threshold at tan(hood) = 2 * rise / range --
+  // where the apex lands exactly on the target -- and the solver wants more
+  // than that, because an arc peaking *at* the aperture arrives level and
+  // clips the lower lip of the tilted opening on the way in. So just under is
+  // refused, just over is *still* refused, and a hood a few degrees steeper
+  // than the bare threshold is where a shot actually exists. See
+  // `Launcher.apexMargin`: without it a perfectly aimed shot went in 55% of
+  // the time instead of 62%.
   const needed = Math.atan((2 * flat.rise) / flat.range);
-  const justUnder = launcher.solutionFor(target, needed - 0.02);
-  const justOver = launcher.solutionFor(target, needed + 0.02);
-  assert.equal(justUnder.descending, false);
-  assert.equal(justOver.descending, true);
+  assert.equal(launcher.solutionFor(target, needed - 0.02).descending, false);
+  assert.equal(
+    launcher.solutionFor(target, needed + 0.02).descending,
+    false,
+    'peaking on the target is not enough: the lip reaches toward the shooter',
+  );
+  const clear = launcher.solutionFor(target, needed + 0.06);
+  assert.equal(clear.descending, true);
+  assert.ok(
+    clear.range - clear.apexRange >= launcher.apexMargin,
+    `apex ${(clear.range - clear.apexRange).toFixed(3)} m before the target, ` +
+      `against a ${launcher.apexMargin.toFixed(3)} m lip`,
+  );
 
   // Drag makes every one of those shots need more speed than free flight
   // would. Not much at this range -- a few percent -- but it is the right

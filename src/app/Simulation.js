@@ -5,6 +5,7 @@ import { resolveDynamicPair } from '../physics/collision.js';
 import { Robot } from '../robot/Robot.js';
 import { Field } from '../field/Field.js';
 import { TeleOpDrive } from '../teleop/TeleOpDrive.js';
+import { AutoRunner } from '../teleop/AutoRunner.js';
 import { InputManager } from '../input/InputManager.js';
 import { EventBus } from '../util/events.js';
 import { Vec2 } from '../math/Vec2.js';
@@ -44,6 +45,20 @@ export class Simulation {
     this.opMode.robot = this.robot;
     this.opMode.sim = this;
     this.opMode.init();
+
+    /**
+     * A pasted AUTO routine, which takes the ROBOT for the AUTO period.
+     *
+     * Always present and empty until something is compiled into it, because
+     * the alternative -- swapping the whole op-mode over at the start of AUTO
+     * and back at the transition -- loses the teleop op-mode's state twice a
+     * MATCH for no reason. Two op-modes, and the MATCH phase decides which one
+     * has the ROBOT.
+     */
+    this.autoRunner = new AutoRunner();
+    this.autoRunner.robot = this.robot;
+    this.autoRunner.sim = this;
+    this.autoRunner.init();
 
     /** Simulated seconds since the last reset. */
     this.time = 0;
@@ -162,6 +177,16 @@ export class Simulation {
   }
 
   /** Swap in a different op-mode: an autonomous routine, a test, a drill. */
+  /**
+   * Whether a pasted AUTO routine is driving right now.
+   *
+   * Only during the AUTO period of a BIOBUZZ MATCH: outside one there is no
+   * AUTO to run, and the driver should have the ROBOT.
+   */
+  get runningAuto() {
+    return Boolean(this.autoRunner?.armed) && Boolean(this.game?.match?.inAuto);
+  }
+
   setOpMode(opMode) {
     this.opMode?.stop();
     this.opMode = opMode;
@@ -221,6 +246,11 @@ export class Simulation {
     for (const opponent of this.opponents) opponent.reset();
     this.opMode.reset();
     this.opMode.init();
+    // The routine starts over too, but stays compiled: resetting the ROBOT to
+    // run the same auto again is the single most common thing anybody will do
+    // with this, and having to press Compile each time would be absurd.
+    this.autoRunner.reset();
+    this.autoRunner.init();
     this.input.reset();
     this.field.reset();
     this.time = 0;
@@ -295,8 +325,20 @@ export class Simulation {
 
   _runControlCycle(dt) {
     const gamepad = this.input.update(dt);
-    this.opMode.loop(dt, gamepad, gamepad);
-    this.robot.updateControl(dt, gamepad);
+    // During AUTO a compiled routine has the ROBOT, and the sticks do nothing
+    // -- which is both G401 ("DRIVE TEAM members may not directly or
+    // indirectly interact with a ROBOT ... until the end of AUTO") and the
+    // whole point of having pasted an auto in. The gamepad is still *read*, so
+    // its edge detection stays warm for TELEOP.
+    if (this.runningAuto) {
+      this.autoRunner.loop(dt, gamepad, gamepad);
+      // No gamepad to the subsystems: the routine sets their commands itself,
+      // and a null gamepad leaves them where it put them.
+      this.robot.updateControl(dt, null);
+    } else {
+      this.opMode.loop(dt, gamepad, gamepad);
+      this.robot.updateControl(dt, gamepad);
+    }
 
     if (this.opponents.length === 0) return;
     // Opponents are told what the player is doing and, if a drill is running,
