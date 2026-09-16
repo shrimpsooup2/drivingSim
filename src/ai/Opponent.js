@@ -26,15 +26,71 @@ import { biobuzzPlan } from './gamePlan.js';
 /**
  * When an AI lets go of a PIN, and for how long.
  *
- * Two of G421's three seconds, which is the margin a driver leaves: the count
- * runs on a REFEREE'S judgement of when the PIN started, not on a stopwatch you
- * can see. Then 3.2 seconds clear, because both of the rule's escape clauses
- * need the separation to hold for more than three seconds before the count
- * ends, and 2 ft (~61 cm) is the distance either of them asks for.
+ * One of G421's three seconds, which is earlier than a driver watching the
+ * REFEREE'S hand would peel off, and deliberately so: the REFEREE's count only
+ * *pauses* when the ROBOTS separate, so anything still counting at three
+ * seconds is a MAJOR FOUL however fast the retreat was. Reacting at two left
+ * one second to open 2 ft, which the controller's own deceleration into the
+ * backoff target did not manage, and the foul landed anyway.
+ *
+ * Then 3.2 seconds clear, because both of the rule's escape clauses need the
+ * separation to hold for more than three seconds before the count ends, and
+ * 2 ft (~61 cm) is the distance either of them asks for. The hold renews
+ * itself while the REFEREE still has a count on this ROBOT, so in practice the
+ * retreat lasts exactly as long as the PIN is on the books.
  */
-const PIN_BACKOFF_AT = 2;
+const PIN_BACKOFF_AT = 1;
 const PIN_BACKOFF_SECONDS = 3.2;
-const PIN_BACKOFF_DISTANCE = 0.8;
+const PIN_BACKOFF_DISTANCE = 1;
+
+/**
+ * How far a driver's mistake throws the robot off, and the distance over which
+ * it reaches full strength.
+ *
+ * Scaled by how far the robot is being asked to go, because a mistake is a
+ * mistake in a *commanded motion* -- there is nothing to fumble when you are
+ * already sitting where you meant to be. Flat, it produced the one thing no
+ * driver of any skill does: a ROBOT that had settled into its own LOADING ZONE
+ * with a second left would drive 0.85 m back out of it and give up the 5 PARK
+ * points, because the re-plan that rolled the mistake did not care that the
+ * drive was over.
+ */
+const MISTAKE_DISPLACEMENT = 1.2;
+const MISTAKE_FULL_REACH = 1.2;
+
+/**
+ * How two ROBOTS get past each other.
+ *
+ * `TRAFFIC_CLEARANCE` is a little over the half-width of two 18 in ROBOTS side
+ * by side, so it is the centre-to-centre distance at which they are about to
+ * touch; `TRAFFIC_LOOKAHEAD` is how far down the intended line it is worth
+ * caring about one.
+ *
+ * This exists because none of the plans know about the other three ROBOTS.
+ * They name a place to be, and `intentToCommand` drives straight at it -- so a
+ * ROBOT standing between here and there got pushed, for as long as the plan
+ * held, which is a G421 MAJOR FOUL every three seconds. Backing off after the
+ * REFEREE has started counting (`_avoidPinning`) treats the symptom and still
+ * gave up 20 points a go; steering around traffic in the first place is what a
+ * driver actually does, and it is the difference between four MAJOR FOULS a
+ * MATCH and none.
+ */
+const TRAFFIC_CLEARANCE = 0.56;
+const TRAFFIC_LOOKAHEAD = 0.9;
+/**
+ * How far *past* the other ROBOT the passing waypoint sits, and how long a
+ * choice of side is committed for.
+ *
+ * Both exist because the first version had neither, and it went backwards. A
+ * waypoint straight out to the side is a command to drive sideways, so the
+ * ROBOT slid out of its own corridor, found the way clear, re-aimed at the
+ * target, put the other ROBOT back in the corridor and slid back -- 13 seconds
+ * of that netted 30 cm in the wrong direction. Aiming past the obstacle keeps
+ * the forward component, and holding the side for a moment stops the two
+ * states fighting each other at the re-plan rate.
+ */
+const TRAFFIC_PASS_AHEAD = 0.45;
+const TRAFFIC_COMMIT_SECONDS = 1;
 
 export class Opponent {
   /**
@@ -116,6 +172,10 @@ export class Opponent {
     this._stuckTimer = 0;
     this._detourUntil = 0;
     this._detourSign = 1;
+
+    /** Which way it is going round traffic, and until when. See `_yieldToTraffic`. */
+    this._passSide = 0;
+    this._passUntil = 0;
 
     // The opponent only ever sees a delayed picture of the player.
     this.perception = new DelayLine(this.skill.reactionSeconds);
@@ -302,9 +362,24 @@ export class Opponent {
     // With a MATCH running the robot plays the game; on a bare field it falls
     // back to the drill behaviour it was created with. Both go through the same
     // intent, so skill and imprecision apply the same way to either.
-    const planned = this.jammed ? null : biobuzzPlan(ctx, this.state);
+    //
+    // A jam does *not* send it back to the drill behaviour, which is what
+    // `this.jammed ? null : biobuzzPlan(...)` used to do here. A seized intake
+    // is a mechanism failure, and the drill behaviours are about the player --
+    // so a robot that jammed went from playing BIOBUZZ to chasing the player
+    // across the FIELD, which is both nothing a real drive team does and, at
+    // the buzzer, expensive: a jam in the last second drove a ROBOT that had
+    // been sitting in its own LOADING ZONE 0.85 m out of it and gave up the 5
+    // PARK points. The guard was belt-and-braces anyway -- `gamePlan` reads
+    // `agent.jammed` and stops asking for intake and shots, and
+    // `_applyMechanisms` holds the roller off and refuses to fire regardless.
+    const planned = biobuzzPlan(ctx, this.state);
     const behavior = BEHAVIORS[this.behaviorName] ?? BEHAVIORS.chaser;
     const intent = planned ?? behavior(ctx, this.state);
+    // Traffic first, because going around somebody is cheaper than either of
+    // the recoveries below; then wedging, in case the detour itself jams; then
+    // pinning, which is the most urgent and so gets the last word.
+    this._yieldToTraffic(intent, ctx);
     this._avoidWedging(dt, intent, ctx);
     this._avoidPinning(dt, intent, ctx);
 
@@ -317,10 +392,15 @@ export class Opponent {
     if (this.time < this._mistakeUntil && phase !== 'auto') {
       // Mid-mistake: drive somewhere unhelpful rather than freezing, because a
       // frozen robot is easy to read and a committed wrong move is not.
-      intent.point = new Vec2(
-        intent.point.x + this._noise * 1.2,
-        intent.point.y - this._noise * 1.2,
+      // Unhelpful in proportion to the drive, though -- see
+      // MISTAKE_DISPLACEMENT.
+      const reach = Math.hypot(
+        intent.point.x - ctx.selfPosition.x,
+        intent.point.y - ctx.selfPosition.y,
       );
+      const scale = Math.min(1, reach / MISTAKE_FULL_REACH);
+      const throwOff = this._noise * MISTAKE_DISPLACEMENT * scale;
+      intent.point = new Vec2(intent.point.x + throwOff, intent.point.y - throwOff);
     }
 
     this._command = intentToCommand(
@@ -416,6 +496,79 @@ export class Opponent {
     if (this.launcher?.needsSpinUp) this.launcher.spinning = false;
     this.robot.updateControl(dt);
     return this;
+  }
+
+  /**
+   * Steer around a ROBOT standing between here and where it is going.
+   *
+   * Only traffic gets steered around, not the destination: a ROBOT sitting at
+   * the intent point is the thing being driven *to*, which is what a defender
+   * blocking the player is doing, and swerving away from it would make the
+   * whole role impossible.
+   *
+   * The detour is a single waypoint off to one side, recomputed every cycle, so
+   * it behaves like a driver leaning on the stick to slide past rather than a
+   * planned path. It picks the side the other ROBOT is not on, and when that is
+   * ambiguous it goes toward open FIELD -- the same reasoning as `_avoidWedging`,
+   * for the same reason: half the time a coin flip picks the wall.
+   *
+   * @param {import('./behaviors.js').AiIntent} intent mutated in place
+   * @param {import('./behaviors.js').AiContext} ctx
+   */
+  _yieldToTraffic(intent, ctx) {
+    const entries = ctx.game?.match?.entries;
+    if (!entries || !this.matchId) return intent;
+
+    const dx = intent.point.x - ctx.selfPosition.x;
+    const dy = intent.point.y - ctx.selfPosition.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance < 1e-6) return intent;
+    const ux = dx / distance;
+    const uy = dy / distance;
+
+    let worst = null;
+    for (const entry of entries) {
+      if (!entry?.robot?.body || entry.id === this.matchId) continue;
+      const px = entry.robot.body.position.x;
+      const py = entry.robot.body.position.y;
+      // The destination, not traffic.
+      if (Math.hypot(px - intent.point.x, py - intent.point.y) < TRAFFIC_CLEARANCE) continue;
+
+      const rx = px - ctx.selfPosition.x;
+      const ry = py - ctx.selfPosition.y;
+      const along = rx * ux + ry * uy;
+      if (along <= 0 || along > Math.min(distance, TRAFFIC_LOOKAHEAD)) continue;
+      const across = rx * -uy + ry * ux;
+      if (Math.abs(across) >= TRAFFIC_CLEARANCE) continue;
+      if (!worst || along < worst.along) worst = { along, across };
+    }
+    if (!worst) return intent;
+
+    let side = this.time < this._passUntil ? this._passSide : 0;
+    if (side === 0) {
+      side = Math.abs(worst.across) > 1e-3 ? -Math.sign(worst.across) : 0;
+      if (side === 0) {
+        // Dead ahead: go the way that is not the nearest wall.
+        const toCentre = -(ctx.selfPosition.x * -uy + ctx.selfPosition.y * ux);
+        side = Math.abs(toCentre) > 1e-3 ? Math.sign(toCentre) : 1;
+      }
+    }
+    this._passSide = side;
+    this._passUntil = this.time + TRAFFIC_COMMIT_SECONDS;
+
+    const shift = TRAFFIC_CLEARANCE + 0.12;
+    const ahead = worst.along + TRAFFIC_PASS_AHEAD;
+    intent.point = new Vec2(
+      ctx.selfPosition.x + ux * ahead + -uy * side * shift,
+      ctx.selfPosition.y + uy * ahead + ux * side * shift,
+    );
+    // Going somewhere it does not mean to end up, so it is not settling,
+    // aiming or firing on arrival -- the same handling `routeAroundHive` gets.
+    intent.arrive = false;
+    intent.faceHeading = undefined;
+    intent.faceTarget = false;
+    intent.fire = false;
+    return intent;
   }
 
   /**

@@ -549,6 +549,60 @@ A full teleop used to produce about 55 points a side. It now produces 90 to
 - **Nobody parked.** Park is 5 points and it is judged purely on where the
   robot is at the buzzer, so there is no reason to be anywhere else at the end.
 
+Then a flaky test turned up three more, all in the same family: something was
+allowed to disturb the AI's driving and nothing checked that the disturbance
+made sense.
+
+- **A jam sent the robot back to the drill behaviour.** `jammed ? null :
+  biobuzzPlan(...)` meant a robot whose intake seized stopped playing BIOBUZZ
+  and started *chasing the player*, which is what the drills do. A seized
+  intake is a mechanism failure, not a change of plan, and the guard was
+  redundant anyway — the plans already read `agent.jammed` and stop asking for
+  intake and shots. A jam in the last second drove a robot that had been
+  sitting in its own loading zone 0.85 m out of it and gave up the park.
+- **A driver mistake displaced the target a flat 1.2 m**, including for a robot
+  already sitting where it meant to be — so a fumble at the buzzer could also
+  un-park it. A mistake is a mistake in a *commanded motion*; it now scales
+  with how far the robot is being asked to go, so there is nothing to fumble
+  when the drive is over.
+- **Nothing routed a park around the A-frame.** The park plan returned early,
+  above the routing every other plan goes through, so a robot on the far side
+  of a frame from its own loading zone drove into the frame and ground there
+  until the buzzer.
+
+Fixing the first of those exposed the real one. None of the plans know about
+the other three robots — they name a place to be, and the driving is somebody
+else's problem — so a robot standing between here and there got *pushed*, for
+as long as the plan held. That is a G421 major foul every three seconds, and it
+was running at four majors a match, 20 points each. Backing off once the
+referee has started counting treats the symptom; the count only pauses when the
+robots separate, so anything still counting at three seconds is a foul however
+fast the retreat. `Opponent._yieldToTraffic` steers around a robot in the
+intended path instead, aiming *past* it rather than out to the side, and
+committing to a side for a moment — without either of those it slid out of its
+own corridor, found the way clear, re-aimed, and slid back, netting 30 cm
+backwards in 13 seconds. A robot that *is* the destination is exempt, which is
+what a defender blocking you is doing.
+
+Two bugs in `routeAroundHive` fell out of the same investigation, both of which
+could park a robot against a frame for the rest of the match:
+
+- The escape for a robot *inside* a keep-out box moved it 2 cm, which is inside
+  the drive controller's deadband, so it crept, fell back in, and was told the
+  same thing again. A destination still gets nudged 2 cm — an element resting
+  against a foot bar has to stay reachable — but a robot gets 30 cm.
+- When the target was past the frames in y, the route took the lane on the
+  *target's* side even if the robot was past them on the other side, which is a
+  command to drive through the frame being avoided. The lane is now forced to
+  the robot's own side whenever it is already clear in y.
+
+Measured over six seeded full matches, that trade is 340 foul points conceded
+down to 40, G421 from seven to none, and 7 of 18 robot-slots parking up to 12 —
+for about 13% less *earned* scoring, because going around traffic and around
+the A-frame costs cycle time that barging through did not. The earned figure is
+the honest one to watch: most of the apparent scoring gain from the jam fix
+alone was foul credits, since a foul is a credit to the opponent's total.
+
 A flower robot also used to empty the flower it was filling: parked against the
 tube with its roller running, `Intake._collect` pulled POLLEN back out of the
 bottom. And with fewer than four robots on the field, the unclaimed pre-load
@@ -566,8 +620,9 @@ Two things about the AI are worth knowing because they are physics, not
 tuning:
 
 - **The A-frame blocks the middle of the field.** The straight line from one
-  side to the other goes through a strut leg, so the AI routes around the frame
-  and has a wedge detector for when it gets stuck anyway. It is not being
+  side to the other goes through a strut leg, so the AI routes around the frame,
+  steers around the other robots, and has a wedge detector for when it gets
+  stuck anyway. It is not being
   clever; without it a robot presses itself against a strut at half power for
   the whole match with a full magazine and a clear shot two metres away.
 - **There is only a narrow band of legal shooting positions.** A CELL faces

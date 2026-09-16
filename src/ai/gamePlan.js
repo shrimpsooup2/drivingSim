@@ -80,6 +80,16 @@ const HIVE_FRAMES = [
 ];
 /** The y a ROBOT runs along to pass the frames: clear of both, inside the wall. */
 const FRAME_LANE = FRAME_HALF_Y + 0.14;
+/**
+ * How far outside a frame box a point gets pushed.
+ *
+ * `FRAME_NUDGE` moves a *destination* just clear, because an element resting
+ * against a foot bar still has to be reachable and an intake reaches four to
+ * six inches. `FRAME_ESCAPE` moves a *ROBOT* clear, and has to be bigger than
+ * the distance at which the drive controller bothers to move at all.
+ */
+const FRAME_NUDGE = 0.02;
+const FRAME_ESCAPE = 0.3;
 
 /**
  * Pick a plan for this robot, or null if it has no business in the game (no
@@ -98,23 +108,29 @@ export function biobuzzPlan(ctx, state) {
   // end -- and no AI robot was ever collecting it. Long enough before the
   // buzzer to cross the FIELD, short enough not to give up a cycle.
   const remaining = game.match?.teleopRemaining ?? Infinity;
-  if (game.match?.driverControl && remaining <= PARK_SECONDS) {
-    return parkInLoadingZone(ctx);
-  }
 
   let intent;
-  switch (agent.role) {
-    case 'flowerFiller':
-      intent = fillFlowers(ctx, state);
-      break;
-    case 'tipper':
-      intent = cycleToCell(ctx, state, true);
-      break;
-    case 'defender':
-      intent = defend(ctx, state);
-      break;
-    default:
-      intent = cycleToCell(ctx, state, false);
+  if (game.match?.driverControl && remaining <= PARK_SECONDS) {
+    // Not an early return: a PARK has to get round the HIVE like anything else.
+    // It used to return straight out of here, above the routing below, so a
+    // ROBOT on the far side of an A-frame from its own LOADING ZONE drove into
+    // the frame and ground against it until the buzzer. That was most of the
+    // AI PARKS that never happened.
+    intent = parkInLoadingZone(ctx);
+  } else {
+    switch (agent.role) {
+      case 'flowerFiller':
+        intent = fillFlowers(ctx, state);
+        break;
+      case 'tipper':
+        intent = cycleToCell(ctx, state, true);
+        break;
+      case 'defender':
+        intent = defend(ctx, state);
+        break;
+      default:
+        intent = cycleToCell(ctx, state, false);
+    }
   }
 
   // Every plan names a place to be and leaves the driving to someone else, so
@@ -146,7 +162,15 @@ export function biobuzzPlan(ctx, state) {
 export function routeAroundHive(from, to) {
   // A ROBOT that has been shoved into a frame gets itself out first; from
   // inside, every route "crosses" and nothing else can be decided.
-  const escape = nudgeClearOfFrames(from);
+  //
+  // By a good margin, not by the hair's breadth a destination gets nudged: an
+  // escape has to be far enough away to read as a command to move. At 2 cm it
+  // was not. A ROBOT resting exactly on the frame boundary was told to go 2 cm
+  // clear, which is inside the drive controller's deadband, so it crept, fell
+  // back inside, and was told the same thing again -- for the rest of the
+  // MATCH. `_avoidWedging` does not rescue it either, because it only counts a
+  // ROBOT as wanting to move when its target is more than 22 cm away.
+  const escape = nudgeClearOfFrames(from, FRAME_ESCAPE);
   if (escape) return escape;
 
   // A destination inside a frame is not a destination -- an element resting
@@ -157,11 +181,22 @@ export function routeAroundHive(from, to) {
 
   if (!HIVE_FRAMES.some((f) => segmentCrossesFrame(from, target, f))) return target;
 
-  // Round the end of the frames: whichever side is the shorter way, unless the
-  // target is itself beyond the frames in y, in which case go round on its side
-  // so the last leg does not have to cross back.
+  // Round the end of the frames. Which end is forced whenever the ROBOT is
+  // already past them in y: the lane on the *other* side is on the far side of
+  // the frame, so routing to it is a command to drive through the thing being
+  // avoided. That is what used to happen to a ROBOT above the frames heading
+  // for a LOADING ZONE below them -- it was sent to the lane at -y, pressed
+  // into the A-frame at the corner, and spent the rest of the MATCH there
+  // alternating between the escape nudge and the route that caused it.
+  //
+  // Otherwise -- in the corridor between the frames, or out beyond their ends
+  // in x -- either lane is reachable, so prefer the target's own side when it
+  // is past them, else the shorter way round.
   let yLane;
-  if (Math.abs(target.y) > FRAME_HALF_Y) {
+  const fromSide = Math.abs(from.y) > FRAME_HALF_Y ? Math.sign(from.y) : 0;
+  if (fromSide !== 0) {
+    yLane = fromSide * FRAME_LANE;
+  } else if (Math.abs(target.y) > FRAME_HALF_Y) {
     yLane = Math.sign(target.y) * FRAME_LANE;
   } else {
     const viaPlus = Math.abs(from.y - FRAME_LANE) + Math.abs(target.y - FRAME_LANE);
@@ -189,7 +224,7 @@ export function routeAroundHive(from, to) {
  *
  * @param {Vec2} p
  */
-function nudgeClearOfFrames(p) {
+function nudgeClearOfFrames(p, margin = FRAME_NUDGE) {
   for (const frame of HIVE_FRAMES) {
     const dx = p.x - frame.centreX;
     if (Math.abs(dx) > frame.halfX || Math.abs(p.y) > frame.halfY) continue;
@@ -197,10 +232,10 @@ function nudgeClearOfFrames(p) {
     const outY = frame.halfY - Math.abs(p.y);
     if (outX <= outY) {
       const side = Math.sign(dx) || (frame.centreX < 0 ? 1 : -1);
-      return new Vec2(frame.centreX + side * (frame.halfX + 0.02), p.y);
+      return new Vec2(frame.centreX + side * (frame.halfX + margin), p.y);
     }
     const side = Math.sign(p.y) || 1;
-    return new Vec2(p.x, side * (frame.halfY + 0.02));
+    return new Vec2(p.x, side * (frame.halfY + margin));
   }
   return null;
 }

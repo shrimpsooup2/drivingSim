@@ -591,3 +591,220 @@ test('an AI heads for its LOADING ZONE before the buzzer, which is 5 points', ()
   );
   assert.equal(game.match.score().blue.parkTeleop, 5);
 });
+
+/**
+ * Both of these are the same bug wearing two hats: something that is
+ * legitimately allowed to disturb the AI's driving disturbed it so much that it
+ * left a PARK it had already made, in the last second, for no points. A drive
+ * team does plenty of things wrong at the buzzer; driving out of their own
+ * LOADING ZONE is not one of them.
+ */
+function parkedOpponent(teleopSeconds = 8) {
+  const config = new Config();
+  config.set('ai.enabled', false);
+  const sim = new Simulation(config);
+  const opponent = sim.addOpponent({
+    id: 'blue1',
+    alliance: 'blue',
+    archetypeId: 'twinWheel',
+    qualityId: 'elite',
+    skillId: 'veteran',
+    start: { x: 0.9, y: -1.4, heading: Math.PI },
+    // Pinned high: it never rolls a mistake or a jam of its own (both fire on
+    // `random() <` a small chance), and `_noise` holds at +0.98 instead of
+    // being re-rolled 12 times a second. That matters below -- a sign that
+    // flips at 12 Hz averages out, and averaging out is what hid this.
+    random: () => 0.99,
+  });
+  const game = sim.enableGame({ alliance: 'red', startPhase: 'teleop', teleopSeconds }).start();
+  // Long enough to give up on cycling and settle into the zone.
+  for (let i = 0; i < 60 * 5; i++) sim.step(1 / 60);
+  assert.ok(
+    game.match.parked(opponent.robot, 'blue'),
+    `expected it to be in the zone by now, at (${opponent.robot.body.position.x.toFixed(2)}, ` +
+      `${opponent.robot.body.position.y.toFixed(2)})`,
+  );
+  return { sim, game, opponent };
+}
+
+test('a jam does not make an AI abandon its PARK to chase the player', () => {
+  const { sim, game, opponent } = parkedOpponent();
+
+  // Seize the intake for the rest of the MATCH. `jamsPerMinute` would get
+  // there eventually, but which second it picks is exactly the randomness this
+  // is about, so it is forced.
+  opponent._jammedUntil = opponent.time + 10;
+  for (let i = 0; i < 60 * 4; i++) sim.step(1 / 60);
+
+  assert.equal(game.match.phase, 'ended');
+  assert.ok(
+    game.match.parked(opponent.robot, 'blue'),
+    `a jammed intake is a mechanism failure, not a change of plan; ended at ` +
+      `(${opponent.robot.body.position.x.toFixed(2)}, ` +
+      `${opponent.robot.body.position.y.toFixed(2)})`,
+  );
+  assert.equal(game.match.score().blue.parkTeleop, 5);
+});
+
+test('a driver mistake does not drive an AI out of a PARK it has already made', () => {
+  const { sim, game, opponent } = parkedOpponent();
+
+  // Mid-mistake for the rest of the MATCH, and at full displacement. The sign
+  // is re-rolled every re-plan, so this covers both directions.
+  opponent._mistakeUntil = opponent.time + 10;
+  opponent._noise = 1;
+  for (let i = 0; i < 60 * 4; i++) sim.step(1 / 60);
+  assert.equal(game.match.phase, 'ended');
+
+  assert.ok(
+    game.match.parked(opponent.robot, 'blue'),
+    `a fumble displaces a drive, and there is no drive left to displace; ended at ` +
+      `(${opponent.robot.body.position.x.toFixed(2)}, ` +
+      `${opponent.robot.body.position.y.toFixed(2)})`,
+  );
+  assert.equal(game.match.score().blue.parkTeleop, 5);
+});
+
+test('a mistake still throws a long drive well off course', () => {
+  // Same robot, same first two seconds, once clean and once fumbling the whole
+  // way. Scaling the mistake by the length of the drive must not have quietly
+  // turned it off for drives that actually go somewhere.
+  const drive = (mistake) => {
+    const config = new Config();
+    config.set('ai.enabled', false);
+    const sim = new Simulation(config);
+    const opponent = sim.addOpponent({
+      id: 'blue1',
+      alliance: 'blue',
+      archetypeId: 'twinWheel',
+      qualityId: 'elite',
+      skillId: 'veteran',
+      start: { x: 1.3, y: 1.2, heading: Math.PI },
+      random: () => 0.99, // never rolls a mistake of its own, never jams
+    });
+    sim.enableGame({ alliance: 'red', startPhase: 'teleop', teleopSeconds: 60 }).start();
+    for (let i = 0; i < 60 * 2; i++) {
+      if (mistake) {
+        opponent._mistakeUntil = opponent.time + 1;
+        opponent._noise = 1;
+      }
+      sim.step(1 / 60);
+    }
+    return new Vec2(opponent.robot.body.position.x, opponent.robot.body.position.y);
+  };
+
+  const clean = drive(false);
+  const fumbled = drive(true);
+  assert.ok(
+    Vec2.sub(clean, fumbled).length() > 0.3,
+    `a fumbled drive should end up somewhere else: clean (${clean.x.toFixed(2)}, ` +
+      `${clean.y.toFixed(2)}) vs fumbled (${fumbled.x.toFixed(2)}, ${fumbled.y.toFixed(2)})`,
+  );
+});
+
+/**
+ * Traffic. None of the plans know about the other three ROBOTS -- they name a
+ * place to be -- so without this an AI drove straight through whoever was
+ * standing there, which the REFEREE calls as a G421 PIN every three seconds.
+ */
+function trafficContext(selfX, selfY, targetX, targetY, others) {
+  const config = new Config();
+  config.set('ai.enabled', false);
+  const sim = new Simulation(config);
+  const opponent = sim.addOpponent({
+    id: 'blue1',
+    alliance: 'blue',
+    archetypeId: 'twinWheel',
+    qualityId: 'elite',
+    skillId: 'veteran',
+    start: { x: selfX, y: selfY, heading: 0 },
+  });
+  opponent.matchId = 'blue1';
+  const entries = others.map((o, i) => ({
+    id: o.id ?? `other${i}`,
+    robot: { body: { position: { x: o.x, y: o.y } } },
+  }));
+  const ctx = {
+    selfPosition: new Vec2(selfX, selfY),
+    selfHeading: 0,
+    game: { match: { entries: [...entries, { id: 'blue1', robot: opponent.robot }] } },
+  };
+  const intent = { point: new Vec2(targetX, targetY), arrive: true, faceTarget: true, fire: true };
+  opponent._yieldToTraffic(intent, ctx);
+  return intent;
+}
+
+test('an AI steers around a ROBOT standing in its path', () => {
+  // Straight down +x, with somebody parked half a metre along the line.
+  const intent = trafficContext(0, 0, 1.4, 0, [{ x: 0.5, y: 0 }]);
+  assert.ok(
+    Math.abs(intent.point.y) > 0.5,
+    `expected a waypoint off to one side, got (${intent.point.x.toFixed(2)}, ${intent.point.y.toFixed(2)})`,
+  );
+  assert.equal(intent.arrive, false, 'a detour waypoint is not somewhere to settle');
+  assert.equal(intent.fire, false, 'and not somewhere to shoot from');
+});
+
+test('an AI passes on the side the other ROBOT is not on', () => {
+  const left = trafficContext(0, 0, 1.4, 0, [{ x: 0.5, y: 0.2 }]);
+  assert.ok(left.point.y < 0, `blocker to the left, so pass right: ${left.point.y.toFixed(2)}`);
+  const right = trafficContext(0, 0, 1.4, 0, [{ x: 0.5, y: -0.2 }]);
+  assert.ok(right.point.y > 0, `blocker to the right, so pass left: ${right.point.y.toFixed(2)}`);
+});
+
+test('an AI does not swerve away from the ROBOT it is driving at', () => {
+  // A defender blocking the player: the player *is* the destination, and
+  // steering around the destination would make the whole role impossible.
+  const intent = trafficContext(0, 0, 1.4, 0, [{ x: 1.4, y: 0 }]);
+  assert.equal(intent.point.x, 1.4, 'target untouched');
+  assert.equal(intent.point.y, 0);
+  assert.equal(intent.arrive, true, 'still arriving');
+  assert.equal(intent.fire, true);
+});
+
+test('an AI ignores traffic that is not in the way', () => {
+  const beside = trafficContext(0, 0, 1.4, 0, [{ x: 0.5, y: 0.9 }]);
+  assert.equal(beside.point.y, 0, 'a robot a metre off the line is not traffic');
+  const behind = trafficContext(0, 0, 1.4, 0, [{ x: -0.5, y: 0 }]);
+  assert.equal(behind.point.y, 0, 'and neither is one behind it');
+  const faraway = trafficContext(0, 0, 4, 0, [{ x: 2.5, y: 0 }]);
+  assert.equal(faraway.point.y, 0, 'nor one further off than the lookahead');
+});
+
+test('an AI goes around a stationary ROBOT rather than PINNING it', () => {
+  const config = new Config();
+  config.set('ai.enabled', false);
+  const sim = new Simulation(config);
+  const opponent = sim.addOpponent({
+    id: 'blue1',
+    alliance: 'blue',
+    archetypeId: 'twinWheel',
+    qualityId: 'elite',
+    skillId: 'veteran',
+    start: { x: 0.2, y: -0.9, heading: 0 },
+    random: () => 0.99,
+  });
+  // Short TELEOP, so the plan is PARK from the first cycle and the AI's target
+  // is the one place on the FIELD this test can predict: its LOADING ZONE.
+  const game = sim.enableGame({ alliance: 'red', startPhase: 'teleop', teleopSeconds: 12 }).start();
+  opponent.robot.reset(0.2, -0.9, 0);
+  // And the player parked squarely on the line it has to drive, doing nothing --
+  // which is what a driver practising their aim looks like, and the case that
+  // used to cost a MAJOR FOUL every three seconds.
+  sim.setStartPose(0.85, -0.9, 0);
+  sim.resetRobot();
+
+  for (let i = 0; i < 60 * 13; i++) sim.step(1 / 60);
+
+  const pins = game.match.referee.recent(999).filter((c) => c.rule === 'G421');
+  assert.equal(
+    pins.length,
+    0,
+    `it should have gone around: ${pins.map((c) => c.detail).join('; ')}`,
+  );
+  assert.ok(
+    game.match.parked(opponent.robot, 'blue'),
+    `and still got there, ended at (${opponent.robot.body.position.x.toFixed(2)}, ` +
+      `${opponent.robot.body.position.y.toFixed(2)})`,
+  );
+});
