@@ -151,6 +151,36 @@ Above the foot bar the struts lean up and inward, so their collider is clipped
 to the part below the 18 in robot limit — past that the strut is overhead and
 you drive underneath it.
 
+### Two things the CELL geometry got wrong
+
+**Elements hung in mid-air beside the hive.** Each of the six plates was
+resolved independently as a two-sided slab, pushing the ball "to whichever side
+it is already on" — right for one plate, wrong at a corner. An element resting
+against the *outside* of the bottom-back corner is within a radius of both the
+floor plate and the back panel, and those two normals are 60° apart with upward
+components: each push shoved it into the other's slab, and the pair held it
+against gravity for the rest of the match. It did not merely fail to fall, it
+crept upward.
+
+A pentagonal prism is convex, so from outside there is exactly one contact — the
+direction from the closest point of the solid to the ball's centre. Faces, ribs
+and corners all fall out of that one expression, and one contact cannot wedge.
+Inside the box both walls at once is still correct, because the inside of a
+corner really is concave: an element in the bottom corner of a cell is held by
+the floor and the side.
+
+**The hive looked solid from one angle and open from another.** Not
+transparency — back-face culling. A cell is a box you look *into*, so some of
+its walls always face away from the camera, and a single-sided wall is simply
+not drawn from that side. `cellMesh` now carries both windings, so exactly one
+face of each wall survives culling from any angle.
+
+Two-sided and opaque would be consistent but useless: you could never see how
+full your own cell is, which is the one thing a driver watching for a tip needs.
+The panels are clear polycarbonate, so they are drawn clear — blended over the
+finished opaque scene with depth writes off, which is what keeps the far wall
+from being occluded by the near one.
+
 ## The FLOWER
 
 A vertical tube on each wall holding a single-file stack. Elements go in the

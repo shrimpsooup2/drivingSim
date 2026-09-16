@@ -1005,3 +1005,74 @@ test('a FLOWER obstacle matches its ring plates and faces the right way', () => 
     );
   }
 });
+
+test('an element against the outside of a CELL corner falls, it does not hang there', () => {
+  const hive = new Hive({ alliance: 'red', pivotX: -HIVE_PIVOT_X, startUp: 'aft' });
+
+  // A little outside the bottom-back corner of a CELL: within a radius of both
+  // the floor plate and the back panel, and off toward one side. Resolved plate
+  // by plate as two-sided slabs, the two normals are 60 degrees apart with
+  // upward components -- so each push shoved the element into the other's slab
+  // and the pair of them held it against gravity for the rest of the MATCH. It
+  // did not merely fail to fall; it crept *upward*.
+  //
+  // A pentagonal prism is convex, so from outside there is exactly one contact.
+  for (const side of ['fore', 'aft']) {
+    const planes = hive.cellPlanes(side);
+    const ball = new Ball({
+      id: 'p', kind: 'pollen', radius: POLLEN_RADIUS, mass: POLLEN_MASS,
+    });
+    const a = -0.25;
+    const v = 0.0089;
+    const d = planes.depth + 0.0087;
+    ball.setPosition(
+      planes.origin.x + a,
+      planes.origin.y + planes.up.y * (v - planes.baseOffset) + planes.inward.y * d,
+      planes.origin.z + planes.up.z * (v - planes.baseOffset) + planes.inward.z * d,
+    );
+    ball.stop();
+
+    const startZ = ball.z;
+    // The HIVE is not in a ball world here, so integrate the two lines that
+    // matter -- gravity and the collider.
+    for (let i = 0; i < 1200; i++) {
+      ball.vz -= 9.80665 / 400;
+      ball.x += ball.vx / 400;
+      ball.y += ball.vy / 400;
+      ball.z += ball.vz / 400;
+      hive.collideBall(ball);
+    }
+    assert.ok(
+      ball.z < startZ - 0.3,
+      `the ${side} CELL let it go: z ${startZ.toFixed(3)} -> ${ball.z.toFixed(3)}`,
+    );
+  }
+});
+
+test('an element inside a CELL is still held by its floor', () => {
+  const hive = new Hive({ alliance: 'red', pivotX: -HIVE_PIVOT_X, startUp: 'fore' });
+  const planes = hive.cellPlanes('fore');
+  const ball = new Ball({
+    id: 'p', kind: 'pollen', radius: POLLEN_RADIUS, mass: POLLEN_MASS,
+  });
+  // A radius above the floor, half the depth in: where a scored element sits.
+  const v = POLLEN_RADIUS;
+  const d = planes.depth * 0.5;
+  ball.setPosition(
+    planes.origin.x,
+    planes.origin.y + planes.up.y * (v - planes.baseOffset) + planes.inward.y * d,
+    planes.origin.z + planes.up.z * (v - planes.baseOffset) + planes.inward.z * d,
+  );
+  ball.stop();
+
+  for (let i = 0; i < 800; i++) {
+    ball.vz -= 9.80665 / 800;
+    ball.x += ball.vx / 800;
+    ball.y += ball.vy / 800;
+    ball.z += ball.vz / 800;
+    hive.collideBall(ball);
+  }
+  const local = hive.cellLocal('fore', ball.x, ball.y, ball.z);
+  assert.ok(local.v > -0.01, `still on the floor of the CELL: v=${local.v.toFixed(3)}`);
+  assert.ok(local.d > -0.05 && local.d < planes.depth + 0.05, `and still in it: d=${local.d.toFixed(3)}`);
+});

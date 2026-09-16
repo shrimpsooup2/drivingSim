@@ -130,6 +130,11 @@ export class Renderer {
 
     this._model = mat4.create();
     this._normal = new Float32Array(9);
+    /**
+     * CELL panels waiting for the translucent pass. See `_drawCellPanels`.
+     * @type {{model: Float32Array, colour: number[], emissive: number}[]}
+     */
+    this._panels = [];
     this.pixelRatio = 1;
     this.width = 1;
     this.height = 1;
@@ -462,9 +467,17 @@ export class Renderer {
         // Pale panels inside a bright frame, the way the real CELL looks: it is
         // clear polycarbonate on an alliance-coloured rib. A solid slab in the
         // alliance colour reads as a wall rather than a basket you can aim into.
-        this._cellMatrix(m, opening.x, opening.y, opening.z, n, hive.openingUp(side));
-        const panel = up ? [0.82, 0.84, 0.88, 1] : [0.5, 0.52, 0.56, 1];
-        this._draw(this.meshes.cell, m, panel, this.textures.plate, up ? 0.14 : 0.02);
+        // Deferred to a translucent pass at the end of the game draw, because
+        // the panels are clear polycarbonate and have to be *drawn* clear. A
+        // two-sided opaque CELL is consistent from every angle but you can
+        // never see how full your own CELL is, which is the one thing a driver
+        // watching for a TIP needs to know.
+        const cell = this._cellMatrix(mat4.create(), opening.x, opening.y, opening.z, n, hive.openingUp(side));
+        this._panels.push({
+          model: cell,
+          colour: up ? [0.86, 0.88, 0.92, 0.44] : [0.54, 0.56, 0.6, 0.34],
+          emissive: up ? 0.14 : 0.02,
+        });
       }
     }
 
@@ -570,6 +583,35 @@ export class Renderer {
       mat4.composeQuat(m, ball.x, ball.y, ball.z, ball, ball.radius * BALL_SHELL);
       this._draw(this.meshes.sphere, m, inner, this.textures.white, 0);
     }
+
+    this._drawCellPanels();
+  }
+
+  /**
+   * The CELL panels, blended over the finished opaque scene.
+   *
+   * Last, and with depth *writes* off. The depth test stays on so a panel
+   * behind a ROBOT is still hidden, but a panel must not write depth or it
+   * would occlude the panel behind it and the far wall of the CELL would
+   * vanish -- which is the same class of inconsistency this pass exists to fix,
+   * arrived at from the other direction.
+   *
+   * Culling stays on, and that is what makes it consistent: `cellMesh` carries
+   * both windings, so exactly one face of each wall survives from any angle and
+   * every panel contributes exactly one layer of tint however the camera moves.
+   */
+  _drawCellPanels() {
+    if (this._panels.length === 0) return;
+    const gl = this.gl;
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false);
+    for (const panel of this._panels) {
+      this._draw(this.meshes.cell, panel.model, panel.colour, this.textures.plate, panel.emissive);
+    }
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+    this._panels.length = 0;
   }
 
   /**

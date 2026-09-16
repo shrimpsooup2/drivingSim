@@ -484,6 +484,20 @@ export class Hive {
       depth: CELL_DEPTH,
       baseOffset: apex / 2,
       edges,
+      /**
+       * The same pentagon as a vertex ring, counter-clockwise in (across, v).
+       *
+       * The half-planes above say which side of each wall a point is on, which
+       * is all a plate-by-plate test needs. Finding the *nearest point* on the
+       * rib -- which is what a contact from outside needs -- takes the corners.
+       */
+      outline: [
+        { a: -hw, v: 0 },
+        { a: hw, v: 0 },
+        { a: hw, v: shoulder },
+        { a: 0, v: apex },
+        { a: -hw, v: shoulder },
+      ],
     };
   }
 
@@ -552,59 +566,81 @@ export class Hive {
   _collideCell(ball, side, planes) {
     const local = this.cellLocal(side, ball.x, ball.y, ball.z, planes);
     const r = ball.radius;
-
-    // Along the tube at all? The mouth is open, so a ball short of it by more
-    // than its radius is in free air.
-    const alongWall = local.d > -r && local.d < planes.depth + r;
+    const depth = planes.depth;
 
     const distances = planes.edges.map(
       (edge) => edge.a * local.a + edge.v * local.v - edge.offset,
     );
-    const worstDistance = Math.min(...distances);
+    const insideOutline = distances.every((d) => d >= 0);
 
-    for (let i = 0; i < planes.edges.length && alongWall; i++) {
-      const distance = distances[i];
-      if (Math.abs(distance) >= r) continue;
+    // In the mouth. There is no plate across the opening -- that is what lets a
+    // shot in -- so an element lined up on it in free air touches nothing.
+    if (insideOutline && local.d < 0) return;
 
-      // A side wall only exists between its own two vertices, so the ball has
-      // to be within the outline as far as every *other* edge is concerned.
-      // Without that bound each wall ran off to infinity in its own plane: a
-      // shot from the far corner was swatted out of the air by the plane of a
-      // CELL wall extended a foot above the pentagon's apex, where there is
-      // nothing but air.
-      let bounded = true;
-      for (let j = 0; j < distances.length && bounded; j++) {
-        if (j !== i && distances[j] < -r) bounded = false;
-      }
-      if (!bounded) continue;
+    // --- Outside the box: one contact, from the nearest point of the solid.
+    //
+    // This is the half that was wrong, and it is what left elements hanging in
+    // mid-air beside the HIVE for the rest of a MATCH. Each plate used to be
+    // resolved independently as a two-sided slab, pushing the ball "to
+    // whichever side it is already on" -- which is right for one plate and
+    // wrong at a corner. An element resting against the *outside* of the
+    // bottom-back corner is within a radius of both the floor plate and the
+    // back panel, and the two normals are 60 degrees apart with upward
+    // components: each push shoved it into the other's slab, and the pair of
+    // them held it against gravity. It never moved again.
+    //
+    // A pentagonal prism is convex, so from outside there is exactly one
+    // contact: the direction from the closest point of the solid to the ball's
+    // centre. Faces, ribs and corners all fall out of that one expression, and
+    // a single contact cannot wedge.
+    const clampedD = Math.min(Math.max(local.d, 0), depth);
+    let nearA = local.a;
+    let nearV = local.v;
+    if (!insideOutline) {
+      const near = nearestOnOutline(planes.outline, local.a, local.v);
+      nearA = near.a;
+      nearV = near.v;
+    }
+    const da = local.a - nearA;
+    const dv = local.v - nearV;
+    const dd = local.d - clampedD;
+    const gap = Math.hypot(da, dv, dd);
+    if (gap > 1e-9) {
+      if (gap >= r) return;
+      this._pushOffLocal(ball, planes, da / gap, dv / gap, dd / gap, r - gap);
+      return;
+    }
 
-      // Straddling this wall: push it to whichever side it is already on. This
-      // is both the interior wall and the rib a clipped shot bounces off.
-      const sign = distance >= 0 ? 1 : -1;
+    // --- Centre inside the box: out through every wall it is touching.
+    //
+    // Both walls at once is *correct* here, because the inside of a corner
+    // really is concave -- an element resting in the bottom corner of a CELL is
+    // held by the floor and the side. Never out through the mouth, though: an
+    // element that has arrived belongs in there.
+    for (let i = 0; i < planes.edges.length; i++) {
+      const penetration = r - distances[i];
+      if (penetration <= 0) continue;
       const edge = planes.edges[i];
-      this._pushOff(
-        ball,
-        sign * edge.a,
-        sign * edge.v * planes.up.y,
-        sign * edge.v * planes.up.z,
-        r - Math.abs(distance),
-      );
+      this._pushOffLocal(ball, planes, edge.a, edge.v, 0, penetration);
     }
+    const behind = depth - local.d;
+    if (behind < r) this._pushOffLocal(ball, planes, 0, 0, -1, r - behind);
+  }
 
-    // The back panel, from either side, bounded by the outline.
-    if (worstDistance >= -r) {
-      const behind = planes.depth - local.d;
-      if (Math.abs(behind) < r) {
-        const sign = behind >= 0 ? 1 : -1;
-        this._pushOff(
-          ball,
-          0,
-          -sign * planes.inward.y,
-          -sign * planes.inward.z,
-          r - Math.abs(behind),
-        );
-      }
-    }
+  /**
+   * Push a ball off a plate, given the normal in the CELL's own frame.
+   *
+   * `across` is world x and `up`/`inward` are an orthonormal pair in the y-z
+   * plane, so this is a rotation and the normal stays a unit vector.
+   */
+  _pushOffLocal(ball, planes, na, nv, nd, penetration) {
+    this._pushOff(
+      ball,
+      na,
+      nv * planes.up.y + nd * planes.inward.y,
+      nv * planes.up.z + nd * planes.inward.z,
+      penetration,
+    );
   }
 
   /**
@@ -902,4 +938,41 @@ export class Hive {
   get position() {
     return new Vec2(this.pivotX, 0);
   }
+}
+
+/**
+ * Nearest point on a convex outline to a point outside it.
+ *
+ * Every edge as a segment, nearest point on each, closest one wins. Five edges
+ * makes the loop cheaper than anything cleverer, and it gets corners right for
+ * free: a point off the end of one edge projects to the shared vertex from both
+ * of the edges that meet there.
+ *
+ * @param {{a: number, v: number}[]} outline counter-clockwise ring
+ * @param {number} a
+ * @param {number} v
+ */
+function nearestOnOutline(outline, a, v) {
+  let best = outline[0];
+  let bestDistance = Infinity;
+  for (let i = 0; i < outline.length; i++) {
+    const p = outline[i];
+    const q = outline[(i + 1) % outline.length];
+    const ea = q.a - p.a;
+    const ev = q.v - p.v;
+    const lengthSquared = ea * ea + ev * ev;
+    let t = 0;
+    if (lengthSquared > 1e-12) {
+      t = ((a - p.a) * ea + (v - p.v) * ev) / lengthSquared;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+    }
+    const ca = p.a + ea * t;
+    const cv = p.v + ev * t;
+    const distance = (a - ca) * (a - ca) + (v - cv) * (v - cv);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { a: ca, v: cv };
+    }
+  }
+  return best;
 }

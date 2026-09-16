@@ -173,6 +173,15 @@ export function sphereMesh(segments = 16, rings = 10) {
  * the prism (the arm), z from 0 at the base to 1 at the apex -- so the caller
  * scales it by the real width, depth and height.
  *
+ * **Two-sided**, and that is the whole reason this comment exists. A CELL is a
+ * box you look *into*, so some of its walls always face away from the camera --
+ * and with back-face culling on, a single-sided wall simply is not drawn from
+ * that side. The result was a HIVE that looked solid from one angle and open
+ * from another, changing as the camera moved, which reads as broken
+ * transparency rather than as a basket. Every wall carries both windings with
+ * flipped normals, so exactly one face of each pair survives culling from any
+ * angle and the CELL is consistent from all of them.
+ *
  * @param {number} shoulder shoulder height as a fraction of the full height
  */
 export function cellMesh(shoulder = 0.54) {
@@ -205,16 +214,26 @@ export function cellMesh(shoulder = 0.54) {
     const c = push(bx, 1, bz, nx, 0, nz, 1, 1);
     const d = push(ax, 1, az, nx, 0, nz, 0, 1);
     idx.push(a, b, c, a, c, d);
+    // The same wall from inside: reversed winding, reversed normal.
+    const ia = push(ax, 0, az, -nx, 0, -nz, 0, 0);
+    const ib = push(bx, 0, bz, -nx, 0, -nz, 1, 0);
+    const ic = push(bx, 1, bz, -nx, 0, -nz, 1, 1);
+    const id = push(ax, 1, az, -nx, 0, -nz, 0, 1);
+    idx.push(ia, ic, ib, ia, id, ic);
   }
 
-  // Back face only -- the opening end is left open so you can see inside.
+  // Back face only -- the opening end is left open so a shot can get in.
   const centre = push(0, 1, shoulder * 0.6, 0, 1, 0, 0.5, 0.5);
+  const inner = push(0, 1, shoulder * 0.6, 0, -1, 0, 0.5, 0.5);
   for (let i = 0; i < outline.length; i++) {
     const [ax, az] = outline[i];
     const [bx, bz] = outline[(i + 1) % outline.length];
     const a = push(ax, 1, az, 0, 1, 0, 0, 0);
     const b = push(bx, 1, bz, 0, 1, 0, 1, 0);
     idx.push(centre, b, a);
+    const ia = push(ax, 1, az, 0, -1, 0, 0, 0);
+    const ib = push(bx, 1, bz, 0, -1, 0, 1, 0);
+    idx.push(inner, ia, ib);
   }
 
   return { vertices: new Float32Array(v), indices: new Uint16Array(idx) };
