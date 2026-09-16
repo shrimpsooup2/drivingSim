@@ -347,6 +347,21 @@ test('a feeder quicker than the wheel can recover throws the later shots short',
   assert.ok(Math.min(...paced) > Math.min(...speeds), 'and they beat rapid fire');
 });
 
+/**
+ * Which HIVE's upward CELL an element has come to rest in, or null.
+ *
+ * There is no `cell` container to look at any more: an element in a CELL is an
+ * ordinary free element that happens to be inside one, so scoring is a
+ * question about where it is. `upBalls` recomputes containment before
+ * answering, so this is live.
+ */
+function scoredIn(bb, ball) {
+  for (const alliance of ['red', 'blue']) {
+    if (bb.hives[alliance].upBalls.includes(ball)) return alliance;
+  }
+  return null;
+}
+
 test('the ballistics solver agrees with the simulated flight', () => {
   const field = new Field(new Config().values);
   const bb = new BiobuzzField({ field });
@@ -369,7 +384,7 @@ test('the ballistics solver agrees with the simulated flight', () => {
   let landed = false;
   for (let i = 0; i < 1500 && !landed; i++) {
     bb.update(1 / 500, { inAuto: false });
-    landed = ball.container?.kind === 'cell';
+    landed = scoredIn(bb, ball) === 'red';
   }
   assert.ok(landed, 'the shot the solver called for actually goes in');
 });
@@ -394,7 +409,8 @@ test('shooting on the move misses, because the ball keeps the robot velocity', (
     launcher.launch(ball);
     for (let i = 0; i < 1500; i++) {
       bb.update(1 / 500, { inAuto: false });
-      if (ball.container?.kind === 'cell') return ball.container.ref.alliance;
+      const scored = scoredIn(bb, ball);
+      if (scored) return scored;
     }
     return null;
   };
@@ -437,13 +453,14 @@ test('sideways speed walks the shot off target in proportion', () => {
     let drift = 0;
     for (let i = 0; i < 900; i++) {
       bb.update(1 / 500, { inAuto: false });
-      if (!ball.free) {
-        // Whose CELL matters: the two HIVES are 25.4 in apart on one crossbar,
-        // so a drifting shot can land in the opponent's and tip it for them.
+      // Whose CELL matters: the two HIVES are 25.4 in apart on one crossbar,
+      // so a drifting shot can land in the opponent's and tip it for them.
+      const scored = scoredIn(bb, ball);
+      if (scored || !ball.free) {
         return {
           drift,
-          scored: ball.container.kind === 'cell' && ball.container.ref.alliance === 'red',
-          landedIn: ball.container.kind === 'cell' ? ball.container.ref.alliance : ball.container.kind,
+          scored: scored === 'red',
+          landedIn: scored ?? ball.container?.kind ?? 'loose',
         };
       }
       drift = Math.max(drift, Math.abs(ball.x - target.x));

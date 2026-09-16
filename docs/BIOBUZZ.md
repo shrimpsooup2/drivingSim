@@ -121,14 +121,23 @@ Three things follow that a threshold cannot give you:
 - **The rotation takes real time** — about 0.9 s for a full CELL and 2.3 s for a
   marginal load, because an over-centre mechanism is slowest just off its latch.
   You can launch into a CELL that is already going over.
-- **Elements fall out because the CELL rolls past horizontal**, leaving with the
-  speed that point of the arm is actually doing.
+- **Elements fall out because the CELL rolls past horizontal**, and they do it
+  by rolling out of the mouth — see below.
 
 `M*h` cannot be measured — a STEP file carries no density — so it is
 parameterised by `holdMass`: the load in the raised CELL the latch will just
 hold. That is directly interpretable and pinned at one end by the manual, since
-three NECTAR are staged there and must not tip it. At 0.28 kg the HIVE holds
-exactly those three and goes over on the next element.
+three NECTAR are staged there and must not tip it. At 0.136 kg the HIVE holds
+exactly those three and goes over on the next element, which is about six
+POLLEN from empty.
+
+`holdMass` is a ratio to the element masses rather than an absolute, so
+correcting those (they were about double) brought it down with them. The lever
+arm it is turned into comes from where a staged element *actually* rests —
+`stagedLever`, computed from the CELL geometry — rather than from the CAD's
+staged-NECTAR point, which is 0.239 m out where an element resting a radius
+clear of the back panel is 0.296 m out. Using the old figure made the
+calibration 24% light and a HIVE went over on the three NECTAR it must hold.
 
 The four Blumotion soft-close dampers in the CAD are modelled as engaging over
 the last part of the travel rather than as a constant dashpot, which is what a
@@ -369,6 +378,57 @@ read it, so a ball rolling across the tiles kept a fixed pattern of holes and
 looked like a decal sliding along the floor. `Ball.integrateSpin` carries a unit
 quaternion through the same integration the velocities get, and the renderer
 composes it into the model matrix.
+
+## Nothing is held in a CELL
+
+A CELL holds nothing. It is a shape, and an element in one is an ordinary free
+element that happens to be inside that shape — it falls, it bounces off the
+walls, it collides with its neighbours, and it leaves when it rolls out of the
+mouth. Nothing is ever attached or positioned.
+
+That replaced *adoption*: once an element stopped moving inside a CELL, the
+CELL took ownership and thereafter placed it on a lattice derived from its index
+in a list. It was stable, and it cost everything you would want from a
+container. `BallWorld` only steps elements with no container, so an adopted one
+was out of the physics — which meant a settled load could not be disturbed by
+the next shot, two elements in a CELL could not touch each other, nothing could
+be knocked back out, and a CELL that tipped had to *teleport* its contents onto
+the tiles rather than pour them. That last one was the visible symptom: the load
+appeared under the middle of the HIVE, near the pivot, with a random sideways
+shove to stop it landing in one stack. It threw elements up to 2.5 m across the
+field.
+
+What replaced it is not a cleverer container, it is no container:
+
+- `collideBall` bounces elements off the CELL's real walls, with those walls'
+  own velocity (`_surfaceVelocity`), so a moving CELL carries what is in it;
+- `_updateContained` works out what is inside by geometry, using the same five
+  edges and the same depth span the walls are made of, so what counts as "in
+  the CELL" for the score cannot drift from the shape you can bounce off;
+- `netTorque` weighs whatever is inside, at its real lever arm.
+
+A tipping CELL now empties over about a third of a second — 6 → 5 → 4 → 3 → 2 →
+0 for a six-element load — through a 46 cm spread at a 51 cm mouth, and the load
+ends up rolling across the tiles rather than dropped at the pivot. There is no
+scripted spill left and no randomness in it: the same load pours the same way
+twice.
+
+Two things had to be got right for the arm to still behave:
+
+- **The weight goes in once.** `_pushOff` hands the arm the reaction impulse
+  from a contact, which is what lets a *shot* tip a HIVE. A resting element's
+  weight is already a steady torque in `netTorque`, so counting both is
+  counting the same newton twice — and with nothing adopted any more that was
+  enough to throw a HIVE over on its staged NECTAR. Below the bounce threshold
+  a contact is the load sitting there, and `_pushOff` stays quiet.
+- **Staged elements are packed, not placed on a pitch.** Three NECTAR and four
+  POLLEN on one spacing ask for 0.564 m of a 0.508 m CELL, so they overlapped,
+  the contact solver shoved them apart, and one left through a wall. They are
+  laid out from their own sizes now, across the back and then in a second row.
+
+One consequence worth knowing if you are reading the code: an element leaves a
+CELL during the *world* step, and the HIVE only notices on its next one — so
+the step that empties a CELL is not the step that reports it.
 
 ## How an element bounces
 

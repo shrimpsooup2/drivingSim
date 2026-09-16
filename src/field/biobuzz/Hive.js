@@ -13,6 +13,7 @@ import {
   HIVE_PIVOT_HEIGHT,
   HIVE_TILT,
   INFERRED,
+  NECTAR_RADIUS,
 } from './constants.js';
 
 const G = 9.80665;
@@ -35,6 +36,16 @@ const G = 9.80665;
  * takes it -- a couple of tenths of a second, not instantly.
  */
 const CELL_SETTLE_SPEED = 0.6;
+
+/**
+ * Closing speed below which a CELL contact is the load resting rather than
+ * something striking it.
+ *
+ * Matches the `minBounce` the walls are resolved with, so the two agree about
+ * what "resting" means: a contact that is too slow to bounce is too slow to
+ * count as an impact on the arm.
+ */
+const RESTING_CONTACT = 0.25;
 
 const REST_ALONG =
   CELL_REST_OFFSET * Math.cos(HIVE_TILT) +
@@ -61,6 +72,7 @@ const REST_ACROSS =
  * 65.6 exactly.
  */
 const OPENING_ALONG = REST_ALONG + CELL_DEPTH;
+
 const OPENING_ACROSS =
   REST_ACROSS +
   ((CELL_OPENING_BOTTOM + CELL_OPENING_TOP) / 2 -
@@ -187,11 +199,6 @@ export class Hive {
     this.angle = this.up === 'aft' ? this.tilt : -this.tilt;
     this.angularVelocity = 0;
 
-    /** @type {import('../../physics/Ball.js').Ball[]} */
-    this.foreBalls = [];
-    /** @type {import('../../physics/Ball.js').Ball[]} */
-    this.aftBalls = [];
-
     this.tips = 0;
     /** Tips completed before TELEOP began, scored as AUTO per Section 10.5.B. */
     this.autoTips = 0;
@@ -204,6 +211,30 @@ export class Hive {
      * @type {{alliance: string, robotId: string, ballId: string}[]}
      */
     this.launchStrikes = [];
+
+    /**
+     * Every element in the world, so a CELL can work out what is inside it.
+     *
+     * Set by `BiobuzzField`. A CELL does not *hold* anything -- see
+     * `_updateContained` -- so it has to look, and looking needs the list.
+     * @type {import('../../physics/Ball.js').Ball[]}
+     */
+    this.balls = [];
+
+    /**
+     * Which elements are inside each CELL right now, by geometry.
+     *
+     * Recomputed every step rather than accumulated, because nothing is
+     * attached: an element in a CELL is an ordinary free element that happens
+     * to be inside one, and it stops being inside when it rolls out.
+     * @type {{fore: import('../../physics/Ball.js').Ball[], aft: import('../../physics/Ball.js').Ball[]}}
+     */
+    this._contained = { fore: [], aft: [] };
+    /**
+     * What was in each CELL at the last step, for spotting arrivals and
+     * departures. Moved on only by `_noteCellTraffic`.
+     */
+    this._lastSeen = { fore: [], aft: [] };
   }
 
   /**
@@ -213,8 +244,39 @@ export class Hive {
    * so this is that equality solved for `M*h` at `m = holdMass`.
    */
   get holdingMoment() {
-    const lever = REST_ALONG * Math.cos(this.tilt) - REST_ACROSS * Math.sin(this.tilt);
-    return (this.holdMass * lever) / Math.sin(this.tilt);
+    return (this.holdMass * this.stagedLever) / Math.sin(this.tilt);
+  }
+
+  /**
+   * The lever arm a staged element actually rests on, at the stop.
+   *
+   * `holdMass` says "this much weight, resting in the raised CELL, is what the
+   * latch will just hold", so turning it into a moment needs the distance that
+   * weight really acts at. This used to be built from `REST_ALONG` and
+   * `REST_ACROSS` -- the CAD's staged-NECTAR point -- which is 0.239 m out.
+   * Elements are no longer placed there: they rest on the floor with their
+   * centres a radius clear of the back panel, which is 0.296 m out. Left at
+   * the old figure the calibration was 24 percent light, and a HIVE went over
+   * on the three NECTAR that Section 10.3.1 says it must hold.
+   *
+   * Computed once, from the real geometry at the stop, so it cannot drift away
+   * from where `stage` puts things.
+   */
+  get stagedLever() {
+    if (this._stagedLever === undefined) {
+      const angle = this.angle;
+      // At the stop, with the aft CELL raised, so the sign works out positive.
+      this.angle = this.tilt;
+      const planes = this.cellPlanes('aft');
+      const r = NECTAR_RADIUS;
+      const rise = r + 0.002 - planes.baseOffset;
+      const d = planes.depth - r - 0.002;
+      this._stagedLever = Math.abs(
+        planes.origin.y + rise * planes.up.y + d * planes.inward.y,
+      );
+      this.angle = angle;
+    }
+    return this._stagedLever;
   }
 
   /**
@@ -237,14 +299,37 @@ export class Hive {
     return this.structureMass * radius * radius;
   }
 
-  /** Balls currently in the upward-facing CELL. */
+  /**
+   * Elements currently inside the upward-facing CELL.
+   *
+   * These refresh before answering. Containment is a question about where
+   * things are, so the answer goes stale the moment anything moves -- and a
+   * caller that steps the ball world without stepping the HIVE (which is how
+   * most of the shooting tests are written, and reasonable: they are testing a
+   * shot, not an arm) would otherwise be told what was in the CELL one step
+   * ago, or at setup.
+   */
   get upBalls() {
-    return this.up === 'fore' ? this.foreBalls : this.aftBalls;
+    this._updateContained();
+    return this._contained[this.up];
   }
 
-  /** Balls in the downward-facing CELL. Should always be empty once settled. */
+  /** Elements inside the downward-facing CELL. Empty once a tip has poured. */
   get downBalls() {
-    return this.up === 'fore' ? this.aftBalls : this.foreBalls;
+    this._updateContained();
+    return this._contained[this.up === 'fore' ? 'aft' : 'fore'];
+  }
+
+  /** Elements inside the fore CELL, whichever way up it is. */
+  get foreBalls() {
+    this._updateContained();
+    return this._contained.fore;
+  }
+
+  /** Elements inside the aft CELL. */
+  get aftBalls() {
+    this._updateContained();
+    return this._contained.aft;
   }
 
   get containedMass() {
@@ -376,11 +461,22 @@ export class Hive {
     // vertical force is `-m*g*y` -- but taken from the real position, so a
     // CELL filled to the back tips sooner than one with the same number of
     // elements piled at the mouth, and a NECTAR resting further out counts for
-    // more than a POLLEN resting closer in. Elements still loose inside a CELL
-    // are not in this sum: they are pressing on its walls, and `_pushOff`
-    // hands the arm that reaction directly.
-    for (const ball of this.foreBalls) torque -= ball.mass * G * ball.y;
-    for (const ball of this.aftBalls) torque -= ball.mass * G * ball.y;
+    // more than a POLLEN resting closer in.
+    //
+    // Every element inside a CELL is in this sum, which is the change that let
+    // adoption go. It used to cover only *adopted* elements, on the grounds
+    // that a loose one is pressing on the walls and `_pushOff` hands the arm
+    // that reaction directly. Both at once is double counting, and with
+    // nothing adopted any more, impulses alone were measurably wrong: the
+    // reaction went in while the element's own inertia stayed out of
+    // `momentOfInertia`, so each contact kicked an arm that was pretending to
+    // be lighter than it was, and three staged NECTAR threw a HIVE over that
+    // they are supposed to hold. So a resting element's weight is a steady
+    // torque here, and `_pushOff` only reports the part that is *not* weight:
+    // a real impact.
+    for (const side of ['fore', 'aft']) {
+      for (const ball of this._contained[side]) torque -= ball.mass * G * ball.y;
+    }
     return torque;
   }
 
@@ -390,9 +486,96 @@ export class Hive {
    * @param {import('../../physics/Ball.js').Ball} ball
    */
   stage(ball) {
-    this.upBalls.push(ball);
-    ball.attachTo('cell', this);
-    this._restackCell();
+    // Put down, not handed over. Section 10.3.1 stages three NECTAR on the
+    // floor of the upward CELL, and that is all this does: sets them on the
+    // floor at the back, spread across the width, and leaves them to the
+    // physics. They stay because the floor slopes inward on the raised side,
+    // which is the same reason they run out of it once it goes over.
+    const side = this.up;
+    const planes = this.cellPlanes(side);
+    const spot = this._nextStagingSpot(side, planes, ball);
+
+    ball.release();
+    this._placeInCell(planes, ball, spot);
+    ball.stop();
+    this._contained[side].push(ball);
+    // A HIVE works out what is in it by looking at `balls`, so anything staged
+    // straight into one has to be visible there or the next step will decide
+    // the CELL is empty. On a real FIELD this is already the world's array and
+    // the element is already in it; standing alone -- which is how most of the
+    // tests use a HIVE -- this is what makes it self-sufficient.
+    if (!this.balls.includes(ball)) this.balls.push(ball);
+    // Seeded on both sides, so setting up a MATCH does not read as three
+    // NECTAR being LAUNCHED into the CELL by somebody.
+    this._lastSeen[side].push(ball);
+    return ball;
+  }
+
+  /**
+   * Where the next staged element goes: across the back of the CELL, then in a
+   * second row toward the mouth, then a layer up.
+   *
+   * Packed from the sizes of what is already in there rather than from a fixed
+   * grid, because the two elements are different sizes and a row of them is
+   * not a row of equal cells. Laying three NECTAR and four POLLEN out on one
+   * pitch asks for 0.564 m of a 0.508 m CELL -- so they overlapped, the
+   * contact solver shoved them apart, and one came out through a wall. This
+   * cannot overlap: each element is placed clear of the last one.
+   */
+  _nextStagingSpot(side, planes, ball) {
+    const margin = 0.004;
+    const halfWidth = CELL_OPENING_WIDTH / 2;
+    // Cursors track the *edges* of the next free slot, not centres. Walking in
+    // centres is what went wrong first: stepping by `other.radius +
+    // ball.radius` looks symmetric and is too short whenever the new element
+    // is the smaller of the two, so a POLLEN placed after a NECTAR landed 25
+    // mm inside it.
+    let left = -halfWidth + margin;
+    let back = planes.depth - margin;
+    let floor = margin;
+    let rowDepth = 0;
+    let layerHeight = 0;
+    const need = 2 * ball.radius;
+
+    for (const other of this._contained[side]) {
+      const size = 2 * other.radius;
+      left += size + margin;
+      rowDepth = Math.max(rowDepth, size);
+      layerHeight = Math.max(layerHeight, size);
+      if (left + need <= halfWidth) continue;
+      // Row full: start another one nearer the mouth.
+      left = -halfWidth + margin;
+      back -= rowDepth + margin;
+      rowDepth = 0;
+      if (back - need > 0) continue;
+      // Out of depth: start a layer on top.
+      back = planes.depth - margin;
+      floor += layerHeight + margin;
+      layerHeight = 0;
+    }
+    const a = left + ball.radius;
+    const v = floor + ball.radius;
+    const d = back - ball.radius;
+    // Resting on the floor, which the pentagon's base edge puts at v = 0, and
+    // with its *centre* a radius clear of the back panel -- which is the bit
+    // `cellRest` does not say. The CAD's staged-NECTAR point sits exactly on
+    // the back plane, so placing a ball there puts half of it through the
+    // panel, and a hair of drift then takes it out through the back where
+    // nothing catches it and it falls through the structure.
+    return { a, v, d };
+  }
+
+  /**
+   * Put an element at a point given in a CELL's own (across, up, inward)
+   * frame. The inverse of `cellLocal`.
+   */
+  _placeInCell(planes, ball, { a, v, d }) {
+    const rise = v - planes.baseOffset;
+    ball.setPosition(
+      planes.origin.x + a,
+      planes.origin.y + rise * planes.up.y + d * planes.inward.y,
+      planes.origin.z + rise * planes.up.z + d * planes.inward.z,
+    );
     return ball;
   }
 
@@ -670,6 +853,10 @@ export class Hive {
     const surface = this._surfaceVelocity(ball.x, ball.y, ball.z);
     const beforeVy = ball.vy;
     const beforeVz = ball.vz;
+    // How hard it is actually arriving, measured against the wall rather than
+    // against the world -- a CELL coming down at a metre a second is not being
+    // struck by the element resting in it.
+    const closing = Math.abs((beforeVy - surface.vy) * uy + (beforeVz - surface.vz) * uz);
     resolveSphereContact(ball, ux, uy, uz, {
       // Polycarbonate on a foam-lined basket: a CELL is meant to keep what
       // lands in it, and a lively wall would throw shots back out of something
@@ -691,12 +878,20 @@ export class Hive {
     // CELL that is nearly over is how you take it over. A resting element
     // hands the same law a steady trickle of tiny impulses, which is its
     // weight -- so free elements inside a CELL need no separate bookkeeping.
-    const impulseY = -ball.mass * (ball.vy - beforeVy);
-    const impulseZ = -ball.mass * (ball.vz - beforeVz);
-    const ry = ball.y;
-    const rz = ball.z - HIVE_PIVOT_HEIGHT;
-    const angularImpulse = ry * impulseZ - rz * impulseY;
-    this.angularVelocity += angularImpulse / this.momentOfInertia;
+    // ...but only for a real impact. A resting element's weight is already a
+    // steady torque in `netTorque`, and adding its contact reaction on top is
+    // how the same newton gets counted twice -- which, once nothing was
+    // adopted any more, was enough to throw a HIVE over on the three NECTAR
+    // it is meant to hold. Below the bounce threshold a contact is the load
+    // sitting there, and sitting there is what `netTorque` is for.
+    if (closing > RESTING_CONTACT) {
+      const impulseY = -ball.mass * (ball.vy - beforeVy);
+      const impulseZ = -ball.mass * (ball.vz - beforeVz);
+      const ry = ball.y;
+      const rz = ball.z - HIVE_PIVOT_HEIGHT;
+      const angularImpulse = ry * impulseZ - rz * impulseY;
+      this.angularVelocity += angularImpulse / this.momentOfInertia;
+    }
   }
 
   /**
@@ -708,7 +903,7 @@ export class Hive {
    */
   get momentOfInertia() {
     let inertia = this.structureInertia;
-    for (const list of [this.foreBalls, this.aftBalls]) {
+    for (const list of [this._contained.fore, this._contained.aft]) {
       for (const ball of list) {
         const r = Math.hypot(ball.y, ball.z - HIVE_PIVOT_HEIGHT);
         inertia += ball.mass * r * r;
@@ -748,25 +943,24 @@ export class Hive {
    *
    * @param {import('../../physics/Ball.js').Ball} ball
    */
-  interactBall(ball) {
-    const side = this.up;
-    // A CELL whose mouth has rolled to horizontal cannot take anything.
-    if (this.openingUpwardness(side) < 0.1) return false;
-    // Still moving: leave it to the walls. This is what stops the snap.
-    if (ball.speed > CELL_SETTLE_SPEED) return false;
-
-    const planes = this.cellPlanes(side);
-    const local = this.cellLocal(side, ball.x, ball.y, ball.z, planes);
-    if (local.d < 0 || local.d > planes.depth + ball.radius) return false;
-    for (const edge of planes.edges) {
-      if (edge.a * local.a + edge.v * local.v - edge.offset < -ball.radius) return false;
-    }
-
-    this._noteLaunchStrike(ball);
-    this.upBalls.push(ball);
-    ball.attachTo('cell', this);
-    this._restackCell();
-    return true;
+  interactBall() {
+    // Nothing. A CELL takes nothing out of the world's hands.
+    //
+    // This used to be the adoption step: an element that had stopped moving
+    // inside a CELL was attached to it, which took it out of the physics and
+    // put it on a lattice. That bought stability and cost everything the user
+    // of a simulator would want from a container -- a settled load could not
+    // be knocked about by the next shot, two elements in a CELL could not
+    // touch each other, nothing could bounce back out, and a tipping CELL had
+    // to teleport its contents rather than pour them.
+    //
+    // What replaced it is not a cleverer container, it is no container:
+    // `collideBall` bounces elements off the CELL's real walls (with those
+    // walls' own velocity, so a moving CELL carries what is in it),
+    // `_updateContained` works out what is inside by geometry, and `netTorque`
+    // weighs it. The method stays so the ball world's interactor contract does
+    // not change shape for one caller.
+    return false;
   }
 
   /**
@@ -806,31 +1000,94 @@ export class Hive {
     }
   }
 
-  /** Lay the contained balls out inside each CELL so they render sensibly. */
-  _restackCell() {
+  /**
+   * Work out what is inside each CELL, and notice what has just left one.
+   *
+   * A CELL holds nothing. It is a shape, and an element in it is an ordinary
+   * free element that happens to be inside that shape -- it falls, it bounces
+   * off the walls, it collides with the others, and it leaves when it rolls
+   * out of the mouth. Nothing is ever attached or positioned.
+   *
+   * That replaced an adoption model: once an element stopped moving, the CELL
+   * took ownership and thereafter *placed* it on a lattice derived from its
+   * index. It was stable, and it was also the reason a load could not settle,
+   * could not be knocked about by the next shot, and could not fall out of a
+   * CELL that was tipping -- the arm just turned over and the lattice was
+   * teleported onto the tiles.
+   *
+   * Recomputed every step, and cheap enough to be: this runs at the frame
+   * rate, not at the physics rate, so it is a few thousand point-in-solid
+   * tests a second.
+   */
+  _updateContained() {
+    /** @type {{fore: any[], aft: any[]}} */
+    const now = { fore: [], aft: [] };
     for (const side of ['fore', 'aft']) {
-      const balls = side === 'fore' ? this.foreBalls : this.aftBalls;
-      if (balls.length === 0) continue;
-      const sign = this._sideSign(side);
-      const perRow = Math.max(1, Math.floor(CELL_OPENING_WIDTH / (3.8 * INCH)));
-      const spread = CELL_OPENING_WIDTH / (perRow + 1);
-      balls.forEach((ball, i) => {
-        const row = Math.floor(i / perRow);
-        const column = i % perRow;
-        // Deeper rows sit further out along the arm and a little higher, which
-        // is also why a full CELL tips more readily than a nearly empty one.
-        const offset = this._toWorld(
-          sign * (REST_ALONG + row * ball.radius * 1.7),
-          REST_ACROSS + row * ball.radius * 0.5,
-        );
-        ball.setPosition(
-          this.pivotX - CELL_OPENING_WIDTH / 2 + spread * (column + 1),
-          offset.y,
-          HIVE_PIVOT_HEIGHT + offset.z,
-        );
-        ball.stop();
-      });
+      const planes = this.cellPlanes(side);
+      for (const ball of this.balls) {
+        if (!ball.free || ball.outOfBounds) continue;
+        if (this.containsElement(side, ball, planes)) now[side].push(ball);
+      }
     }
+    this._contained = now;
+    return this;
+  }
+
+  /**
+   * Notice what has arrived in a CELL and what has left one, since the last
+   * time the arm was stepped.
+   *
+   * Kept apart from `_updateContained` so that recomputing where things are
+   * has no side effects. It did, briefly, and that was a mistake worth not
+   * repeating: the accessors refresh containment before answering, so
+   * `hive.downBalls.length` -- reading a number -- was quietly stamping G409
+   * windows on elements and pushing them onto the spill list. A getter that
+   * changes the world is a getter that makes a test fail from being *observed*.
+   *
+   * `_lastSeen` is therefore a separate snapshot, moved on only here.
+   */
+  _noteCellTraffic() {
+    const before = this._lastSeen;
+    const now = this._contained;
+
+    for (const side of ['fore', 'aft']) {
+      for (const ball of now[side]) {
+        // G417.D: a LAUNCHED element from the other ALLIANCE, noted as it
+        // arrives rather than when a CELL decides to keep it.
+        if (!before[side].includes(ball)) this._noteLaunchStrike(ball);
+      }
+    }
+
+    // Anything that was in a CELL and is not any more has left it, which for
+    // G409 is the moment the HIVE "released" it: until it touches something
+    // that is not a ROBOT, a ROBOT touching it is a catch.
+    for (const side of ['fore', 'aft']) {
+      for (const ball of before[side]) {
+        if (now.fore.includes(ball) || now.aft.includes(ball)) continue;
+        if (ball.container) continue; // a ROBOT took it straight out
+        ball.fromTip = { alliance: this.alliance, t: 0 };
+        this.spilled.push(ball);
+      }
+    }
+
+    this._lastSeen = { fore: [...now.fore], aft: [...now.aft] };
+    return this;
+  }
+
+  /**
+   * Whether an element's centre is inside a CELL's volume.
+   *
+   * The same five edges and the same depth span `_collideCell` uses, so what
+   * counts as "in the CELL" for the score is the shape the walls are made of
+   * and cannot drift away from it.
+   */
+  containsElement(side, ball, planes = this.cellPlanes(side)) {
+    const local = this.cellLocal(side, ball.x, ball.y, ball.z, planes);
+    if (local.d < -ball.radius || local.d > planes.depth + ball.radius) return false;
+    for (const edge of planes.edges) {
+      if (edge.a * local.a + edge.v * local.v - edge.offset < -ball.radius) return false;
+    }
+    return true;
   }
 
   /**
@@ -841,6 +1098,12 @@ export class Hive {
    * @param {boolean} inAuto whether the MATCH is still in AUTO
    */
   update(dt, inAuto) {
+    // What is in each CELL, before anything is weighed: `netTorque` and
+    // `momentOfInertia` both read it, and it is also what notices an element
+    // leaving a CELL as it tips.
+    this._updateContained();
+    this._noteCellTraffic();
+
     const inertia = this.momentOfInertia;
 
     // Semi-implicit in the damping term so a stiff damper cannot ring.
@@ -857,8 +1120,6 @@ export class Hive {
       if (this.angularVelocity < 0) this.angularVelocity = 0;
     }
 
-    this._releaseWhatCannotBeHeld();
-
     // A TIP is the arm crossing centre to the other side. Comparing against the
     // committed side rather than the previous step's sign means hovering at
     // exactly level cannot register a tip that never happened.
@@ -869,42 +1130,7 @@ export class Hive {
       if (inAuto) this.autoTips++;
     }
 
-    if (this.foreBalls.length || this.aftBalls.length) this._restackCell();
     return this;
-  }
-
-  /**
-   * Let go of everything in a CELL that has rotated too far to hold it. The
-   * balls leave with the speed that point of the arm is actually moving at, so
-   * a fast tip throws them clear and a slow one just lets them roll out.
-   */
-  _releaseWhatCannotBeHeld() {
-    for (const side of ['fore', 'aft']) {
-      if (this.openingUpwardness(side) >= 0.1) continue;
-      const balls = side === 'fore' ? this.foreBalls : this.aftBalls;
-      if (balls.length === 0) continue;
-
-      const sign = this._sideSign(side);
-      for (const ball of balls.slice()) {
-        // Velocity of the arm at the ball: omega cross r, in the y-z plane.
-        const offset = this._toWorld(sign * REST_ALONG, REST_ACROSS);
-        const vy = -this.angularVelocity * offset.z;
-        const vz = this.angularVelocity * offset.y;
-        ball.setPosition(
-          this.pivotX + (Math.random() * 2 - 1) * CELL_OPENING_WIDTH * 0.3,
-          offset.y,
-          HIVE_PIVOT_HEIGHT + offset.z,
-        );
-        // A little sideways scatter, so a tipped load does not land in a
-        // single stack under the hive.
-        ball.release((Math.random() * 2 - 1) * 0.25, vy, vz);
-        // G409: until this touches something that is not a ROBOT, a ROBOT
-        // touching it is a catch. Set after `release`, which is what turns the
-        // element loose and is the moment the HIVE "released" it.
-        ball.fromTip = { alliance: this.alliance, t: 0 };
-        this.spilled.push(ball);
-      }
-    }
   }
 
   /** Collect and clear the balls the HIVE has let go of. */
@@ -930,8 +1156,6 @@ export class Hive {
   }
 
   reset(startUp = 'fore') {
-    this.foreBalls.length = 0;
-    this.aftBalls.length = 0;
     this.up = startUp;
     this.angle = startUp === 'aft' ? this.tilt : -this.tilt;
     this.angularVelocity = 0;
@@ -939,6 +1163,8 @@ export class Hive {
     this.autoTips = 0;
     this.spilled.length = 0;
     this.launchStrikes.length = 0;
+    this._contained = { fore: [], aft: [] };
+    this._lastSeen = { fore: [], aft: [] };
   }
 
   /** Plan-view position, for the renderer and for AI targeting. */

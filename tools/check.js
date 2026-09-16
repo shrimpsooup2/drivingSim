@@ -571,14 +571,18 @@ async function main() {
       );
       if (ball) ball.release();
       const fired = ball ? Boolean(g.launcher.launch(ball)) : false;
+      // There is no 'cell' container to wait for: an element in a CELL is a
+      // free element that happens to be inside one, so the question is where
+      // it is and whether it has stopped.
+      const inCell = () => Boolean(ball) && g.field.hives[g.alliance].upBalls.includes(ball);
       for (let i = 0; i < 1500; i++) {
         g.update(1 / 500);
-        if (ball && ball.container && ball.container.kind === 'cell') break;
+        if (inCell() && ball.speed < 0.2) break;
       }
       return {
         aimed,
         fired,
-        landedIn: ball && ball.container ? ball.container.kind : null,
+        landedIn: inCell() ? 'cell' : ball && ball.container ? ball.container.kind : 'loose',
         cellBefore: before,
         cellAfter: g.field.hives[g.alliance].elementsInUpCell(),
         rpm: Math.round(g.launcher.targetRpm),
@@ -1141,6 +1145,152 @@ async function main() {
     const hivePath = shotPath.replace(/\.png$/, '-biobuzz-hive.png');
     await writeFile(hivePath, Buffer.from(shotHive.data, 'base64'));
     console.log(`  Screenshot: ${hivePath}`);
+
+    // --- A TIPPING HIVE pours; it does not drop its load out of the pivot.
+    //
+    // The camera is already on the HIVE from the shot above, so this loads the
+    // CELL until it goes over and catches it mid-pour. Checked in the browser
+    // as well as in `test/biobuzz.test.js` because this is a thing you judge by
+    // eye -- the numbers say the load left through the mouth, the picture says
+    // whether it looks like pouring.
+    const pouring = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      // Its own FIELD, with nobody else on it. This block measures where a
+      // TIPPED HIVE puts its load, and with the AI roster still on from the
+      // block above, robots drove over and collected the spillage mid-pour --
+      // which reads as elements that never left the CELL and a load that
+      // scattered a metre and a half sideways.
+      app.config.set('ai.enabled', false);
+      app.sim.disableGame();
+      const game = app.sim.enableGame({ alliance: 'red', startPhase: 'teleop' });
+      game.start();
+      const hive = game.field.hives[game.alliance];
+      // Loose POLLEN lying on the tiles. A bare free test is not enough any
+      // more: elements in a CELL are free too, so it would happily pick six
+      // that are already in this one and "stage" them to no effect.
+      const inAnyCell = (b) =>
+        ['red', 'blue'].some(
+          (side) =>
+            game.field.hives[side].upBalls.includes(b) ||
+            game.field.hives[side].downBalls.includes(b),
+        );
+      const loose = game.field.ballWorld.balls.filter(
+        (b) => b.free && b.kind === 'pollen' && b.z < 0.3 && !inAnyCell(b),
+      );
+      const load = loose.slice(0, 6);
+      for (const ball of load) hive.stage(ball);
+
+      const tipsBefore = hive.tips;
+      let tippedAt = null;
+      let midPour = null;
+      const exitX = new Map();
+      globalThis.__pourExit = exitX;
+      // Stop *at* the mid-pour frame and leave the page there, so the
+      // screenshot below is of a HIVE actually pouring rather than of a tidy
+      // field several seconds later.
+      for (let i = 0; i < 60 * 6; i++) {
+        app.sim.step(1 / 60);
+        if (tippedAt === null && hive.tips > tipsBefore) tippedAt = i / 60;
+        if (midPour === null && tippedAt !== null) {
+          // "Out" is no longer "free" -- everything is free now, in a CELL or
+          // not -- so it is a question about where each element is. The
+          // emptying CELL is the *down* one by this point.
+          const up = hive.upBalls;
+          const down = hive.downBalls;
+          const gone = load.filter((b) => !up.includes(b) && !down.includes(b));
+          const out = gone.length;
+          // Across the FIELD at the moment it leaves, which is the CELL's own
+          // width. Measured at rest it keeps growing, because an element that
+          // has left rolls -- so the resting spread says how far things roll,
+          // not how wide the mouth is.
+          for (const ball of gone) {
+            if (!exitX.has(ball.id)) exitX.set(ball.id, ball.x);
+          }
+          if (out > 0 && out < load.length) {
+            midPour = { at: i / 60, out };
+            break;
+          }
+        }
+      }
+      // Frozen at the mid-pour frame. The page's own render loop keeps
+      // stepping between here and the screenshot below, so without this the
+      // picture is of a tidy FIELD a second later rather than of a HIVE
+      // actually pouring.
+      app.sim.paused = true;
+      globalThis.__pourCheck = { hive, load, tipsBefore, tippedAt, midPour };
+      return {
+        tippedAt,
+        midPour,
+        tipped: hive.tips - tipsBefore,
+        staged: load.length,
+      };
+    })()`);
+
+    // Caught in the act.
+    const shotPour = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const pourPath = shotPath.replace(/\.png$/, '-biobuzz-pour.png');
+    await writeFile(pourPath, Buffer.from(shotPour.data, 'base64'));
+
+    // Now let it finish and see where the load ended up.
+    const settled = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const { hive, load } = globalThis.__pourCheck;
+      const exitX = globalThis.__pourExit;
+      app.sim.paused = false;
+      for (let i = 0; i < 60 * 6; i++) {
+        app.sim.step(1 / 60);
+        const up = hive.upBalls;
+        const down = hive.downBalls;
+        for (const ball of load) {
+          if (up.includes(ball) || down.includes(ball)) continue;
+          if (!exitX.has(ball.id)) exitX.set(ball.id, ball.x);
+        }
+      }
+
+      const pivotX = hive.pivotX;
+      const dists = load.map((b) => Math.hypot(b.x - pivotX, b.y));
+      const spread = (values) => Math.max(...values) - Math.min(...values);
+      globalThis.__pourCheck = null;
+      globalThis.__pourExit = null;
+      const exits = [...exitX.values()];
+      return {
+        nearest: Math.min(...dists),
+        farthest: Math.max(...dists),
+        xSpread: exits.length ? spread(exits) : Infinity,
+        restSpread: spread(load.map((b) => b.x)),
+        leftTheCell: exits.length,
+        stillInCell: load.filter(
+          (b) => hive.upBalls.includes(b) || hive.downBalls.includes(b),
+        ).length,
+      };
+    })()`);
+    const poured = { ...pouring, ...settled };
+    console.log(
+      `  HIVE pour: ${poured.tipped} tip at ${poured.tippedAt.toFixed(2)} s, ` +
+        `${poured.leftTheCell}/${poured.staged} out through a ${(poured.xSpread * 100).toFixed(0)} cm ` +
+        `spread, resting ${poured.nearest.toFixed(2)}-${poured.farthest.toFixed(2)} m from the pivot`,
+    );
+    if (poured.midPour) {
+      console.log(
+        `    caught mid-pour at ${poured.midPour.at.toFixed(2)} s with ${poured.midPour.out} of 6 out`,
+      );
+    }
+    if (poured.tipped !== 1) failures.push(`the loaded HIVE tipped ${poured.tipped} times`);
+    if (poured.stillInCell) failures.push(`${poured.stillInCell} elements never left the CELL`);
+    // The mouth is about 0.42 m out along the arm from the pivot, so nothing
+    // should end up sitting under the middle of the HIVE.
+    if (poured.nearest < 0.3) {
+      failures.push(`an element dropped ${poured.nearest.toFixed(2)} m from the pivot`);
+    }
+    // Leaving through an opening 20 in (0.51 m) wide, so the spread at the
+    // mouth is that, not the random sideways shove the old spill used -- which
+    // threw elements 2.5 m across the FIELD.
+    if (poured.xSpread > 0.7) {
+      failures.push(`the load left through a ${poured.xSpread.toFixed(2)} m spread`);
+    }
+    if (!poured.midPour) failures.push('the load left in a single instant rather than pouring');
+
+    console.log(`  Screenshot: ${pourPath}`);
 
     // --- A SCORING ELEMENT close up, big enough to see the perforations.
     //

@@ -334,9 +334,24 @@ test('G417: LAUNCHING at the opponent HIVE is meddling; missing your own is not'
     ball.setPosition(target.x, target.y, target.z + 0.25);
     ball.setVelocity(0, 0, -2);
     ball.touch('launch', match.robotMeta('player'), game.field.ballWorld.clock);
-    for (let k = 0; k < 200 && ball.free; k++) game.update(1 / 400);
-    game.update(1 / 400);
-    assert.equal(ball.container?.kind, 'cell', 'the shot has to actually arrive');
+    // Until it is inside a CELL *and has stopped*. There is no `cell` container
+    // to wait for any more -- an element in a CELL is a free element that
+    // happens to be inside one -- so the condition is where it is and what it
+    // is doing.
+    //
+    // Both halves matter. Containment has a radius of slack, so a falling
+    // element reads as inside the moment its centre crosses the mouth, which
+    // is before it has touched anything; stopping there left the G417 strike
+    // noted but not yet seen by the REFEREE, because `observe` runs before
+    // `field.update` and so consumes what the *previous* step recorded.
+    const inACell = () =>
+      ['red', 'blue'].some((alliance) => game.field.hives[alliance].upBalls.includes(ball));
+    for (let k = 0; k < 600; k++) {
+      game.update(1 / 400);
+      if (inACell() && ball.speed < 0.2) break;
+    }
+    for (let k = 0; k < 4; k++) game.update(1 / 400);
+    assert.ok(inACell(), 'the shot has to actually arrive');
   };
 
   // Red's own HIVE: example H, explicitly not a violation.

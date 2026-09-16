@@ -39,6 +39,8 @@ import {
   POLLEN_RADIUS,
   POINTS,
   RED_START_UP,
+  TILE_RESTITUTION,
+  SETTLE_SPEED,
 } from '../src/field/biobuzz/constants.js';
 import { INCH } from '../src/math/MathUtil.js';
 
@@ -100,32 +102,90 @@ test('balls stay inside the field', () => {
 
 // ------------------------------------------------------------------- hive
 
+/**
+ * A HIVE with somewhere for its contents to fall.
+ *
+ * A HIVE on its own used to be enough to test a load in, because a CELL
+ * *positioned* what it held: staging put an element on a lattice and it stayed
+ * there until the arm turned over. Nothing is positioned now -- an element in a
+ * CELL is an ordinary free element that happens to be inside one -- so without
+ * a world there is no gravity to settle it, no walls to catch it and no
+ * neighbours to lean on, and the load simply hangs in space while the CELL
+ * rotates out from under it.
+ *
+ * `stage` goes through `world.add` so the broadphase sizes its grid to the
+ * elements, which is what lets two of them in a CELL actually touch.
+ */
+function hiveRig(opts) {
+  const hive = new Hive(opts);
+  const world = new BallWorld({
+    fieldSize: 3.6,
+    wallHeight: 0.29,
+    restitution: TILE_RESTITUTION,
+    settleSpeed: SETTLE_SPEED,
+  });
+  hive.balls = world.balls;
+  world.addCollider((ball) => hive.collideBall(ball));
+  hive.world = world;
+  const stage = hive.stage.bind(hive);
+  hive.stage = (ball) => {
+    world.add(ball);
+    return stage(ball);
+  };
+  return hive;
+}
+
+/** Advance a rigged HIVE and the world its contents live in. */
+function stepHive(hive, dt, inAuto = false) {
+  hive.update(dt, inAuto);
+  hive.world?.step(dt);
+}
+
 test('the HIVE holds the three NECTAR staged in it at setup', () => {
   // Section 10.3.1 stages three NECTAR in the upward CELL of every HIVE. If the
   // tip threshold were at or below that mass every MATCH would begin with both
   // HIVES tipping, so this pins the calibration down.
-  const hive = new Hive({ alliance: 'red', pivotX: 0 });
+  const hive = hiveRig({ alliance: 'red', pivotX: 0 });
   for (let i = 0; i < CELL_START_NECTAR; i++) hive.stage(nectar('red'));
-  for (let i = 0; i < 2000; i++) hive.update(1 / 500, false);
+  for (let i = 0; i < 2000; i++) stepHive(hive, 1 / 500);
   assert.equal(hive.tips, 0);
   assert.equal(hive.elementsInUpCell(), CELL_START_NECTAR);
 });
 
-/** Run a hive until it has finished tipping, or give up. */
+/**
+ * Run a hive until it has finished tipping *and* finished emptying.
+ *
+ * Those are two different moments, which they did not used to be. The arm
+ * arriving at its far stop was once the same instant the load appeared on the
+ * tiles, because a CELL that turned over teleported its contents out. Now the
+ * load rolls along the CELL floor and leaves through the mouth, which takes
+ * about half a second after the arm has stopped moving -- so waiting only for
+ * the arm reports a HIVE that has tipped and not yet poured.
+ */
 function settle(hive, inAuto = false, limit = 8) {
   let t = 0;
   const dt = 1 / 500;
   while (t < limit) {
-    hive.update(dt, inAuto);
+    stepHive(hive, dt, inAuto);
     t += dt;
     const atStop = Math.abs(Math.abs(hive.angle) - hive.tilt) < 1e-4;
-    if (hive.tips > 0 && atStop && Math.abs(hive.angularVelocity) < 1e-3) break;
+    const stopped = atStop && Math.abs(hive.angularVelocity) < 1e-3;
+    const emptied = hive.downBalls.length === 0;
+    if (hive.tips > 0 && stopped && emptied) {
+      // One more step before stopping. An element leaves a CELL during the
+      // *world* step, and the HIVE only notices on its next one -- so the step
+      // that empties a CELL is not the step that reports it, and breaking the
+      // instant the CELL reads empty loses the last departures off the spill
+      // list.
+      stepHive(hive, dt, inAuto);
+      break;
+    }
   }
   return t;
 }
 
 test('the HIVE goes over once the load beats the latch, and arrives empty', () => {
-  const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const hive = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
   for (let i = 0; i < CELL_START_NECTAR; i++) hive.stage(nectar('red'));
   hive.stage(pollen());
 
@@ -134,20 +194,20 @@ test('the HIVE goes over once the load beats the latch, and arrives empty', () =
   assert.equal(hive.tips, 1);
   assert.equal(hive.up, 'aft', 'the opposite CELL is now up');
   assert.equal(hive.elementsInUpCell(), 0, 'it arrives empty, ready to fill again');
-  assert.equal(hive.takeSpilled().length, 4, 'the old contents fall out');
+  assert.equal(hive.takeSpilled().length, 4, 'and the old contents roll out of it');
   assert.ok(took > 0.3 && took < 5, `the rotation takes real time: ${took.toFixed(2)} s`);
 });
 
 test('the latch holds exactly the staged load and goes over on one more', () => {
   // Section 10.3.1 stages three NECTAR, which must hold. One more element has
   // to take it over, or the game would be unplayable.
-  const hold = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const hold = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
   for (let i = 0; i < CELL_START_NECTAR; i++) hold.stage(nectar('red'));
-  for (let i = 0; i < 3000; i++) hold.update(1 / 500, false);
+  for (let i = 0; i < 3000; i++) stepHive(hold, 1 / 500);
   assert.equal(hold.tips, 0);
   assert.ok(hold.netTorque < 0, 'net torque still pins it to the fore stop');
 
-  const over = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const over = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
   for (let i = 0; i < CELL_START_NECTAR; i++) over.stage(nectar('red'));
   over.stage(pollen());
   assert.ok(over.netTorque > 0, 'one more element reverses the torque');
@@ -156,7 +216,7 @@ test('the latch holds exactly the staged load and goes over on one more', () => 
 });
 
 test('an empty CELL needs a full load again, about seven POLLEN', () => {
-  const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const hive = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
   let held = 0;
   for (let i = 0; i < 12; i++) {
     hive.stage(pollen());
@@ -168,11 +228,11 @@ test('an empty CELL needs a full load again, about seven POLLEN', () => {
 });
 
 test('a heavier load goes over faster, because it is a torque balance', () => {
-  const marginal = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const marginal = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
   for (let i = 0; i < 4; i++) marginal.stage(nectar('red'));
   const slow = settle(marginal);
 
-  const loaded = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  const loaded = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
   for (let i = 0; i < 8; i++) loaded.stage(nectar('red'));
   const quick = settle(loaded);
 
@@ -339,9 +399,11 @@ test('a shot has to physically arrive -- the CELL does not snap it out of the ai
   // A CELL that simply accepts anything crossing its mouth pulls the ball out
   // of mid-air onto a shelf, which looks like a magnet and teaches nothing: a
   // shot that should have rattled off the rib scored, and one that should have
-  // bounced out stayed in. Now it has five walls and a back panel, and nothing
-  // is adopted until it has stopped moving in there.
-  const hive = new Hive({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  // bounced out stayed in. It has five walls and a back panel instead, and now
+  // nothing is taken at all -- a shot that scores is one that flew in, hit
+  // something and came to rest in there, and "in the CELL" is a question about
+  // where it is rather than about who owns it.
+  const hive = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
   const opening = hive.cellOpening('fore');
   const normal = hive.openingNormal('fore');
   const ball = pollen();
@@ -355,23 +417,32 @@ test('a shot has to physically arrive -- the CELL does not snap it out of the ai
   ball.setVelocity(-normal.y * 4, -normal.z * 4, 0);
   ball.setVelocity(0, -normal.y * 4, -normal.z * 4);
 
-  assert.equal(hive.interactBall(ball), false, 'moving at 4 m/s it is not adopted');
-  assert.equal(hive.elementsInUpCell(), 0);
+  assert.equal(hive.elementsInUpCell(), 0, 'nothing in the CELL yet');
+  assert.equal(hive.interactBall(ball), false, 'and a CELL never takes anything');
 
-  // The walls are what stop it. Step it through them and it should end up
-  // inside, slowed, and only then taken.
-  let adopted = false;
-  for (let i = 0; i < 4000 && !adopted; i++) {
+  // The walls are what stop it. Step it through them, and it should end up
+  // inside, slowed, and still an ordinary free element.
+  hive.balls.push(ball);
+  const speeds = [];
+  for (let i = 0; i < 4000; i++) {
     const dt = 1 / 2000;
     ball.vz -= 9.80665 * dt;
     ball.x += ball.vx * dt;
     ball.y += ball.vy * dt;
     ball.z += ball.vz * dt;
     hive.collideBall(ball);
-    adopted = hive.interactBall(ball);
+    if (i % 500 === 0) speeds.push(ball.speed);
   }
-  assert.ok(adopted, 'it settles in the CELL and is then adopted');
-  assert.equal(hive.elementsInUpCell(), 1);
+  hive.update(1 / 2000, false);
+
+  assert.ok(hive.containsElement('fore', ball), 'it ends up inside the CELL');
+  assert.equal(hive.elementsInUpCell(), 1, 'and counts for the score');
+  assert.equal(ball.container, null, 'without ever being taken out of the physics');
+  assert.ok(
+    ball.speed < 0.6,
+    `the walls should have taken the speed out of it, left doing ${ball.speed.toFixed(2)} m/s`,
+  );
+  assert.ok(speeds[0] > speeds[speeds.length - 1], 'and it slowed down rather than being stopped');
 });
 
 test('the CELL walls stop a ball rather than letting it through', () => {
@@ -746,9 +817,15 @@ test('the FIELD is staged with all 56 SCORING ELEMENTS where Section 10.3.1 puts
   }
   assert.equal(where.flower, 16, '4 POLLEN in each of the 4 FLOWERS');
   assert.equal(where.preload, 16, '4 POLLEN pre-loaded in each of the 4 ROBOTS');
-  assert.equal(where.loose, 8, '4 POLLEN in each GARDEN');
-  assert.equal(where.cell, 6, '3 NECTAR in each upward CELL');
   assert.equal(where.allianceArea, 10, '5 NECTAR per ALLIANCE with the DRIVE TEAM');
+
+  // There is no 'cell' container any more: an element in a CELL is an
+  // ordinary free element that happens to be inside one, so the staged NECTAR
+  // count as loose here and the CELLS have to be asked where they are.
+  const inCells = bb.hives.red.upBalls.length + bb.hives.blue.upBalls.length;
+  assert.equal(inCells, CELL_START_NECTAR * 2, '3 NECTAR in each upward CELL');
+  assert.equal(where.cell, undefined, 'and none of them is owned by one');
+  assert.equal(where.loose - inCells, 8, '4 POLLEN in each GARDEN');
 
   assert.equal(bb.preloadGroups.length, 4);
   for (const group of bb.preloadGroups) assert.equal(group.length, 4);
@@ -1075,4 +1152,264 @@ test('an element inside a CELL is still held by its floor', () => {
   const local = hive.cellLocal('fore', ball.x, ball.y, ball.z);
   assert.ok(local.v > -0.01, `still on the floor of the CELL: v=${local.v.toFixed(3)}`);
   assert.ok(local.d > -0.05 && local.d < planes.depth + 0.05, `and still in it: d=${local.d.toFixed(3)}`);
+});
+
+test('a TIPPING HIVE pours its load out of the CELL mouth, not out of the pivot', () => {
+  // The complaint this comes from: "the balls just drop down, when they should
+  // be rolling off the hive as it goes down". They did drop, because a CELL
+  // that turned over teleported every element to one point near the *back* of
+  // the cell -- a hand's width from the pivot -- and released them all in the
+  // same instant with a random sideways shove to stop them landing in a single
+  // stack. So the load fell out of the middle of the hive and scattered
+  // sideways, which is neither of the two things a real load does.
+  const hive = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  for (let i = 0; i < CELL_START_NECTAR; i++) hive.stage(nectar('red'));
+  for (let i = 0; i < 4; i++) hive.stage(pollen());
+
+  const released = [];
+  const dt = 1 / 500;
+  let t = 0;
+  let tippedAt = null;
+  const seen = new Set();
+  while (t < 8) {
+    stepHive(hive, dt);
+    t += dt;
+    if (tippedAt === null && hive.tips > 0) tippedAt = t;
+    for (const ball of hive.spilled) {
+      if (seen.has(ball.id)) continue;
+      seen.add(ball.id);
+      // The CELL's own geometry *at this instant*, not at the end of the tip.
+      // The arm is still swinging when the load starts coming out, so a mouth
+      // position read after it has settled is tens of centimetres away from
+      // where the mouth was when the element went through it.
+      released.push({
+        ball,
+        t,
+        y: ball.y,
+        z: ball.z,
+        vy: ball.vy,
+        vz: ball.vz,
+        spin: ball.wx,
+        // Where it was in the CELL's own frame as it left, which is the only
+        // frame in which "came out of the opening" is a clean statement: `d`
+        // is depth in from the mouth, so negative means it has crossed the
+        // opening plane going out.
+        local: hive.cellLocal('fore', ball.x, ball.y, ball.z),
+        depth: hive.cellPlanes('fore').depth,
+        // And how far out along the arm, which does not depend on the angle.
+        fromPivot: Math.hypot(ball.y, ball.z - HIVE_PIVOT_HEIGHT),
+        mouthFromPivot: Math.hypot(
+          hive.cellOpening('fore').y,
+          hive.cellOpening('fore').z - HIVE_PIVOT_HEIGHT,
+        ),
+        backFromPivot: Math.hypot(
+          hive.cellRest('fore').y,
+          hive.cellRest('fore').z - HIVE_PIVOT_HEIGHT,
+        ),
+      });
+    }
+    if (hive.tips > 0 && hive.downBalls.length === 0) {
+      // As in `settle`: a departure during the world step is reported on the
+      // HIVE's next step, so give it one.
+      stepHive(hive, dt);
+      for (const ball of hive.spilled) {
+        if (seen.has(ball.id)) continue;
+        seen.add(ball.id);
+        released.push({
+          ball,
+          t,
+          y: ball.y,
+          z: ball.z,
+          vy: ball.vy,
+          vz: ball.vz,
+          spin: ball.wx,
+          local: hive.cellLocal('fore', ball.x, ball.y, ball.z),
+          depth: hive.cellPlanes('fore').depth,
+          fromPivot: Math.hypot(ball.y, ball.z - HIVE_PIVOT_HEIGHT),
+          mouthFromPivot: Math.hypot(
+            hive.cellOpening('fore').y,
+            hive.cellOpening('fore').z - HIVE_PIVOT_HEIGHT,
+          ),
+          backFromPivot: Math.hypot(
+            hive.cellRest('fore').y,
+            hive.cellRest('fore').z - HIVE_PIVOT_HEIGHT,
+          ),
+        });
+      }
+      break;
+    }
+  }
+
+  assert.equal(hive.tips, 1);
+  assert.equal(released.length, 7, 'the whole load comes out');
+
+  for (const r of released) {
+    assert.ok(
+      r.mouthFromPivot > r.backFromPivot,
+      'the mouth is further out along the arm than the back, or this test is upside down',
+    );
+    // Out through the opening: past the mouth plane, and only just past it.
+    assert.ok(
+      r.local.d < 0,
+      `should leave through the mouth, but was ${r.local.d.toFixed(3)} m deep in the CELL`,
+    );
+    assert.ok(
+      r.local.d > -0.2,
+      `should leave *at* the mouth, not teleported clear of it: d ${r.local.d.toFixed(3)}`,
+    );
+    // And out at the far end of the arm rather than dropping out of the
+    // middle of the HIVE, which is what it used to do.
+    assert.ok(
+      r.fromPivot > r.backFromPivot,
+      `released ${r.fromPivot.toFixed(3)} m from the pivot, with the CELL's back at ` +
+        `${r.backFromPivot.toFixed(3)} m and its mouth at ${r.mouthFromPivot.toFixed(3)} m`,
+    );
+    // Travelling outward, which is the direction the mouth faces -- the fore
+    // CELL opens toward -y.
+    assert.ok(r.vy < -0.05, `should leave travelling outward, got vy ${r.vy.toFixed(3)}`);
+    // Moving, rather than being set down: it has rolled to the mouth under
+    // gravity and carries the speed it got there with.
+    assert.ok(
+      Math.hypot(r.vy, r.vz) > 0.1,
+      `should leave with the speed it rolled up, got ${Math.hypot(r.vy, r.vz).toFixed(3)} m/s`,
+    );
+  }
+
+  // It pours rather than dumping: the arm reaches its stop and the load keeps
+  // coming for a while after.
+  const firstOut = released[0].t - tippedAt;
+  assert.ok(
+    firstOut > 0.1,
+    `the load should take time to reach the mouth, left ${firstOut.toFixed(3)} s after the tip`,
+  );
+  // Elements queued behind others cannot leave at the same moment.
+  const span = released[released.length - 1].t - released[0].t;
+  assert.ok(span > 0, `a queued load cannot all leave at once, span ${span.toFixed(3)} s`);
+
+  // No sideways scatter invented for the look of it. Some x velocity is real
+  // now -- elements inside a CELL touch each other, and being jostled by a
+  // neighbour pushes one sideways -- but it is contact, not a random shove, so
+  // it stays small next to the speed they are rolling at.
+  for (const r of released) {
+    assert.ok(
+      Math.abs(r.ball.vx) < 0.3,
+      `sideways speed should come from contact, not a dice roll: ${r.ball.vx.toFixed(3)} m/s`,
+    );
+  }
+});
+
+test('a raised CELL holds its load against the back wall', () => {
+  // The other half of the same model. The CELL floor runs out along the arm,
+  // so the arm's angle *is* the floor's slope -- which means the same rolling
+  // that empties a lowered CELL is what holds a raised one, and there is no
+  // separate "held" rule to keep in step with it.
+  const hive = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  for (let i = 0; i < CELL_START_NECTAR; i++) hive.stage(nectar('red'));
+  for (let i = 0; i < 1500; i++) stepHive(hive, 1 / 500);
+
+  assert.equal(hive.tips, 0, 'three staged NECTAR do not tip it');
+  assert.equal(hive.elementsInUpCell(), CELL_START_NECTAR);
+
+  const back = hive.cellRest('fore');
+  const mouth = hive.cellOpening('fore');
+  for (const ball of hive.upBalls) {
+    const toBack = Math.abs(ball.y - back.y);
+    const toMouth = Math.abs(ball.y - mouth.y);
+    assert.ok(
+      toBack < toMouth,
+      `a held element should settle against the back: ${toBack.toFixed(3)} m from it, ` +
+        `${toMouth.toFixed(3)} m from the mouth`,
+    );
+  }
+});
+
+test('the same load spills the same way twice', () => {
+  // The old spill drew two `Math.random()` values per element, so no two tips
+  // were alike and none could be regression-tested. It is now the arm's
+  // rotation and gravity along a floor, which is repeatable.
+  const run = () => {
+    const hive = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+    for (let i = 0; i < CELL_START_NECTAR; i++) hive.stage(nectar('red'));
+    for (let i = 0; i < 4; i++) hive.stage(pollen());
+    for (let i = 0; i < 4000; i++) stepHive(hive, 1 / 500);
+    return hive.takeSpilled().map((b) => [b.x, b.y, b.z, b.vx, b.vy, b.vz]);
+  };
+  assert.deepEqual(run(), run());
+});
+
+test('a load in a CELL is not frozen: a new arrival knocks it about', () => {
+  // This is the whole point of nothing being adopted. A CELL used to take
+  // ownership of anything that stopped moving in it and thereafter *place* it
+  // on a lattice, so a settled load was scenery: the next shot could not
+  // disturb it, and two elements in the same CELL could not touch.
+  const hive = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  for (let i = 0; i < CELL_START_NECTAR; i++) hive.stage(nectar('red'));
+  for (let i = 0; i < 300; i++) stepHive(hive, 1 / 500);
+
+  const settled = hive.upBalls.map((b) => ({ ball: b, x: b.x, y: b.y, z: b.z }));
+  assert.equal(settled.length, CELL_START_NECTAR, 'the staged load is still there');
+
+  // They are resting against each other, not parked on a grid.
+  let nearest = Infinity;
+  for (let i = 0; i < settled.length; i++) {
+    for (let j = i + 1; j < settled.length; j++) {
+      const a = settled[i].ball;
+      const b = settled[j].ball;
+      nearest = Math.min(
+        nearest,
+        Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) - (a.radius + b.radius),
+      );
+    }
+  }
+  assert.ok(nearest < 0.02, `the load should be in contact, nearest gap ${(nearest * 1000).toFixed(1)} mm`);
+
+  // Now drop a shot in on top of it.
+  const opening = hive.cellOpening('fore');
+  const shot = pollen();
+  hive.world.add(shot);
+  shot.setPosition(opening.x, opening.y, opening.z + 0.3);
+  shot.setVelocity(0, 0, -3.5);
+  for (let i = 0; i < 400; i++) stepHive(hive, 1 / 500);
+
+  let shifted = 0;
+  for (const before of settled) {
+    shifted = Math.max(
+      shifted,
+      Math.hypot(
+        before.ball.x - before.x,
+        before.ball.y - before.y,
+        before.ball.z - before.z,
+      ),
+    );
+  }
+  assert.ok(
+    shifted > 0.005,
+    `the arriving element should move the load, shifted ${(shifted * 1000).toFixed(1)} mm`,
+  );
+  // And it did not pass through them: everything is still in there.
+  assert.ok(hive.upBalls.length >= CELL_START_NECTAR, 'nothing was displaced out of the CELL');
+});
+
+test('an element in a CELL is never taken out of the physics', () => {
+  // The property the rest of the simulator depends on. `BallWorld` only steps
+  // elements with no container, so attaching one to a CELL is what stopped it
+  // falling, bouncing and colliding -- which is why a CELL now owns nothing
+  // and answers "what is in me" by looking.
+  const hive = hiveRig({ alliance: 'red', pivotX: 0, startUp: 'fore' });
+  for (let i = 0; i < CELL_START_NECTAR; i++) hive.stage(nectar('red'));
+  for (let i = 0; i < 300; i++) stepHive(hive, 1 / 500);
+
+  assert.equal(hive.elementsInUpCell(), CELL_START_NECTAR);
+  for (const ball of hive.upBalls) {
+    assert.equal(ball.container, null, `${ball.id} should still be a free element`);
+    assert.equal(ball.free, true);
+  }
+  // And a CELL refuses to take anything, whatever it is asked.
+  const loose = pollen();
+  hive.world.add(loose);
+  const opening = hive.cellOpening('fore');
+  loose.setPosition(opening.x, opening.y, opening.z);
+  loose.stop();
+  assert.equal(hive.interactBall(loose), false, 'a CELL is not a container');
+  assert.equal(loose.container, null);
 });

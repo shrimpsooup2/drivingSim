@@ -65,8 +65,19 @@ function tipHive(field, match, alliance, dt = 1 / 50) {
     // Anything loose on the floor or still pre-loaded, which includes what the
     // last tip spilled -- a real ALLIANCE re-collects its own spillage, and
     // with only 40 POLLEN on the field it has to.
+    //
+    // Not anything already sitting in a CELL, though. Those are `free` too now
+    // -- a CELL holds nothing, so what is in one is an ordinary free element
+    // that happens to be inside it -- and picking one of those up and
+    // "staging" it again adds no weight, so the arm never went over a second
+    // time.
+    const inACell = (b) =>
+      ['red', 'blue'].some(
+        (side) =>
+          field.hives[side].upBalls.includes(b) || field.hives[side].downBalls.includes(b),
+      );
     const ball = field.allBalls.find(
-      (b) => b.free || b.container?.kind === 'preload',
+      (b) => !inACell(b) && (b.free || b.container?.kind === 'preload'),
     );
     if (!ball) break;
     hive.stage(ball);
