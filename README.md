@@ -184,6 +184,9 @@ touching the core, and the game itself is built entirely on those seams.
   tuning the driver-feel parameters.
 - **[docs/BIOBUZZ.md](docs/BIOBUZZ.md)** — how the game is modelled, where every
   dimension came from, and what the field geometry turns out to imply.
+- **[docs/RULES.md](docs/RULES.md)** — all forty Game Rules and what the
+  simulator does about each one: eleven officiated live, and an explicit reason
+  for every one that is not.
 
 ## Layout
 

@@ -8,7 +8,8 @@
     "start": "node tools/serve.js",
     "dev": "node tools/serve.js",
     "test": "node --test",
-    "check": "node tools/check.js"
+    "check": "node tools/check.js",
+    "rules:doc": "node tools/rules-doc.js"
   },
   "engines": {
     "node": ">=18"

@@ -66,6 +66,17 @@ export class MatchPanel {
     this.element.append(this.lineup);
     this._lineupKey = '';
 
+    /**
+     * What the REFEREE has called lately.
+     *
+     * Above the notes and below the line-up, because a foul is the single most
+     * expensive thing that can happen to a driver and finding out at the
+     * scoring table is too late. Newest first, and the list is short on
+     * purpose: three is what a driver can read without looking away for long.
+     */
+    this.calls = el('div', 'match-calls');
+    this.element.append(this.calls);
+
     this.notes = el('div', 'match-notes');
     this.element.append(this.notes);
 
@@ -146,6 +157,30 @@ export class MatchPanel {
       }
     }
 
+    // Rebuilt from scratch, but only when something has actually been called:
+    // the list is a handful of rows and it changes a few times a MATCH.
+    const callKey = (t.citations ?? []).map((c) => `${c.rule}${c.t.toFixed(2)}`).join('|');
+    if (callKey !== this._callKey) {
+      this._callKey = callKey;
+      this.calls.innerHTML = '';
+      for (const c of (t.citations ?? []).slice(0, 3)) {
+        const row = el('div', `match-call ${c.penalty} ${c.alliance}`);
+        row.append(el('span', 'match-call-rule', c.rule));
+        row.append(el('span', 'match-call-detail', c.detail));
+        const tag =
+          c.penalty === 'major' || c.penalty === 'minor'
+            ? `${c.penalty.toUpperCase()} FOUL${c.card ? ` +${c.card.toUpperCase()}` : ''}`
+            : c.penalty === 'advisory'
+              ? 'WATCH IT'
+              : c.penalty === 'strategic'
+                ? `STRATEGIC${c.card ? ` +${c.card.toUpperCase()}` : ''}`
+                : 'WARNING';
+        row.append(el('span', 'match-call-tag', tag));
+        row.title = `${c.rule} ${c.title}${c.points ? ` -- ${c.points} points to the opponent` : ''}`;
+        this.calls.append(row);
+      }
+    }
+
     const notes = [];
     notes.push(`held ${t.held}/${t.capacity}`);
     notes.push(`${t.needsSpinUp === false ? 'release' : 'hood'} ${s.hoodDegrees.toFixed(0)} deg`);
@@ -161,6 +196,13 @@ export class MatchPanel {
     if (t.nectarAvailable > 0) notes.push(`${t.nectarAvailable} NECTAR to enter`);
     const early = score[game.alliance].earlyFlowerNectar;
     if (early > 0) notes.push(`G410 x${early}`);
+    const mine = t.fouls?.[game.alliance];
+    if (mine && (mine.major || mine.minor)) {
+      notes.push(`fouls ${mine.major} major / ${mine.minor} minor`);
+    }
+    if (t.pendingReturns > 0) {
+      notes.push(`${t.pendingReturns} off the FIELD`);
+    }
     this.notes.textContent = notes.join('  -  ');
   }
 }
@@ -216,7 +258,15 @@ export function nextStep(t, source = 'gamepad') {
   return { text: `${name('right_trigger')}  fire`, urgent: false };
 }
 
-/** Rows of the score breakdown, in the order Table 10-2 lists them. */
+/**
+ * Rows of the score breakdown, in the order Table 10-2 lists them, with the
+ * penalty credit on the end.
+ *
+ * `penalty` reads as points *gained from the opponent's fouls*, which is what
+ * Table 10-4 actually describes -- "a credit of N points towards the
+ * opponent's MATCH point total". So a MAJOR FOUL by red shows up as 20 in
+ * blue's PENALTY row, not as a deduction in red's.
+ */
 const BREAKDOWN = [
   ['leave', 'LEAVE'],
   ['parkAuto', 'PARK (auto)'],
@@ -227,6 +277,7 @@ const BREAKDOWN = [
   ['flower', 'owned FLOWER'],
   ['bottomNectar', 'bottom NECTAR'],
   ['garden', 'GARDEN'],
+  ['penalty', 'PENALTY'],
 ];
 
 const PHASE_LABEL = {

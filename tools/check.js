@@ -624,6 +624,69 @@ async function main() {
       }
     }
 
+    // --- The REFEREE, through the real loop.
+    //
+    // A foul is 20 points and the panel is where a driver finds out about it,
+    // so both halves are worth checking in the browser rather than only in the
+    // unit tests: the citation has to be raised by the game stepping, and it
+    // has to reach the DOM.
+    const officiated = await cdp.evaluate(`(() => {
+      const g = globalThis.ftcSim.sim.game;
+      const before = g.match.score();
+      const ball = g.field.ballWorld.balls.find((b) => b.free && b.kind === 'pollen');
+      ball.setPosition(0, 0, 1);
+      ball.touch('eject', g.match.robotMeta('player'), g.field.ballWorld.clock);
+      ball.outOfBounds = true;
+      for (let i = 0; i < 4; i++) g.update(1 / 60);
+      const queued = g.field.pendingReturns;
+      globalThis.ftcSim.matchPanel.update(g);
+      const row = document.querySelector('.match-call');
+      // And now wait out Section 10.8.2's return.
+      for (let i = 0; i < 60 * 10; i++) g.update(1 / 60);
+      const other = g.alliance === 'red' ? 'blue' : 'red';
+      return {
+        rule: row?.querySelector('.match-call-rule')?.textContent ?? '',
+        tag: row?.querySelector('.match-call-tag')?.textContent ?? '',
+        major: g.match.referee.fouls[g.alliance].major,
+        creditedBefore: before[other].penalty,
+        credited: g.match.score()[other].penalty,
+        queued,
+        returned: !ball.outOfBounds && ball.free,
+        pending: g.field.pendingReturns,
+      };
+    })()`);
+    console.log(
+      `  Referee: ${officiated.rule} ${officiated.tag}, ` +
+        `${officiated.credited - officiated.creditedBefore} points to the opponent; ` +
+        `element off the FIELD ${officiated.queued} -> back ${officiated.returned}`,
+    );
+    if (officiated.rule !== 'G405') failures.push(`no G405 call in the panel (got "${officiated.rule}")`);
+    if (!/MAJOR FOUL/.test(officiated.tag)) failures.push(`G405 was not a MAJOR FOUL: "${officiated.tag}"`);
+    if (officiated.major < 1) failures.push('the foul was not recorded against the alliance');
+    if (officiated.credited - officiated.creditedBefore !== 20) {
+      failures.push(`expected 20 points credited to the opponent, got ${officiated.credited - officiated.creditedBefore}`);
+    }
+    if (officiated.queued !== 1) failures.push('the departed element was not queued for return');
+    if (!officiated.returned) failures.push('the departed element never came back');
+    if (officiated.pending !== 0) failures.push('the return queue never drained');
+
+    // A picture of the calls strip, because "is the panel readable" is not
+    // something an assertion answers.
+    const fouled = await cdp.evaluate(`(() => {
+      const g = globalThis.ftcSim.sim.game;
+      const ref = g.match.referee;
+      ref.cite('G421', g.alliance, 'PINNED blue1 for 3 seconds', { robotId: 'player' });
+      ref.cite('G409', g.alliance, 'caught an element released by a TIPPED HIVE');
+      globalThis.ftcSim.matchPanel.update(g);
+      return document.querySelectorAll('.match-call').length;
+    })()`);
+    if (fouled < 3) failures.push(`the calls strip showed ${fouled} of 3 rows`);
+    await sleep(300);
+    const shotFouls = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const foulsPath = shotPath.replace(/\.png$/, '-biobuzz-fouls.png');
+    await writeFile(foulsPath, Buffer.from(shotFouls.data, 'base64'));
+    console.log(`  Screenshot: ${foulsPath}`);
+
     await sleep(700);
     const shot6 = await cdp.send('Page.captureScreenshot', { format: 'png' });
     const gamePath = shotPath.replace(/\.png$/, '-biobuzz.png');

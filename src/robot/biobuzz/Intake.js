@@ -2,6 +2,7 @@ import { Subsystem } from '../Subsystem.js';
 import { DcMotor } from '../../hardware/DcMotor.js';
 import { MOTOR_PRESETS } from '../../config/presets/motors.js';
 import { INCH } from '../../math/MathUtil.js';
+import { MAX_CONTROLLED } from '../../field/biobuzz/constants.js';
 
 /**
  * A roller intake across the front of the ROBOT.
@@ -43,7 +44,15 @@ export class Intake extends Subsystem {
     super({ name: opts.name ?? 'intake' });
 
     /** How many SCORING ELEMENTS the ROBOT can hold at once. */
-    this.capacity = opts.capacity ?? 3;
+    /**
+     * How many elements it can hold, capped at G407's limit of 4.
+     *
+     * Clamped rather than trusted: a mechanism that holds five is illegal, and
+     * a few archetypes had been given six on the grounds that a big hopper is
+     * a real design. It is not a legal one, and now that the MATCH has a
+     * REFEREE it showed up as a MAJOR FOUL and a YELLOW CARD every MATCH.
+     */
+    this.capacity = Math.min(MAX_CONTROLLED, opts.capacity ?? 3);
     /** How far in front of the bumper the roller can reach. */
     this.reach = opts.reach ?? 4 * INCH;
     /** Half-width of the capture cone. */
@@ -110,6 +119,23 @@ export class Intake extends Subsystem {
     /** One lift-and-release cycle. */
     this.placeSeconds = opts.placeSeconds ?? 0.9;
 
+    /**
+     * Whether this intake refuses the opponent's NECTAR.
+     *
+     * G408: "A ROBOT may not CONTROL the opponent's NECTAR." An element of the
+     * wrong colour is worth nothing to you -- a NECTAR only scores for its own
+     * ALLIANCE -- so a team has every reason to sense the colour and reject it,
+     * and colour sensing is standard kit. Modelling that as the default is
+     * what stops a mechanism committing a rule violation its team has no way
+     * to prevent: without it a wide intake driven across a stray NECTAR swept
+     * it up, and an AI robot collected a YELLOW CARD in a MATCH for something
+     * no real robot does.
+     *
+     * Off is a real robot too, and a real hazard to drill: then steering
+     * around the other colour is the driver's job.
+     */
+    this.sortByAlliance = opts.sortByAlliance ?? true;
+
     /** -1 eject, 0 off, +1 intake. */
     this.command = 0;
     /** Ramped version of `command`, so the roller is not instantly at speed. */
@@ -131,6 +157,18 @@ export class Intake extends Subsystem {
 
   get full() {
     return this.held.length >= this.capacity;
+  }
+
+  /**
+   * G403/G404: whether the roller is being *told* to run.
+   *
+   * The command, not `power`. `power` is the ramped version, and it takes most
+   * of half a second to decay below anything -- so reading it counted a roller
+   * spinning down as powered movement, which is exactly what the rule excuses:
+   * "movement due to inertia, gravity, or de-energizing of actuators".
+   */
+  get commandedEffort() {
+    return Math.abs(this.command);
   }
 
   /**
@@ -261,6 +299,8 @@ export class Intake extends Subsystem {
         if (!ball.free || this.full) continue;
         if (ball.z - ball.radius > this.maxHeight) continue;
 
+        if (this._rejects(ball)) continue;
+
         const dx = ball.x - mouthX;
         const dy = ball.y - mouthY;
         const ahead = dx * cos + dy * sin;
@@ -301,6 +341,17 @@ export class Intake extends Subsystem {
     if (changed) this._contentsChanged();
   }
 
+  /**
+   * Whether this intake should leave an element alone: G408's wrong-colour
+   * NECTAR, when it is built to tell. See `sortByAlliance`.
+   * @param {import('../../physics/Ball.js').Ball} ball
+   */
+  _rejects(ball) {
+    if (!this.sortByAlliance || ball.kind !== 'nectar') return false;
+    const mine = this.owner?.alliance;
+    return Boolean(mine) && ball.alliance !== mine;
+  }
+
   /** Spit the front element out onto the tiles, one at a time. */
   _eject(dt = 0) {
     if (this.held.length === 0 || !this.robot) {
@@ -339,6 +390,10 @@ export class Intake extends Subsystem {
     const d = this.robot.halfLength + ball.radius + 1 * INCH;
     ball.setPosition(x + cos * d, y + sin * d, ball.radius);
     ball.release(vx + cos * 1.2, vy + sin * 1.2, 0);
+    // Spitting an element out is not a scoring attempt, so if it goes over the
+    // wall it is a deliberate ejection and G405 costs 20 points. Which is the
+    // right lesson: do not empty the magazine while parked on the perimeter.
+    ball.touch('eject', this.owner, this.ballWorld?.clock ?? 0);
     this._ejectCooldown = 0.25;
     this._contentsChanged();
   }

@@ -23,6 +23,19 @@ import { biobuzzPlan } from './gamePlan.js';
  * they change their mind. A "hard" opponent is not one with better physics --
  * it is one that reacts sooner and wastes less.
  */
+/**
+ * When an AI lets go of a PIN, and for how long.
+ *
+ * Two of G421's three seconds, which is the margin a driver leaves: the count
+ * runs on a REFEREE'S judgement of when the PIN started, not on a stopwatch you
+ * can see. Then 3.2 seconds clear, because both of the rule's escape clauses
+ * need the separation to hold for more than three seconds before the count
+ * ends, and 2 ft (~61 cm) is the distance either of them asks for.
+ */
+const PIN_BACKOFF_AT = 2;
+const PIN_BACKOFF_SECONDS = 3.2;
+const PIN_BACKOFF_DISTANCE = 0.8;
+
 export class Opponent {
   /**
    * Two ways to specify the machine, because two different callers need them.
@@ -70,6 +83,12 @@ export class Opponent {
     this.alliance = opts.alliance ?? null;
 
     this.id = opts.id ?? `${(this.archetype ?? this.profile).id}-${this.behaviorName}`;
+    /**
+     * The id a MATCH knows this ROBOT by, once it has been entered in one.
+     * Set by `BiobuzzGame.attachOpponents`; null on a bare field.
+     * @type {string|null}
+     */
+    this.matchId = null;
     this.start = opts.start;
     this.state = { waypoints: opts.waypoints ?? [], waypointIndex: 0 };
 
@@ -217,6 +236,18 @@ export class Opponent {
   updateControl(dt, world) {
     this.time += dt;
 
+    // G403 and G404: "ROBOTS are motionless between AUTO and TELEOP" and "at
+    // the end of TELEOP". For a real ROBOT this is not a choice -- the AUTO
+    // op-mode has stopped and nobody has started TELEOP yet -- and modelling it
+    // matters now that the MATCH has a REFEREE: without it every AI robot took
+    // a MAJOR FOUL and a YELLOW CARD in every MATCH it played, and the calls
+    // list was mostly them.
+    const phase = world.game?.match?.phase;
+    if (phase === 'transition' || phase === 'ended') {
+      this._standDown(dt);
+      return;
+    }
+
     // What this driver currently believes about the player, which is a little
     // behind reality by their reaction time.
     const seen = this.perception.update(
@@ -275,8 +306,15 @@ export class Opponent {
     const behavior = BEHAVIORS[this.behaviorName] ?? BEHAVIORS.chaser;
     const intent = planned ?? behavior(ctx, this.state);
     this._avoidWedging(dt, intent, ctx);
+    this._avoidPinning(dt, intent, ctx);
 
-    if (this.time < this._mistakeUntil) {
+    // Driver mistakes are a TELEOP thing. AUTO is code: it does the same wrong
+    // thing every time or the right one, and it does not lose concentration.
+    // Modelling it here also had a rule consequence -- a 1.2 m displacement
+    // during AUTO sent robots across the centre line into the opposing
+    // ALLIANCE, which is a G402 MAJOR FOUL and a YELLOW CARD for something no
+    // AUTO routine would do.
+    if (this.time < this._mistakeUntil && phase !== 'auto') {
       // Mid-mistake: drive somewhere unhelpful rather than freezing, because a
       // frozen robot is easy to read and a committed wrong move is not.
       intent.point = new Vec2(
@@ -303,6 +341,81 @@ export class Opponent {
     // controller, and passing one would have the intake read buttons that are
     // never pressed and switch itself off again every cycle.
     this.robot.updateControl(dt);
+  }
+
+  /**
+   * Let go before the G421 3-count expires.
+   *
+   * "A ROBOT may not PIN an opponent's ROBOT for more than 3 seconds", and it
+   * is a MAJOR FOUL and then another every three seconds it goes on -- the most
+   * expensive thing an AI can do by accident, because it costs 20 points a go
+   * and does not need any intent. A real driver watches the REFEREE'S hand and
+   * peels off at two, which is what this does: it reads the same count the
+   * REFEREE is keeping and drives away from whoever it is leaning on.
+   *
+   * Applied to every role, not just the defender, because the expensive case
+   * was not a defender at all -- it was a cycler that found a stationary ROBOT
+   * between it and its shooting spot and pushed into it for half a MATCH.
+   *
+   * @param {number} dt
+   * @param {import('./behaviors.js').AiIntent} intent mutated in place
+   * @param {import('./behaviors.js').AiContext} ctx
+   */
+  _avoidPinning(dt, intent, ctx) {
+    const referee = ctx.game?.match?.referee;
+    const id = this.matchId;
+    if (!referee?.worstPin || !id) return;
+
+    const { seconds, pinned } = referee.worstPin(id);
+    if (seconds > PIN_BACKOFF_AT) {
+      this._pinBackoffUntil = this.time + PIN_BACKOFF_SECONDS;
+      this._backingOffFrom = pinned;
+    }
+    if (this.time >= (this._pinBackoffUntil ?? 0)) return;
+
+    // Straight back from whoever is being leaned on, or straight back along the
+    // robot's own heading if that ROBOT cannot be found -- a ROBOT pinning
+    // somebody is pushing forward into them, so reversing is right either way.
+    const target = this._pinnedPosition(ctx, this._backingOffFrom);
+    const away = target
+      ? Vec2.sub(ctx.selfPosition, target)
+      : new Vec2(-Math.cos(ctx.selfHeading), -Math.sin(ctx.selfHeading));
+    const len = away.length() || 1;
+    intent.point = new Vec2(
+      ctx.selfPosition.x + (away.x / len) * PIN_BACKOFF_DISTANCE,
+      ctx.selfPosition.y + (away.y / len) * PIN_BACKOFF_DISTANCE,
+    );
+    intent.arrive = true;
+    intent.faceHeading = undefined;
+    intent.fire = false;
+    intent.aggression = 0.8;
+  }
+
+  /** Where the ROBOT this one is pinning currently is, if the MATCH knows. */
+  _pinnedPosition(ctx, pinnedId) {
+    if (!pinnedId) return null;
+    const entry = ctx.game?.match?.entries?.find((e) => e.id === pinnedId);
+    if (!entry?.robot?.body) return null;
+    return new Vec2(entry.robot.body.position.x, entry.robot.body.position.y);
+  }
+
+  /**
+   * Stop commanding anything, between the periods and after the buzzer.
+   *
+   * De-energised rather than braked: the rule excuses "movement due to
+   * inertia, gravity, or de-energizing of actuators", so a ROBOT still rolling
+   * when the buzzer goes is fine and one holding itself still under power is
+   * not.
+   *
+   * @param {number} dt
+   */
+  _standDown(dt) {
+    this._command = { forward: 0, strafe: 0, turn: 0 };
+    this.robot.drivetrain.driveNormalized(0, 0, 0);
+    if (this.intake) this.intake.command = 0;
+    if (this.launcher?.needsSpinUp) this.launcher.spinning = false;
+    this.robot.updateControl(dt);
+    return this;
   }
 
   /**
@@ -386,6 +499,8 @@ export class Opponent {
   get agentView() {
     if (!this.archetype) return null;
     return {
+      /** The MATCH's id for this ROBOT, which is what the REFEREE records. */
+      id: this.matchId ?? this.id,
       alliance: this.alliance ?? 'blue',
       role: this.archetype.role,
       intake: this.intake,

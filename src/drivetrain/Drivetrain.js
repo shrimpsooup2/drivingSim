@@ -240,6 +240,20 @@ export class Drivetrain {
     return speeds;
   }
 
+  /**
+   * The largest wheel duty currently commanded, 0 to 1.
+   *
+   * For G403 and G404, which ask whether a ROBOT has *powered* movement rather
+   * than whether it is moving -- the rule excuses coasting explicitly. Reading
+   * the command rather than the velocity is the difference between "you drove
+   * after the buzzer" and "you were still rolling when it went".
+   */
+  get commandedEffort() {
+    let out = 0;
+    for (const power of this._commandedPowers) out = Math.max(out, Math.abs(power));
+    return out;
+  }
+
   /** Directly set per-wheel power, for tests and future custom op-modes. */
   setWheelPowers(powers) {
     for (let i = 0; i < this.motors.length; i++) {

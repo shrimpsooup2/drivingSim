@@ -190,6 +190,13 @@ export class Hive {
     this.autoTips = 0;
     /** Balls thrown clear, for the caller to re-add to the world. */
     this.spilled = [];
+    /**
+     * LAUNCHED elements that have struck this HIVE from the other ALLIANCE,
+     * for G417.D -- "impeding the TIP of an opponent's HIVE by LAUNCHING
+     * NECTAR or POLLEN at it". Drained by the REFEREE.
+     * @type {{alliance: string, robotId: string, ballId: string}[]}
+     */
+    this.launchStrikes = [];
   }
 
   /**
@@ -605,6 +612,10 @@ export class Hive {
    * velocity as the arm swings.
    */
   _pushOff(ball, nx, ny, nz, penetration) {
+    // The HIVE is "anything else besides that ROBOT", so touching it closes
+    // G409's catch window.
+    ball.touchedStructure();
+    this._noteLaunchStrike(ball);
     const length = Math.hypot(nx, ny, nz) || 1;
     const ux = nx / length;
     const uy = ny / length;
@@ -708,10 +719,36 @@ export class Hive {
       if (edge.a * local.a + edge.v * local.v - edge.offset < -ball.radius) return false;
     }
 
+    this._noteLaunchStrike(ball);
     this.upBalls.push(ball);
     ball.attachTo('cell', this);
     this._restackCell();
     return true;
+  }
+
+  /**
+   * G417.D: note a LAUNCHED element that arrived here from the other ALLIANCE.
+   *
+   * "Impeding the TIP of an opponent's HIVE by LAUNCHING NECTAR or POLLEN at
+   * it" -- so what matters is whose HIVE it landed on, not whether it went in.
+   * A shot that rattles off the outside and one that drops cleanly into the
+   * opponent's CELL are the same violation, and both routes into a HIVE call
+   * this.
+   *
+   * Missing your *own* CELL and clipping its bottom, sides or top is example H
+   * and explicitly *not* a violation, which is why the ALLIANCE test is here
+   * rather than in the REFEREE.
+   */
+  _noteLaunchStrike(ball) {
+    const touch = ball.lastTouch;
+    if (!touch || touch.kind !== 'launch' || touch.alliance === this.alliance) return;
+    this.launchStrikes.push({
+      alliance: touch.alliance,
+      robotId: touch.id,
+      ballId: ball.id,
+    });
+    // Once per shot, not once per plate it rattles off on the way in.
+    ball.lastTouch = { ...touch, kind: 'launched' };
   }
 
   /**
@@ -818,6 +855,10 @@ export class Hive {
         // A little sideways scatter, so a tipped load does not land in a
         // single stack under the hive.
         ball.release((Math.random() * 2 - 1) * 0.25, vy, vz);
+        // G409: until this touches something that is not a ROBOT, a ROBOT
+        // touching it is a catch. Set after `release`, which is what turns the
+        // element loose and is the moment the HIVE "released" it.
+        ball.fromTip = { alliance: this.alliance, t: 0 };
         this.spilled.push(ball);
       }
     }
@@ -827,6 +868,13 @@ export class Hive {
   takeSpilled() {
     const out = this.spilled;
     this.spilled = [];
+    return out;
+  }
+
+  /** Collect and clear the hostile LAUNCHED strikes on this HIVE (G417.D). */
+  takeLaunchStrikes() {
+    const out = this.launchStrikes;
+    this.launchStrikes = [];
     return out;
   }
 
@@ -847,6 +895,7 @@ export class Hive {
     this.tips = 0;
     this.autoTips = 0;
     this.spilled.length = 0;
+    this.launchStrikes.length = 0;
   }
 
   /** Plan-view position, for the renderer and for AI targeting. */

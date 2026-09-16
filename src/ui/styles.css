@@ -538,6 +538,55 @@ select { width: 100%; }
 }
 .match-shooter-text.ready { color: #47d18a; opacity: 1; }
 
+/*
+ * What the REFEREE has called. Colour-coded by tier, because the difference
+ * between a warning and a MAJOR FOUL is 20 points and has to read at a glance
+ * from across a room.
+ */
+.match-calls {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.match-call {
+  /*
+   * Two lines: the rule and its penalty across the top, the detail underneath
+   * where it has the full width to wrap into. On one line the detail was
+   * ellipsised to about four words in a 180 px panel, which told a driver a
+   * rule number and nothing about what they did.
+   */
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: 'rule tag' 'detail detail';
+  gap: 0 5px;
+  align-items: baseline;
+  font-size: 8px;
+  line-height: 1.35;
+  padding: 3px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  border-left: 2px solid rgba(255, 255, 255, 0.25);
+}
+.match-call-rule { grid-area: rule; font-weight: 600; opacity: 0.9; }
+.match-call-detail { grid-area: detail; opacity: 0.6; }
+.match-call-tag {
+  grid-area: tag;
+  text-align: right;
+  font-size: 7px;
+  letter-spacing: 0.06em;
+  opacity: 0.85;
+}
+.match-call.warning { border-left-color: #f2a33c; color: #f2c98a; }
+.match-call.advisory { border-left-color: #6f7885; color: #aab1bb; }
+.match-call.strategic { border-left-color: #e8c54a; color: #f0dc95; }
+.match-call.minor { border-left-color: #e2703a; color: #ffb28d; }
+.match-call.major {
+  border-left-color: #d9433f;
+  color: #ff9a95;
+  background: rgba(200, 52, 56, 0.16);
+}
+
 .match-notes {
   margin-top: 5px;
   font-size: 8px;

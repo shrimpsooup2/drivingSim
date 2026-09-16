@@ -104,6 +104,7 @@ export function biobuzzPlan(ctx, state) {
     intent.faceHeading = undefined;
     intent.fire = false;
   }
+
   return intent;
 }
 
@@ -297,11 +298,26 @@ export function fillFlowers(ctx, state) {
  * @param {import('./behaviors.js').AiContext & {game: any, agent: AgentView}} ctx
  * @param {Record<string, any>} state
  */
+/**
+ * Whether a point is on this ALLIANCE'S own half of the FIELD, by at least
+ * `margin`.
+ *
+ * G402: "During AUTO, FIELD columns A, B, C constitute the red side of the
+ * FIELD, and columns D, E, F constitute the blue side. Each ALLIANCE has
+ * priority over those FIELD and SCORING ELEMENTS on their side." Red owns the
+ * negative-x half.
+ */
+function onOwnSide(x, alliance, margin = 0) {
+  const sign = alliance === 'red' ? -1 : 1;
+  return sign * x > margin;
+}
+
 export function defend(ctx, state) {
   const { game, agent } = ctx;
   const enemy = agent.alliance === 'red' ? 'blue' : 'red';
   const target = game?.field?.hiveTarget?.(enemy);
   const objective = target ? new Vec2(target.x, target.y) : ctx.playerTarget;
+
   const intent = blocker({ ...ctx, playerTarget: objective }, state);
   intent.point = clampToField(intent.point, ctx.fieldHalfSize, 0.25);
   return intent;
@@ -334,7 +350,14 @@ export function collect(ctx, state) {
     agent.role === 'flowerFiller' && !flowersOpen ? ['pollen'] : ['pollen', 'nectar'];
   const prefer = agent.role === 'flowerFiller' && flowersOpen ? 'nectar' : null;
 
-  const ball = nearestLooseElement(ctx, wanted, prefer);
+  // G402: "Each ALLIANCE has priority over those FIELD and SCORING ELEMENTS on
+  // their side of the FIELD." So in AUTO it takes what is on its own half and
+  // only crosses when there is nothing there -- which is what the priority is
+  // for, and it keeps the two ALLIANCES out of each other's way in the period
+  // where contact is a MAJOR FOUL.
+  const home = game.match?.inAuto ? agent.alliance : null;
+  const ball =
+    nearestLooseElement(ctx, wanted, prefer, home) ?? nearestLooseElement(ctx, wanted, prefer);
   if (ball) {
     const point = new Vec2(ball.x, ball.y);
     return {
@@ -391,8 +414,12 @@ export function shootingSpot(ctx, state) {
   const clearance = (launcher?.robot?.halfLength ?? 0.22) + WALL_MARGIN;
   const limit = ctx.fieldHalfSize - clearance;
 
-  let best = null;
-  let bestScore = Infinity;
+  // G402 during AUTO: prefer a spot on its own half, and only cross if there
+  // is no shot at all from home. The rule does not forbid crossing -- it
+  // forbids *disrupting*, and says crossing "may be seen as STRATEGIC" -- so a
+  // hard restriction was the wrong shape: a HIVE sits a foot off the centre
+  // line and the shooting circle round it is mostly on the other side, which
+  // left the AI with nowhere legal to shoot from and no AUTO at all.
   // Every range the FIELD allows, ordered by how close it is to the one this
   // robot would rather shoot from.
   //
@@ -406,34 +433,46 @@ export function shootingSpot(ctx, state) {
   const ranges = [];
   for (let r = 0.9; r <= 3.3; r += 0.15) ranges.push(r);
   ranges.sort((a, b) => Math.abs(a - agent.preferredRange) - Math.abs(b - agent.preferredRange));
-  for (const range of ranges) {
-    for (let i = 0; i < 36; i++) {
-      const azimuth = (i / 36) * Math.PI * 2;
-      const x = target.x + Math.cos(azimuth) * range;
-      const y = target.y + Math.sin(azimuth) * range;
-      if (Math.abs(x) > limit || Math.abs(y) > limit) continue;
-      // Outside the opening plane, measured at the muzzle: inside it there is
-      // no shot at any angle, however the hood is trimmed.
-      if (hive.openingDepth(hive.up, x, y, launcher.exitHeight) <= 0) continue;
-      // And the mechanism has to be able to make the shot from there. The
-      // launcher's own *screen* rather than its full solver: this runs over
-      // hundreds of candidates and the real solve is a bisection over a drag
-      // integration. The screen is drag-free and so slightly optimistic, which
-      // is the right direction -- it never rules out a shot that is possible,
-      // and the real solve runs once the robot is standing there.
-      //
-      // Either way a catapult's hard maximum range and a flywheel's "too close
-      // to drop in" both fall out of the mechanism rather than out of a
-      // distance rule of thumb here.
-      if (!launcher.couldReach(target, undefined, { x, y })) continue;
-      const cost = Vec2.distance(ctx.selfPosition, new Vec2(x, y));
-      if (cost < bestScore) {
-        bestScore = cost;
-        best = new Vec2(x, y);
+
+  /** The nearest spot the mechanism can shoot from, or null. */
+  const search = (ownSideOnly) => {
+    let best = null;
+    let bestScore = Infinity;
+    for (const range of ranges) {
+      for (let i = 0; i < 36; i++) {
+        const azimuth = (i / 36) * Math.PI * 2;
+        const x = target.x + Math.cos(azimuth) * range;
+        const y = target.y + Math.sin(azimuth) * range;
+        if (Math.abs(x) > limit || Math.abs(y) > limit) continue;
+        // G402, first pass only: its own half of the FIELD.
+        if (ownSideOnly && !onOwnSide(x, agent.alliance, clearance)) continue;
+        // Outside the opening plane, measured at the muzzle: inside it there is
+        // no shot at any angle, however the hood is trimmed.
+        if (hive.openingDepth(hive.up, x, y, launcher.exitHeight) <= 0) continue;
+        // And the mechanism has to be able to make the shot from there. The
+        // launcher's own *screen* rather than its full solver: this runs over
+        // hundreds of candidates and the real solve is a bisection over a drag
+        // integration. The screen is drag-free and so slightly optimistic,
+        // which is the right direction -- it never rules out a shot that is
+        // possible, and the real solve runs once the robot is standing there.
+        //
+        // Either way a catapult's hard maximum range and a flywheel's "too
+        // close to drop in" both fall out of the mechanism rather than out of a
+        // distance rule of thumb here.
+        if (!launcher.couldReach(target, undefined, { x, y })) continue;
+        const cost = Vec2.distance(ctx.selfPosition, new Vec2(x, y));
+        if (cost < bestScore) {
+          bestScore = cost;
+          best = new Vec2(x, y);
+        }
       }
+      if (best) return best;
     }
-    if (best) break;
-  }
+    return best;
+  };
+
+  // In AUTO, try home first and only cross if there is no shot from there.
+  const best = game.match?.inAuto ? search(true) ?? search(false) : search(false);
   if (best) state.shootingSpot = best;
   // Nothing found is possible mid-tip, when the raised CELL is rolling through
   // horizontal and faces nowhere useful. Hold the last spot rather than
@@ -451,8 +490,10 @@ export function shootingSpot(ctx, state) {
  * @param {import('./behaviors.js').AiContext & {game: any}} ctx
  * @param {string[]} kinds
  * @param {string|null} [prefer]
+ * @param {'red'|'blue'|null} [side] restrict to one ALLIANCE'S half of the
+ *   FIELD, which is what G402's AUTO priority asks for
  */
-function nearestLooseElement(ctx, kinds, prefer = null) {
+function nearestLooseElement(ctx, kinds, prefer = null, side = null) {
   const balls = ctx.game?.field?.ballWorld?.balls;
   if (!balls) return null;
   let best = null;
@@ -461,6 +502,13 @@ function nearestLooseElement(ctx, kinds, prefer = null) {
   for (const ball of balls) {
     if (!ball.free || ball.outOfBounds) continue;
     if (!kinds.includes(ball.kind)) continue;
+    // G408: "A ROBOT may not CONTROL the opponent's NECTAR." POLLEN is neutral
+    // and anybody's to take; a NECTAR belongs to an ALLIANCE, and picking up
+    // the wrong colour is a VERBAL WARNING and then a YELLOW CARD for nothing
+    // in return -- it does not even score where this robot would put it.
+    if (ball.kind === 'nectar' && ball.alliance !== ctx.agent?.alliance) continue;
+    // Restricted to one half of the FIELD, when the caller asked for that.
+    if (side && !onOwnSide(ball.x, side)) continue;
     // Anything still in the air is somebody else's shot, not a pickup.
     if (ball.z > 0.25) continue;
     const preferred = prefer !== null && ball.kind === prefer;

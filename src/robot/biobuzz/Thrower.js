@@ -204,6 +204,15 @@ export class Thrower extends Subsystem {
   }
 
   /**
+   * G403/G404: winding is the only powered movement a thrower has. A loaded
+   * one sitting on its latch is holding position with no motor doing anything,
+   * which the rule does not consider powered movement.
+   */
+  get commandedEffort() {
+    return this.resetRemaining > 0 ? 1 : 0;
+  }
+
+  /**
    * Wind the elastic and throw if asked.
    * @param {number} dt
    * @param {number} busVoltage
@@ -291,6 +300,8 @@ export class Thrower extends Subsystem {
       const dirX = cos * c - sin * s;
       const dirY = cos * s + sin * c;
       ball.release(vx + dirX * horizontal, vy + dirY * horizontal, vertical);
+      // A scoring attempt, exempt from G405. See `Launcher._fire`.
+      ball.touch('launch', this.owner, this.ballWorld?.clock ?? 0);
       ball.setPosition(
         x + dirX * this.exitOffset,
         y + dirY * this.exitOffset,

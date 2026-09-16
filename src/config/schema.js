@@ -1376,6 +1376,13 @@ export const SCHEMA = [
         advanced: true,
         help: 'How fast the ROBOT may be moving before the panel tells you to stop before shooting. It does not change the physics -- a shot always inherits the ROBOT\'s velocity -- only the point at which the prompt starts warning you.',
       },
+      {
+        path: 'match.sortElements',
+        label: 'Intake rejects opponent NECTAR',
+        type: 'boolean',
+        default: true,
+        help: 'G408 forbids CONTROLLING the opponent\'s NECTAR, and it is worth nothing to you anyway, so most ROBOTS sense the colour and refuse it. On, the intake drives straight over one. Off, it swallows whatever enters -- which is what a ROBOT with no colour sensor does, and then it is on you to steer around them or take the warning.',
+      },
     ],
   },
 

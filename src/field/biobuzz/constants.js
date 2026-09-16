@@ -102,6 +102,19 @@ export const FLOWER_UNLOCK_REMAINING = 60;
 /** Section 12.1: STARTING CONFIGURATION fits an 18 in cube. */
 export const ROBOT_SIZE_LIMIT = 18 * INCH;
 
+/**
+ * G407: "A ROBOT may not simultaneously CONTROL more than 4 SCORING ELEMENTS."
+ *
+ * A hard design constraint, not a preference -- a magazine that holds five is a
+ * permanent rule violation, and the rule asks teams to "design their ROBOTS to
+ * prevent inadvertent or deliberate CONTROL of more than 4". So every intake
+ * here is built to it, and the REFEREE measures against the same number.
+ *
+ * It is also exactly the pre-load, which is not a coincidence: Section 10.3.1
+ * hands every ROBOT a full legal magazine to start with.
+ */
+export const MAX_CONTROLLED = 4;
+
 /** Section 10.3.1: 4 POLLEN pre-loaded per ROBOT. */
 export const PRELOAD_POLLEN = 4;
 /** Section 10.3.1: 4 POLLEN in each FLOWER at the start. */

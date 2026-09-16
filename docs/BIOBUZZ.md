@@ -285,6 +285,56 @@ NECTAR entering a FLOWER's scoring volume before that mark; an early one still
 scores, so the simulator counts it as a violation rather than preventing it —
 the same way a referee would. The count shows on the match panel as `G410 xN`.
 
+## Fouls, and the rules audit
+
+A MAJOR FOUL is 20 points — ten elements in a CELL — so the fouls are where the
+points are, and a driver who has never been called for anything learns to drive
+in a way that gets called for everything. So the match has a referee.
+
+Eleven of the forty Game Rules are officiated live: G401 and G403/G404 (powered
+movement when there should be none), G402 (interfering during AUTO), G405
+(elements out of bounds), G407 and G408 (what you are holding), G409 (catching
+off a TIPPED HIVE), G410, G417 (meddling with the HIVE) and G421 (the 3-count on
+pins). Calls appear on the match panel, newest first, colour-coded by tier, and
+the PENALTY row of the breakdown shows the points each alliance has *gained* from
+the other side's fouls — which is how Table 10-4 defines a foul, and why a foul
+can never take you below the points you earned.
+
+Where the manual says "if STRATEGIC", the model is Section 10.6's own test:
+repetition inside one match. G411 (hoarding) has no warning tier at all, so it is
+detected and reported and never scored — putting 20 points on a heuristic would
+teach people to avoid the heuristic.
+
+[docs/RULES.md](RULES.md) is the full audit, generated from
+`src/field/biobuzz/rules.js` by `node tools/rules-doc.js`, with a note on every
+rule the simulator does *not* enforce and why. The gaps are the point: a rule
+marked "cannot be violated here" is a known limit, and a rule missing from a list
+is a surprise at an event.
+
+### Elements that leave the field come back (Section 10.8.2)
+
+They used to be gone for good, which quietly made a long match easier: 56
+elements minus the ones you shot over the wall. The manual says otherwise —
+"POLLEN that exits the FIELD will be reintroduced into the FIELD at the earliest
+safe opportunity by FIELD STAFF in the nearest convenient location. NECTAR that
+exits the FIELD will be returned to that ALLIANCE'S DRIVE TEAM for
+reintroduction."
+
+So both come back, by different routes and not instantly. A POLLEN reappears six
+seconds later just inside the wall near where it went over, in the nearest spot
+clear of the structures and the other elements. A NECTAR goes back to its own
+drive team and has to be entered through the LOADING ZONE again, which puts it
+back on your own side rather than where it left. Either way the element is out of
+your cycle for several seconds, which is the real cost of overshooting and the
+reason to aim properly.
+
+Whether it was also a *foul* depends on how it left, and G405 exempts two of the
+three ways by name: a launched element is a scoring attempt, and one squeezed out
+between two robots is a robot-to-robot interaction. What is left — carried,
+shoved or spat over the wall — is a MAJOR FOUL per element. Every element
+therefore carries a note of which robot last touched it and how, which is what
+`Ball.lastTouch` is for.
+
 ## Controls
 
 | Key | Does |
@@ -431,6 +481,8 @@ src/field/biobuzz/Flower.js      the ordered stack
 src/field/biobuzz/zones.js       LOADING ZONE, GARDEN, ALLIANCE AREA
 src/field/biobuzz/BiobuzzField.js  assembly and Section 10.3.1 staging
 src/field/biobuzz/Match.js       clock, phases, scoring, ranking points, G304
+src/field/biobuzz/rules.js       all forty Game Rules, and what the sim does
+src/field/biobuzz/Referee.js     the detectors for the eleven live rules
 src/robot/biobuzz/Intake.js      roller intake or jaw, and the FLOWER lift
 src/robot/biobuzz/Launcher.js    flywheel launcher and the aiming solver
 src/robot/biobuzz/Thrower.js     catapult and puncher: energy, not speed
@@ -444,6 +496,7 @@ src/ui/MatchPanel.js             clock, score breakdown, shooter readout, line-u
 
 Tests: `test/biobuzz.test.js` (field structures), `biobuzz-robot.test.js`
 (mechanisms), `biobuzz-match.test.js` (flow and scoring), `biobuzz-game.test.js`
-(integration), `ai-roster.test.js` (the other three robots),
+(integration), `biobuzz-rules.test.js` (the audit and every detector),
+`ai-roster.test.js` (the other three robots),
 `ballphysics.test.js` (contact resolution), `input.test.js` (the bindings). `node tools/check.js` drives the whole thing in headless
 Chromium, including firing a shot into the cell through the real physics loop.

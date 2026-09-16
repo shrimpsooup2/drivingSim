@@ -12,6 +12,7 @@ import {
   FLOWER_ALONG_WALL,
   FLOWER_AXIS_OFFSET,
   FLOWER_BACKSTOP_TOP,
+  FIELD_INNER_HALF,
   FLOWER_START_POLLEN,
   FLOWER_RING_DEPTH,
   FLOWER_RING_WIDTH,
@@ -69,10 +70,33 @@ export class BiobuzzField {
    *   field: import('../Field.js').Field,
    *   ballRate?: number,
    *   hiveHoldMass?: number,
+   *   returnDelay?: number,
    * }} opts
    */
   constructor(opts) {
     this.field = opts.field;
+
+    /**
+     * How long FIELD STAFF take to put a departed element back, in seconds.
+     *
+     * Section 10.8.2: "POLLEN that exits the FIELD will be reintroduced into
+     * the FIELD at the earliest safe opportunity by FIELD STAFF in the nearest
+     * convenient location. NECTAR that exits the FIELD will be returned to that
+     * ALLIANCE'S DRIVE TEAM for reintroduction." So it comes back either way,
+     * and not instantly -- the delay is the whole point of modelling it. A
+     * flywheel robot that overshoots the CELL loses that POLLEN from the cycle
+     * for several seconds, which is a real cost and the reason to aim properly.
+     *
+     * Six seconds is a plausible "earliest safe opportunity": long enough that
+     * you notice, short enough that a MATCH does not run out of elements.
+     */
+    this.returnDelay = opts.returnDelay ?? 6;
+    /** Seconds of MATCH time this FIELD has been stepped. */
+    this.clock = 0;
+    /** @type {{ball: Ball, dueAt: number}[]} */
+    this._returns = [];
+    /** Elements that left the FIELD, waiting for the REFEREE to read them. */
+    this._departed = [];
 
     /**
      * Red's HIVE sits on the red half of the crossbar, blue's on the blue half,
@@ -277,8 +301,15 @@ export class BiobuzzField {
     for (const ball of this.allBalls) {
       ball.release();
       ball.outOfBounds = false;
+      ball.leftFieldAt = null;
+      ball.lastTouch = null;
+      ball.fromTip = null;
+      ball.caughtFromTip = null;
       ball.setPosition(0, 0, -1);
     }
+    this._returns.length = 0;
+    this._departed.length = 0;
+    this.clock = 0;
     this.ballWorld.settled = false;
 
     const pool = this.pollen.slice();
@@ -395,7 +426,10 @@ export class BiobuzzField {
     if (opts.bodies) {
       this.ballWorld.clearBodies();
       for (const b of opts.bodies) {
-        this.ballWorld.addBody(b.body, b.halfLength, b.halfWidth, b.height);
+        // `b.meta` is who the body belongs to, and it is what makes provenance
+        // work: without it the ball world moves elements around without ever
+        // recording which ROBOT did it, and G405 has nothing to attribute.
+        this.ballWorld.addBody(b.body, b.halfLength, b.halfWidth, b.height, b.meta);
       }
     }
 
@@ -410,7 +444,149 @@ export class BiobuzzField {
     }
 
     this.ballWorld.step(dt);
+    this.clock += dt;
+    this._noteDepartures();
+    this._runReturns();
     return tips;
+  }
+
+  // ------------------------------------------------- Section 10.8.2 logistics
+
+  /**
+   * Notice elements that have just left the FIELD and queue their return.
+   *
+   * The ball world stops stepping an element the moment it clears the wall, so
+   * one that has gone is frozen where it went -- which is exactly where FIELD
+   * STAFF would find it, and therefore where "the nearest convenient location"
+   * is measured from.
+   */
+  _noteDepartures() {
+    for (const ball of this.ballWorld.balls) {
+      if (!ball.outOfBounds || ball.leftFieldAt !== null) continue;
+      ball.leftFieldAt = this.clock;
+      this._departed.push(ball);
+      this._returns.push({ ball, dueAt: this.clock + this.returnDelay });
+    }
+  }
+
+  /**
+   * Elements that left the FIELD since this was last called.
+   *
+   * Drained rather than accumulated, because the only consumer is the REFEREE
+   * deciding whether each one was a G405 ejection, and it wants each departure
+   * once.
+   */
+  takeDepartures() {
+    const out = this._departed;
+    this._departed = [];
+    return out;
+  }
+
+  /** How many elements are off the FIELD waiting to come back. */
+  get pendingReturns() {
+    return this._returns.length;
+  }
+
+  /**
+   * Put back everything whose delay has elapsed.
+   *
+   * The two element types go back by different routes, because Section 10.8.2
+   * says so: POLLEN is FIELD STAFF's to roll back in, and NECTAR goes to the
+   * DRIVE TEAM, who then have to enter it through the LOADING ZONE like any
+   * other NECTAR. That difference is worth having -- a NECTAR you put over the
+   * wall is out of play until somebody walks it round and rolls it in, and it
+   * comes back on your side rather than where it left.
+   */
+  _runReturns() {
+    if (this._returns.length === 0) return;
+    const still = [];
+    for (const entry of this._returns) {
+      if (this.clock < entry.dueAt) {
+        still.push(entry);
+        continue;
+      }
+      this.returnElement(entry.ball);
+    }
+    this._returns = still;
+  }
+
+  /**
+   * Bring one departed element back, by whichever route its type takes.
+   * @param {Ball} ball
+   */
+  returnElement(ball) {
+    ball.outOfBounds = false;
+    ball.leftFieldAt = null;
+    ball.lastTouch = null;
+    ball.fromTip = null;
+    ball.caughtFromTip = null;
+
+    if (ball.kind === 'nectar' && (ball.alliance === 'red' || ball.alliance === 'blue')) {
+      // Back to the DRIVE TEAM, and available to hand in again. It was already
+      // counted against the release schedule when it first went in, so
+      // returning it does not let an ALLIANCE enter more NECTAR than it has.
+      ball.attachTo('allianceArea', ball.alliance);
+      ball.setPosition(0, 0, -1);
+      this.unlockNectar(ball.alliance, 1);
+      return ball;
+    }
+
+    const spot = this._nearestClearSpot(ball);
+    ball.release();
+    ball.setPosition(spot.x, spot.y, ball.radius);
+    ball.stop();
+    this.ballWorld.settled = false;
+    return ball;
+  }
+
+  /**
+   * The nearest place inside the perimeter a FIELD STAFF member could put an
+   * element down: clear of the structures, and not on top of another element.
+   *
+   * Rings outward from where it left rather than searching the whole FIELD,
+   * because "nearest convenient location" is the rule's own wording and
+   * dropping it back where it went over is what actually happens.
+   *
+   * @param {Ball} ball
+   */
+  _nearestClearSpot(ball) {
+    const limit = FIELD_INNER_HALF - ball.radius - 0.02;
+    const startX = Math.max(-limit, Math.min(limit, ball.x));
+    const startY = Math.max(-limit, Math.min(limit, ball.y));
+    const step = ball.radius * 2.2;
+
+    for (let ring = 0; ring < 8; ring++) {
+      const count = ring === 0 ? 1 : ring * 8;
+      for (let i = 0; i < count; i++) {
+        const angle = (i / count) * Math.PI * 2;
+        const x = Math.max(-limit, Math.min(limit, startX + Math.cos(angle) * step * ring));
+        const y = Math.max(-limit, Math.min(limit, startY + Math.sin(angle) * step * ring));
+        if (this._spotIsClear(x, y, ball)) return { x, y };
+      }
+    }
+    // Nowhere clear nearby, which means a heap: put it back anyway and let the
+    // overlap resolution shuffle the pile, which is what a hand does too.
+    return { x: startX, y: startY };
+  }
+
+  /** @param {Ball} ball */
+  _spotIsClear(x, y, ball) {
+    for (const other of this.ballWorld.balls) {
+      if (other === ball || !other.free || other.outOfBounds) continue;
+      if (other.z - other.radius > ball.radius * 2) continue;
+      const room = other.radius + ball.radius;
+      if (Math.hypot(other.x - x, other.y - y) < room) return false;
+    }
+    for (const obstacle of this.obstacles) {
+      const dx = x - obstacle.position.x;
+      const dy = y - obstacle.position.y;
+      const cos = Math.cos(obstacle.heading);
+      const sin = Math.sin(obstacle.heading);
+      const along = Math.abs(dx * cos + dy * sin) - obstacle.size.x / 2;
+      const across = Math.abs(-dx * sin + dy * cos) - obstacle.size.y / 2;
+      if (along < ball.radius && across < ball.radius) return false;
+    }
+    return true;
   }
 
   // --------------------------------------------------------------- scoring

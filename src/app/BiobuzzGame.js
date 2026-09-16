@@ -64,6 +64,7 @@ const DEFAULT_MATCH_SETTINGS = {
   startPhase: 'auto',
   autoRestart: false,
   aiDriveTeam: true,
+  sortElements: true,
   autoSeconds: undefined,
   transitionSeconds: undefined,
   teleopSeconds: undefined,
@@ -130,15 +131,28 @@ export class BiobuzzGame {
     this.participants = [
       { robot: sim.robot, alliance: this.alliance, id: 'player', intake: this.intake },
     ];
+    // Filled in below, once the MATCH exists to hand out identities.
+    /** @type {any} */
+    this._playerEntry = this.participants[0];
 
     this.match = new Match({
       field: this.field,
-      robots: [{ robot: sim.robot, alliance: this.alliance, id: 'player' }],
+      robots: [
+        { robot: sim.robot, alliance: this.alliance, id: 'player', driverControlled: true },
+      ],
       autoSeconds: this.settings.autoSeconds,
       transitionSeconds: this.settings.transitionSeconds,
       teleopSeconds: this.settings.teleopSeconds,
       flowerUnlockRemaining: this.settings.flowerUnlockRemaining,
     });
+
+    // The player's mechanisms need their rules identity too, so a LAUNCHED
+    // element carries "this was a scoring attempt by the red ROBOT" and G405
+    // can exempt it.
+    this._playerEntry.meta = this.match.robotMeta('player');
+    this.intake.owner = this._playerEntry.meta;
+    this.intake.sortByAlliance = this.settings.sortElements !== false;
+    this.launcher.owner = this._playerEntry.meta;
 
     this.fillRoster();
     this.attachOpponents();
@@ -220,7 +234,18 @@ export class BiobuzzGame {
 
       opponent._biobuzz = { intake, launcher };
       const id = this.match.addRobot({ robot: opponent.robot, alliance });
-      this.participants.push({ robot: opponent.robot, alliance, id, intake, opponent });
+      const meta = this.match.robotMeta(id);
+      // The MATCH assigns its own ids, and they are what the REFEREE's records
+      // are keyed on -- so an AI that wants to know whether it is being counted
+      // for a PIN needs the one the MATCH gave it, not the one it was created
+      // with.
+      opponent.matchId = id;
+      if (intake) {
+        intake.owner = meta;
+        intake.sortByAlliance = this.settings.sortElements !== false;
+      }
+      if (launcher) launcher.owner = meta;
+      this.participants.push({ robot: opponent.robot, alliance, id, intake, opponent, meta });
     }
     return this;
   }
@@ -306,6 +331,11 @@ export class BiobuzzGame {
     const next = { ...this.settings, ...(config?.match ?? {}) };
     this.settings = next;
     this.match.setPeriods(next);
+    // Colour sorting takes effect immediately on every ROBOT: it is a property
+    // of the mechanism, not of the MATCH, so there is nothing to rebuild.
+    for (const entry of this.participants) {
+      if (entry.intake) entry.intake.sortByAlliance = next.sortElements !== false;
+    }
     return this;
   }
 
@@ -363,6 +393,7 @@ export class BiobuzzGame {
       halfLength: entry.robot.halfLength,
       halfWidth: entry.robot.halfWidth,
       height: entry.robot.config?.chassis?.height ?? 0.35,
+      meta: entry.meta ?? this.match.robotMeta(entry.id),
     }));
 
     this.match.update(dt, { bodies });
@@ -510,6 +541,17 @@ export class BiobuzzGame {
       launchSystem: this.launcher.kind ?? 'flywheel',
       needsSpinUp: this.launcher.needsSpinUp !== false,
       solution: this.launcher.aimFor(this.field.hiveTarget(this.alliance)),
+      /**
+       * What the REFEREE has called, newest first, and how many elements are
+       * off the FIELD waiting for FIELD STAFF.
+       *
+       * A foul you were not told about is a foul you will commit again, and a
+       * MAJOR FOUL is worth ten elements in a CELL -- so this belongs on the
+       * panel next to the score, not in a log somewhere.
+       */
+      citations: status.citations,
+      fouls: status.fouls,
+      pendingReturns: status.pendingReturns,
     };
   }
 

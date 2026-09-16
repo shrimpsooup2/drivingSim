@@ -1,4 +1,5 @@
 import { INCH } from '../math/MathUtil.js';
+import { MAX_CONTROLLED } from '../field/biobuzz/constants.js';
 
 /**
  * What kind of robot an AI drives, and how well it is built.
@@ -210,7 +211,7 @@ export const ROBOT_ARCHETYPES = [
       'chassis.mass': 15.5,
       'motor.gearRatio': 17.2,
     },
-    intake: { capacity: 5, reach: 6 * INCH, halfAngle: 0.8 },
+    intake: { capacity: 4, reach: 6 * INCH, halfAngle: 0.8 },
     thrower: {
       kind: 'catapult',
       // Sized for three at a time: shared out, each element gets about 1.13 J,
@@ -272,7 +273,9 @@ export const ROBOT_ARCHETYPES = [
       'motor.gearRatio': 15.2,
     },
     intake: {
-      capacity: 6,
+      // G407 caps CONTROL at 4, so the big-hopper build buys reach and a fast
+      // lift rather than a fifth element.
+      capacity: 4,
       reach: 6.5 * INCH,
       halfAngle: 0.85,
       placeSeconds: 0.8,
@@ -396,7 +399,7 @@ export const ROBOT_ARCHETYPES = [
       'chassis.mass': 15,
       'motor.gearRatio': 19.2,
     },
-    intake: { capacity: 5, reach: 5 * INCH, halfAngle: 0.7 },
+    intake: { capacity: 4, reach: 5 * INCH, halfAngle: 0.7 },
     launcher: {
       kind: 'twin flywheel',
       motorCount: 2,
@@ -537,7 +540,12 @@ export function intakeOptions(archetype, quality) {
   const base = archetype.intake;
   return {
     ...base,
-    capacity: Math.max(1, (base.capacity ?? 3) + quality.intakeCapacityDelta),
+    // G407 caps CONTROL at 4, so a better build buys reach and speed rather
+    // than a fifth element -- which would be a permanent rule violation.
+    capacity: Math.min(
+      MAX_CONTROLLED,
+      Math.max(1, (base.capacity ?? 3) + quality.intakeCapacityDelta),
+    ),
     reach: (base.reach ?? 4 * INCH) * quality.intakeReachScale,
     spinUpTime: (base.spinUpTime ?? 0.15) * quality.intakeSpinUpScale,
     placeSeconds: (base.placeSeconds ?? 0.9) * quality.placeScale,

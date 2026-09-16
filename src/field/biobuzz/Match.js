@@ -1,3 +1,4 @@
+import { Referee } from './Referee.js';
 import {
   AUTO_SECONDS,
   FIELD_INNER_HALF,
@@ -49,6 +50,15 @@ export class Match {
    */
   constructor(opts) {
     this.field = opts.field;
+    /**
+     * The officiating half of the MATCH.
+     *
+     * A MATCH is a clock, a score and a REFEREE, and leaving the third one out
+     * was the biggest gap in the scoring: a MAJOR FOUL is 20 points, which is
+     * ten elements in a CELL, so a MATCH without fouls is not the same game.
+     * See `rules.js` for which rules it can call and which it cannot.
+     */
+    this.referee = new Referee({ field: opts.field });
     this.autoSeconds = opts.autoSeconds ?? AUTO_SECONDS;
     this.transitionSeconds = opts.transitionSeconds ?? TRANSITION_SECONDS;
     this.teleopSeconds = opts.teleopSeconds ?? TELEOP_SECONDS;
@@ -63,11 +73,25 @@ export class Match {
   }
 
   /**
-   * @param {{robot: any, alliance: 'red'|'blue', id?: string}} entry
+   * @param {{robot: any, alliance: 'red'|'blue', id?: string,
+   *          driverControlled?: boolean}} entry
    */
   addRobot(entry) {
     const id = entry.id ?? `${entry.alliance}${this.entries.length + 1}`;
-    this.entries.push({ robot: entry.robot, alliance: entry.alliance, id });
+    this.entries.push({
+      robot: entry.robot,
+      alliance: entry.alliance,
+      id,
+      driverControlled: Boolean(entry.driverControlled),
+      /**
+       * Identity for the rules, handed to the ball physics and to this ROBOT's
+       * mechanisms so that everything they touch carries it. One live object
+       * per ROBOT, mutated in place -- `Referee` sets `contested` on it each
+       * step, and that is how G405's ROBOT-to-ROBOT exemption reaches a ball
+       * squeezed out of the FIELD between two machines.
+       */
+      meta: { id, alliance: entry.alliance, contested: false },
+    });
     this._robotState ??= new Map();
     this._robotState.set(id, {
       left: false,
@@ -76,6 +100,11 @@ export class Match {
       parkedTeleop: false,
     });
     return id;
+  }
+
+  /** The rules identity for a ROBOT, to hand to its mechanisms. */
+  robotMeta(id) {
+    return this.entries.find((e) => e.id === id)?.meta ?? null;
   }
 
   reset() {
@@ -108,6 +137,7 @@ export class Match {
     }
 
     this.field.setup();
+    this.referee.reset();
     return this;
   }
 
@@ -205,15 +235,26 @@ export class Match {
    * @param {{bodies?: any[]}} [opts] passed through to the field
    */
   update(dt, opts = {}) {
+    // Officiate first, then step. The REFEREE works out which ROBOTS are
+    // touching each other and writes it onto the body metadata, which the ball
+    // physics is about to stamp onto every element it moves -- so provenance is
+    // recorded as the contact happens rather than reconstructed afterwards.
+    this.referee.observe(dt, {
+      phase: this.phase,
+      entries: this.entries,
+      earlyFlowerNectar: this.earlyFlowerNectar,
+    });
+    const bodies = this._withMeta(opts.bodies);
+
     if (!this.running) {
-      this.field.update(dt, { inAuto: false, bodies: opts.bodies });
+      this.field.update(dt, { inAuto: false, bodies });
       return this;
     }
 
     this.phaseClock += dt;
     this.matchClock += dt;
 
-    const tipped = this.field.update(dt, { inAuto: this.inAuto, bodies: opts.bodies });
+    const tipped = this.field.update(dt, { inAuto: this.inAuto, bodies });
     for (const alliance of ['red', 'blue']) {
       if (!tipped[alliance]) continue;
       this.tips[alliance] += tipped[alliance];
@@ -236,6 +277,22 @@ export class Match {
       if (this.running) this.phaseClock = overflow;
     }
     return this;
+  }
+
+  /**
+   * Tag each body the caller handed us with the ROBOT it belongs to.
+   *
+   * The caller builds the list from its own participants, which know about
+   * intakes and AI and nothing about the rules, so the join happens here --
+   * where the ALLIANCE each ROBOT is playing for is actually known.
+   */
+  _withMeta(bodies) {
+    if (!bodies) return bodies;
+    return bodies.map((entry) => {
+      if (entry.meta) return entry;
+      const match = this.entries.find((e) => e.robot?.body === entry.body);
+      return match ? { ...entry, meta: match.meta } : entry;
+    });
   }
 
   _advancePhase() {
@@ -374,7 +431,17 @@ export class Match {
         this.autoTips[alliance] * POINTS.hiveTipAuto +
         (this.tips[alliance] - this.autoTips[alliance]) * POINTS.hiveTipTeleop;
 
+      // Table 10-4: a foul is "a credit of N points towards the opponent's
+      // MATCH point total", so what lands on this side is what the *other*
+      // side did. It is a credit and not a deduction, which is why it is added
+      // here rather than taken off their total.
+      const penalty = this.referee.penaltyPoints(alliance);
+      const committed = this.referee.fouls[alliance];
+
       out[alliance] = {
+        penalty,
+        fouls: { ...committed },
+        cards: [...this.referee.cards[alliance]],
         leave: r.leave,
         parkAuto: r.parkAuto,
         parkTeleop: r.parkTeleop,
@@ -386,7 +453,8 @@ export class Match {
         bottomNectar: f.bottomNectar,
         garden: f.garden,
         earlyFlowerNectar: this.earlyFlowerNectar[alliance],
-        total: r.total + tipPoints + f.cell + f.flower + f.bottomNectar + f.garden,
+        total:
+          r.total + tipPoints + f.cell + f.flower + f.bottomNectar + f.garden + penalty,
       };
     }
 
@@ -394,6 +462,8 @@ export class Match {
     for (const alliance of ['red', 'blue']) {
       const side = out[alliance];
       const other = alliance === 'red' ? out.blue : out.red;
+      // SWARM POINTS are the ROBOT achievements only -- fouls the other side
+      // committed are not something this ALLIANCE'S ROBOTS did.
       const swarmPoints = side.leave + side.parkAuto + side.parkTeleop;
       side.swarmPoints = swarmPoints;
       side.rp = {
@@ -479,6 +549,9 @@ export class Match {
         blue: this.field.nectarAvailable('blue'),
       },
       scoringVolume: { bottom: FLOWER_SCORING_BOTTOM, top: FLOWER_SCORING_TOP },
+      pendingReturns: this.field.pendingReturns ?? 0,
+      citations: this.referee.recent(),
+      fouls: this.referee.summary().fouls,
     };
   }
 }

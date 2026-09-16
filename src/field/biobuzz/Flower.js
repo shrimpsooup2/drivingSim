@@ -239,6 +239,9 @@ export class Flower {
     if (u * u + v * v > 1) return false;
 
     if (this.restHeightFor(ball.radius) === null) return false;
+    // Landing in a FLOWER is contact with something that is not a ROBOT, so it
+    // closes G409's catch window the same way the TILES do.
+    ball.touchedStructure();
     this.stack.push(ball);
     ball.attachTo('flower', this);
     this._restack();

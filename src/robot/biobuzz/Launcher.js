@@ -140,6 +140,8 @@ export class Launcher extends Subsystem {
     /** Wheel speed, rad/s. */
     this.omega = 0;
     this.spinning = false;
+    /** Duty the speed controller asked for last substep. */
+    this.duty = 0;
     this.current = 0;
     this.shots = 0;
     /** Exit speed of the most recent shot, m/s. Useful telemetry. */
@@ -315,6 +317,7 @@ export class Launcher extends Subsystem {
     } else {
       this.controller.reset();
     }
+    this.duty = duty;
 
     // The motor sees the wheel through the ratio: it spins slower by 1/ratio
     // and its torque is multiplied by the ratio on the way back.
@@ -334,6 +337,17 @@ export class Launcher extends Subsystem {
       this._tryShoot();
     }
     return this.current;
+  }
+
+  /**
+   * G403/G404: a wheel commanded to hold a speed is powered movement, whether
+   * or not it has got there. Reported as the duty the controller is asking for,
+   * with a floor while spinning so a wheel sitting exactly on target still
+   * reads as commanded.
+   */
+  get commandedEffort() {
+    if (!this.spinning) return 0;
+    return Math.max(0.1, Math.abs(this.duty ?? 0));
   }
 
   /**
@@ -394,6 +408,11 @@ export class Launcher extends Subsystem {
       vy + sin * horizontal,
       vertical,
     );
+    // A LAUNCHED element is a scoring attempt, and G405 exempts those by name
+    // from the out-of-bounds foul -- so a shot that sails over the wall costs
+    // you the element and nothing else. Stamped after `release`, so what the
+    // element carries is the shot rather than the intake that held it.
+    ball.touch('launch', this.owner, this.ballWorld?.clock ?? 0);
     ball.setPosition(
       x + cos * this.exitOffset,
       y + sin * this.exitOffset,

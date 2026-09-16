@@ -73,6 +73,14 @@ export class BallWorld {
     this._grid = new Map();
     this._cellSize = 0.12;
     this.settled = false;
+    /**
+     * Seconds of simulated time this world has stepped.
+     *
+     * Only the rules need it: a provenance stamp with no time on it cannot
+     * tell "this ROBOT shoved it over the wall" from "this ROBOT brushed it
+     * ten seconds before it rolled out on its own".
+     */
+    this.clock = 0;
   }
 
   /** @param {Ball} ball */
@@ -112,9 +120,18 @@ export class BallWorld {
     this.colliders.push(fn);
   }
 
-  /** Register a robot so balls collide with it. */
-  addBody(body, halfLength, halfWidth, height) {
-    this.bodies.push({ body, halfLength, halfWidth, height });
+  /**
+   * Register a robot so balls collide with it.
+   *
+   * `meta` is who that body belongs to -- `{id, alliance, contested}` -- and is
+   * stamped onto every element the body touches. It is optional because the
+   * drills and the free-driving mode have no MATCH and nothing to attribute to,
+   * and a ball world with no metadata simply records no provenance.
+   *
+   * @param {{id?: string, alliance?: string, contested?: boolean}} [meta]
+   */
+  addBody(body, halfLength, halfWidth, height, meta = undefined) {
+    this.bodies.push({ body, halfLength, halfWidth, height, meta });
   }
 
   clearBodies() {
@@ -130,6 +147,7 @@ export class BallWorld {
    * @param {number} dt seconds
    */
   step(dt) {
+    this.clock += dt;
     // Containers get first refusal: a ball being swallowed by an intake or
     // dropping into a FLOWER should stop doing free physics the same step,
     // not after another bounce.
@@ -168,7 +186,7 @@ export class BallWorld {
     for (const entry of this.bodies) {
       for (const ball of this.balls) {
         if (!ball.free || ball.outOfBounds) continue;
-        resolveBallVsBox(
+        const hit = resolveBallVsBox(
           ball,
           entry.body,
           entry.halfLength,
@@ -176,6 +194,10 @@ export class BallWorld {
           entry.height,
           this.bodyFriction,
         );
+        // Provenance for G405 and G409. Stamped from the contact itself rather
+        // than inferred later, because "which ROBOT put this element over the
+        // wall" is not recoverable from where it ended up.
+        if (hit && entry.meta) ball.touch('contact', entry.meta, this.clock);
       }
     }
 
@@ -305,6 +327,11 @@ export class BallWorld {
       return;
     }
     ball.z = ball.radius;
+    // G409's window closes on the first contact with anything that is not a
+    // ROBOT, and the TILES are what the rule actually has in mind: "the intent
+    // of this rule is for the POLLEN and NECTAR that spills out of a TIPPED
+    // HIVE to hit the TILE floor before it is collected".
+    ball.touchedStructure();
     resolveSphereContact(ball, 0, 0, 1, {
       restitution: this.floorRestitution,
       friction: this.floorFriction,
@@ -328,16 +355,20 @@ export class BallWorld {
     const wall = { restitution: ball.restitution, friction: this.wallFriction };
     if (ball.x < -limit) {
       ball.x = -limit;
+      ball.touchedStructure();
       resolveSphereContact(ball, 1, 0, 0, wall);
     } else if (ball.x > limit) {
       ball.x = limit;
+      ball.touchedStructure();
       resolveSphereContact(ball, -1, 0, 0, wall);
     }
     if (ball.y < -limit) {
       ball.y = -limit;
+      ball.touchedStructure();
       resolveSphereContact(ball, 0, 1, 0, wall);
     } else if (ball.y > limit) {
       ball.y = limit;
+      ball.touchedStructure();
       resolveSphereContact(ball, 0, -1, 0, wall);
     }
   }
@@ -372,7 +403,11 @@ export class BallWorld {
             for (const other of bucket) {
               // Each pair is visited twice; the id comparison keeps it to once.
               if (other === ball || other.id <= ball.id) continue;
-              resolveBallPair(ball, other, this.ballFriction);
+              // Another element counts as "anything else" for G409.
+              if (resolveBallPair(ball, other, this.ballFriction)) {
+                ball.touchedStructure();
+                other.touchedStructure();
+              }
             }
           }
         }

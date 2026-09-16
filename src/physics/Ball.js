@@ -95,6 +95,76 @@ export class Ball {
     this.outOfBounds = false;
     /** Set while the ball is resting on the tiles, for rolling resistance. */
     this.onFloor = false;
+
+    /**
+     * The last ROBOT to touch this element, and how.
+     *
+     * Provenance, not physics -- G405 turns entirely on it. "A ROBOT may not
+     * *deliberately* eject a SCORING ELEMENT from the FIELD", and the rule then
+     * exempts elements that leave "during scoring attempts or as the result of
+     * ROBOT-to-ROBOT interactions". So the same POLLEN sailing over the same
+     * wall is a 20-point foul or nothing at all depending on which of three
+     * things put it there, and the only place that can be known is where the
+     * contact happened.
+     *
+     * `kind` is `'launch'` for a shot, `'eject'` for an intake spitting it out,
+     * `'carry'` for one let go of, and `'contact'` for a plain collision.
+     * `contested` marks a contact made while that ROBOT was itself touching an
+     * opponent, which is the ROBOT-to-ROBOT exemption.
+     *
+     * @type {{id: string, alliance: string, kind: string, contested: boolean,
+     *         t: number}|null}
+     */
+    this.lastTouch = null;
+    /**
+     * Set while this element is falling out of a TIPPING HIVE and has touched
+     * nothing but a ROBOT since (G409). Cleared by the first contact with
+     * anything else -- the TILES, a wall, the frame, another element.
+     * @type {{alliance: string, t: number}|null}
+     */
+    this.fromTip = null;
+    /**
+     * A G409 catch waiting to be reported: a ROBOT touched this element while
+     * `fromTip` was still set. The REFEREE takes it and clears it.
+     * @type {{id: string, alliance: string}|null}
+     */
+    this.caughtFromTip = null;
+    /** FIELD clock when this element left the FIELD, or null. @type {number|null} */
+    this.leftFieldAt = null;
+  }
+
+  /**
+   * Record a ROBOT touching this element.
+   *
+   * Also resolves G409 here rather than in the caller: a ROBOT contact while
+   * `fromTip` is set *is* the catch, and this is the one place that sees both.
+   *
+   * @param {string} kind `'launch'`, `'eject'`, `'carry'` or `'contact'`
+   * @param {{id?: string, alliance?: string, contested?: boolean}|null} source
+   * @param {number} [t] field clock, for staleness
+   */
+  touch(kind, source, t = 0) {
+    if (!source?.id) return this;
+    this.lastTouch = {
+      id: source.id,
+      alliance: source.alliance ?? 'neutral',
+      kind,
+      contested: Boolean(source.contested),
+      t,
+    };
+    if (this.fromTip && !this.caughtFromTip) {
+      this.caughtFromTip = { id: source.id, alliance: source.alliance ?? 'neutral' };
+    }
+    return this;
+  }
+
+  /**
+   * Note that this element has touched something that is not a ROBOT, which is
+   * what ends the G409 window.
+   */
+  touchedStructure() {
+    this.fromTip = null;
+    return this;
   }
 
   get free() {

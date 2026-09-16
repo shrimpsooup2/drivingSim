@@ -20,6 +20,30 @@ export class Subsystem {
     this.name = opts.name ?? 'subsystem';
     this.robot = /** @type {import('./Robot.js').Robot|null} */ (null);
     this.enabled = true;
+    /**
+     * Who this mechanism belongs to, for the rules: `{id, alliance, contested}`.
+     *
+     * A `Robot` has no ALLIANCE of its own -- it is the same machine whichever
+     * side of the FIELD it is staged on -- so the identity a rule needs comes
+     * from the MATCH, which assigns it. Null outside a MATCH, in which case no
+     * provenance is recorded and nothing is officiated, which is right for the
+     * drills and free driving.
+     * @type {{id: string, alliance: string, contested?: boolean}|null}
+     */
+    this.owner = null;
+  }
+
+  /**
+   * How hard this mechanism is being commanded, 0 to 1.
+   *
+   * Exists for G403 and G404 -- "ROBOTS are motionless between AUTO and TELEOP"
+   * and "at the end of TELEOP" -- which are about *powered* movement: the rule
+   * explicitly excuses motion "due to inertia, gravity, or de-energizing of
+   * actuators". So the test has to read the command, not the velocity, and each
+   * mechanism knows its own.
+   */
+  get commandedEffort() {
+    return 0;
   }
 
   /** Called once when the subsystem is attached to a robot. */
