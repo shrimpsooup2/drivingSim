@@ -16,6 +16,7 @@ const GRAVITY = 9.80665;
 export class BallWorld {
   /**
    * @param {{fieldSize: number, wallHeight: number, restitution?: number,
+   *          settleSpeed?: number,
    *          maxSpeed?: number}} opts
    */
   constructor(opts) {
@@ -26,6 +27,16 @@ export class BallWorld {
     this.wallHeight = opts.wallHeight;
     /** Tile bounce. Foam is dead, so a ball dropped on it barely returns. */
     this.floorRestitution = opts.restitution ?? 0.35;
+    /**
+     * Approach speed below which a floor contact stops instead of bouncing.
+     *
+     * A settling ball would otherwise chatter for ever at ever-smaller
+     * amplitudes. The caller sets it because the right threshold depends on
+     * how bouncy the surface is: the livelier the floor, the smaller the last
+     * visible bounce, and a threshold tuned for a dead floor cuts a live one
+     * off mid-sequence.
+     */
+    this.settleSpeed = opts.settleSpeed ?? 0.35;
     /**
      * Hard ceiling on a free element's speed, m/s. See `_capSpeed`: this is a
      * divergence backstop, set above anything a mechanism here can produce, not
@@ -339,7 +350,7 @@ export class BallWorld {
     resolveSphereContact(ball, 0, 0, 1, {
       restitution: this.floorRestitution,
       friction: this.floorFriction,
-      minBounce: 0.35,
+      minBounce: this.settleSpeed,
     });
     ball.onFloor = Math.abs(ball.vz) < 0.05;
   }

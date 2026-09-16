@@ -4,7 +4,12 @@ import { PIDF } from '../../math/PIDF.js';
 import { MOTOR_PRESETS } from '../../config/presets/motors.js';
 import { INCH, clamp } from '../../math/MathUtil.js';
 import { CELL_OPENING_HEIGHT } from '../../field/biobuzz/constants.js';
-import { POLLEN_MASS, POLLEN_RADIUS } from '../../field/biobuzz/constants.js';
+import {
+  NECTAR_MASS,
+  NECTAR_RADIUS,
+  POLLEN_MASS,
+  POLLEN_RADIUS,
+} from '../../field/biobuzz/constants.js';
 import {
   freeFlightSolution,
   integrateArc,
@@ -489,13 +494,41 @@ export class Launcher extends Subsystem {
   /**
    * Radius of an element of this mass, for the drag model.
    *
-   * Derived from the mass rather than passed in, because every caller already
-   * knows the mass and nobody wants to thread a radius through the aiming
-   * maths as well. The two elements are far enough apart (45 g at 1.4 in,
-   * 85 g at 1.81 in) that picking by mass is unambiguous.
+   * Derived from the mass rather than passed in, because every caller into the
+   * aiming maths already knows the mass and nobody wants to thread a radius
+   * through as well. The two elements are far enough apart -- 24.9 g at 1.4 in
+   * against 41.3 g at 1.81 in -- that picking by mass is unambiguous.
+   *
+   * The midpoint is computed from the two constants, not written out. It used
+   * to read `(POLLEN_MASS + 0.085) / 2`, and 0.085 was NECTAR's old estimated
+   * mass -- so correcting the masses would have left this splitting at the
+   * wrong place and quietly given every NECTAR a POLLEN's frontal area.
    */
   elementRadius(mass = POLLEN_MASS) {
-    return mass > (POLLEN_MASS + 0.085) / 2 ? 1.81 * INCH : POLLEN_RADIUS;
+    return mass > (POLLEN_MASS + NECTAR_MASS) / 2 ? NECTAR_RADIUS : POLLEN_RADIUS;
+  }
+
+  /**
+   * The element the next shot will actually use, or POLLEN if empty.
+   *
+   * `Intake.take()` shifts off the front of the magazine, so `held[0]` is the
+   * one that is about to go. Everything that predicts a shot reads this rather
+   * than assuming POLLEN: the guide used to draw a POLLEN arc while the robot
+   * held a NECTAR, which is a guide that is wrong exactly when it matters,
+   * because the two elements do not fly the same way.
+   *
+   * What differs between them is *not* drag. The real elements are
+   * drag-matched almost exactly -- the ballistic coefficient is area over
+   * mass, and 1.4 in at 24.9 g and 1.81 in at 41.3 g come out within 1 percent
+   * of each other. What differs is the flywheel: droop goes as the ball's
+   * inertia against the wheel's, so a NECTAR leaves about 2.4 percent slower
+   * at the same RPM, and range goes as the square of speed, so it lands about
+   * 5 percent short. At CELL range that is 7 cm against a 20 in opening.
+   */
+  get nextShot() {
+    const ball = this.intake?.held?.[0] ?? null;
+    if (!ball) return { mass: POLLEN_MASS, radius: POLLEN_RADIUS, kind: 'pollen' };
+    return { mass: ball.mass, radius: ball.radius, kind: ball.kind };
   }
 
   /** Exit speed a given wheel RPM would produce for an element of `mass`. */
@@ -688,11 +721,13 @@ export class Launcher extends Subsystem {
   /**
    * The arc a shot would actually fly from where the ROBOT is standing.
    *
-   * The ball world integrates flight under gravity alone -- a wiffle ball over
-   * three metres loses little enough to drag that modelling it would be a
-   * guess dressed as a number -- so the arc is an exact parabola and this
-   * closed form *is* the trajectory, not an approximation of it. Which is the
-   * point: a guide that disagrees with the physics teaches the wrong aim.
+   * Integrated, not solved, and with drag: at the real element masses air
+   * takes about 2.1 m/s^2 out of a shot at 6 m/s, which is a fifth of gravity
+   * acting for the whole flight, so a parabola would be visibly wrong. This
+   * runs the same gravity-then-drag-then-position sequence `BallWorld` does,
+   * at the same step, so the arc *is* the shot rather than an approximation of
+   * it -- which is the point: a guide that disagrees with the physics teaches
+   * the wrong aim.
    *
    * Two things make it worth drawing rather than computing in your head. The
    * launch velocity includes the ROBOT's own, so the arc visibly swings when
@@ -718,7 +753,8 @@ export class Launcher extends Subsystem {
    */
   trajectory(opts = {}) {
     if (!this.robot) return null;
-    const mass = opts.mass ?? POLLEN_MASS;
+    const next = this.nextShot;
+    const mass = opts.mass ?? next.mass;
     const angle = opts.angle ?? this.hoodAngle;
     const speed = opts.speed ?? this.exitSpeedFor(mass);
     const samples = Math.max(2, opts.samples ?? 48);
@@ -739,7 +775,10 @@ export class Launcher extends Subsystem {
     // the same gravity-then-drag-then-position sequence `BallWorld` does, at
     // the same step. So the guide is not an approximation of the shot, it is
     // the shot.
-    const radius = this.elementRadius(mass);
+    // The held element's own radius when that is what is being drawn, rather
+    // than one inferred from the mass -- same answer, but it means a caller
+    // that knows both cannot be second-guessed.
+    const radius = opts.radius ?? (opts.mass === undefined ? next.radius : this.elementRadius(mass));
     const arc = integrateArc(
       { x: ox, y: oy, z: oz, vx: vx0, vy: vy0, vz: vz0, mass, radius },
       { step: opts.step ?? 1 / 480, floor, maxTime: 6 },

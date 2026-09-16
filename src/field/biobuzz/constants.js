@@ -47,12 +47,58 @@ export const NECTAR_DIAMETER = 3.6 * INCH;
 export const NECTAR_PER_ALLIANCE = 8;
 
 /**
- * Ball masses are **not published**. These are estimates for Gopher ResisDent
- * polyethylene balls of the stated diameters, and they only matter for how
- * far a robot shoves a pile and how a launcher behaves, not for scoring.
+ * Element masses, from the AndyMark listing for the BIOBUZZ Scoring Elements:
+ * POLLEN 0.055 lb (24.9 g) at 2.80 in, NECTAR 0.091 lb (41.3 g) at 3.62 in.
+ *
+ * These replace estimates of 45 g and 85 g, which were roughly double, and the
+ * difference is not cosmetic. Drag deceleration is proportional to 1/m, so
+ * halving the mass *doubles* how much the air takes out of a shot -- a lighter
+ * ball is pushed around by air more, not less. And the flywheel droop term
+ * (`Launcher.droopFactor`) is a ratio of the wheel's inertia to the ball's, so
+ * a lighter ball leaves faster at the same RPM.
+ *
+ * The listing's NECTAR diameter of 3.62 in is also what the CAD says
+ * (`NECTAR_RADIUS` below is 1.81 in), which is the cross-check that makes the
+ * mass beside it worth trusting.
  */
-export const POLLEN_MASS = 0.045;
-export const NECTAR_MASS = 0.085;
+export const POLLEN_MASS = 0.0249;
+export const NECTAR_MASS = 0.0413;
+
+/**
+ * How much of an impact an element gives back, as a coefficient of
+ * restitution.
+ *
+ * Two numbers, because the FIELD is two materials. `TILE_RESTITUTION` is
+ * against the foam tiles, which deform and dissipate; `ELEMENT_RESTITUTION` is
+ * against everything rigid -- the polycarbonate perimeter, the HIVE's CELL
+ * plates, a FLOWER tube, and another element.
+ *
+ * These were 0.35 and 0.45, and at 0.35 an element dropped from a metre came
+ * back up 11 cm and was dead on the second bounce. That is a beanbag. A
+ * thin-walled perforated plastic ball is springy in itself and loses most of
+ * what it loses to the tile, so the tile number is the smaller of the two and
+ * still has to leave a visible bounce: 0.55 returns about 29 cm of a metre,
+ * which is what these balls do on a foam floor.
+ *
+ * Mass deliberately does not enter into it. Restitution is a property of the
+ * two materials, not of how heavy the ball is -- an ideal bounce returns the
+ * same *fraction* of the drop whatever the mass -- so correcting the masses
+ * above does nothing for the bounce, and correcting the bounce is this.
+ */
+export const TILE_RESTITUTION = 0.55;
+export const ELEMENT_RESTITUTION = 0.62;
+
+/**
+ * Below this approach speed a contact just stops, rather than bouncing.
+ *
+ * Without it a settling ball chatters against the floor for ever at
+ * ever-smaller amplitudes, burning substeps and visibly buzzing. It was 0.35
+ * m/s, which is the speed reached by a 6 mm drop -- fine when the restitution
+ * was 0.35 and bounces died anyway, too eager now that they do not: the last
+ * two or three bounces of a real ball are small and visible, and cutting them
+ * at 0.35 m/s made an element stop as though it had been caught.
+ */
+export const SETTLE_SPEED = 0.18;
 
 /** Section 9.6.1: frame is 49.46 in wide, 38.95 in deep, pivots 43.95 in up. */
 export const FRAME_WIDTH = 49.46 * INCH;

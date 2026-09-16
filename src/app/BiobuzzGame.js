@@ -392,6 +392,14 @@ export class BiobuzzGame {
   start() {
     this.reset();
     this._endedFor = 0;
+    /**
+     * Which MATCH this is, counting from one.
+     *
+     * The match-over screen needs it: without something that changes when a
+     * new MATCH begins, a screen the driver has dismissed would either stay
+     * dismissed for every MATCH after it or pop straight back up next frame.
+     */
+    this.matchNumber = (this.matchNumber ?? 0) + 1;
     // A new MATCH means the AUTO routine runs again, from the top. It stays
     // *compiled* -- running the same auto over and over is the whole activity,
     // and having to press Compile between goes would be absurd.
@@ -439,6 +447,22 @@ export class BiobuzzGame {
       this._endedFor = 0;
     }
     return this;
+  }
+
+  /**
+   * How long the MATCH has been over, in simulated seconds. Zero while one is
+   * running.
+   *
+   * The match-over screen reads this rather than keeping its own clock, so it
+   * cannot drift away from the auto-restart that is timed off the same number.
+   */
+  get endedFor() {
+    return this.match.phase === 'ended' ? this._endedFor : 0;
+  }
+
+  /** How long a finished MATCH sits before auto-restart picks it up. */
+  get restartDelay() {
+    return RESTART_DELAY;
   }
 
   /**
@@ -504,8 +528,14 @@ export class BiobuzzGame {
 
     if (mode !== 'solution') add('live', {});
     if (mode !== 'live') {
-      const solved = launcher.aimFor(this.field.hiveTarget(this.alliance));
-      if (solved) add('solution', { angle: solved.angle, speed: solved.speed });
+      // Solved for the element actually in the magazine. Solving for a POLLEN
+      // while the robot holds a NECTAR gives the driver an RPM that shoots
+      // short, which is worse than no guide at all.
+      const next = launcher.nextShot;
+      const solved = launcher.aimFor(this.field.hiveTarget(this.alliance), next.mass);
+      if (solved) {
+        add('solution', { angle: solved.angle, speed: solved.speed, mass: next.mass, radius: next.radius });
+      }
     }
     return arcs;
   }
@@ -559,6 +589,14 @@ export class BiobuzzGame {
         spinning: this.launcher.spinning,
         recovery: this.launcher.recovery,
         hoodDegrees: (this.launcher.hoodAngle * 180) / Math.PI,
+        /**
+         * What the next shot will be, because it changes where the arc goes.
+         * A NECTAR leaves the wheel about 2.4 percent slower than a POLLEN at
+         * the same RPM and lands about 5 percent short, so a driver who has
+         * just picked one up needs to know that before they wonder why a shot
+         * they had dialled in went low.
+         */
+        nextKind: this.launcher.nextShot.kind,
       },
       /**
        * Whether the robot is moving enough to throw a shot off. The opening is

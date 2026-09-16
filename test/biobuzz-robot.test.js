@@ -256,25 +256,40 @@ test('flywheel inertia sets the per-shot droop, which is why teams add it', () =
   // Each shot takes angular momentum out of the wheel, and the fraction it
   // loses is J / (J + k*m*R^2). More inertia means a smaller bite, so a heavy
   // wheel gives more repeatable shots -- paid for in spin-up time.
+  // Measured on the *wheel*, not on the ball.
+  //
+  // This used to compare `launcher.exitSpeed` before the shot against
+  // `lastExitSpeed` after it, and those two are the same expression -- both
+  // are `k * R * J * omega / (J + k * m * R^2)`, written in a different order.
+  // So it was asserting the sign of a floating-point rounding difference, and
+  // it passed for two years because that rounding happened to come out
+  // positive at the old masses. Correcting them made it come out zero, which
+  // is how a test that never measured anything got found.
+  //
+  // What the droop actually is: the wheel's own speed loss when the ball takes
+  // angular momentum away.
   const measure = (inertia) => {
     const { launcher } = withLauncher({ inertia });
     launcher.spinning = true;
     spin(launcher, 20);
-    const before = launcher.exitSpeed;
+    const before = launcher.omega;
     launcher.launch(pollen());
-    return { drop: 1 - launcher.lastExitSpeed / before, launcher };
+    return { drop: 1 - launcher.omega / before, launcher };
   };
 
   const light = measure(8.3e-4);
   const heavy = measure(8.3e-4 * 4);
 
-  assert.ok(light.drop > 0, 'a shot always costs the wheel something');
+  assert.ok(
+    light.drop > 0.01,
+    `a shot has to cost the wheel real speed, got ${(light.drop * 100).toFixed(3)}%`,
+  );
   assert.ok(
     heavy.drop < light.drop / 2,
     `four times the inertia should bite far less: ${(heavy.drop * 100).toFixed(1)}% vs ${(light.drop * 100).toFixed(1)}%`,
   );
 
-  // NECTAR is nearly twice the mass of POLLEN, so it takes nearly twice as much.
+  // NECTAR is two thirds again the mass of POLLEN, so it takes that much more.
   const { launcher } = withLauncher();
   launcher.spinning = true;
   spin(launcher, 20);
@@ -482,14 +497,20 @@ test('a CELL only accepts a descending ball, so close shots need a steep hood', 
   // than the bare threshold is where a shot actually exists. See
   // `Launcher.apexMargin`: without it a perfectly aimed shot went in 55% of
   // the time instead of 62%.
+  //
+  // Where exactly that lands depends on the drag, and correcting the element
+  // masses moved it: air now takes about twice as much out of a shot, which
+  // brings the apex forward, so a descending arrival exists at a shallower
+  // hood than it used to. The boundary is between +0.01 and +0.02 rad past the
+  // bare geometric threshold, where it was between +0.02 and +0.06.
   const needed = Math.atan((2 * flat.rise) / flat.range);
   assert.equal(launcher.solutionFor(target, needed - 0.02).descending, false);
   assert.equal(
-    launcher.solutionFor(target, needed + 0.02).descending,
+    launcher.solutionFor(target, needed + 0.01).descending,
     false,
     'peaking on the target is not enough: the lip reaches toward the shooter',
   );
-  const clear = launcher.solutionFor(target, needed + 0.06);
+  const clear = launcher.solutionFor(target, needed + 0.02);
   assert.equal(clear.descending, true);
   assert.ok(
     clear.range - clear.apexRange >= launcher.apexMargin,
@@ -738,4 +759,87 @@ test('a FLOWER-filling intake does not empty the FLOWER it is filling', () => {
     field.ballWorld.step(1 / 200);
   }
   assert.ok(flower.stack.length < before, 'and a CELL robot may take one from the bottom');
+});
+
+test('the trajectory follows the element actually in the magazine', () => {
+  // The guide used to assume POLLEN whatever the robot held, which is a guide
+  // that is wrong exactly when it matters.
+  const field = new Field(new Config().values);
+  const bb = new BiobuzzField({ field });
+  const { robot, launcher } = withLauncher();
+  const intake = robot.addSubsystem(new Intake());
+  launcher.intake = intake;
+  const target = bb.hiveTarget('red');
+  robot.reset(target.x, target.y - STANDOFF, Math.PI / 2);
+  launcher.spinning = true;
+  spin(launcher, 6);
+
+  const arcFor = (ball) => {
+    intake.held.length = 0;
+    if (ball) intake.held.push(ball);
+    const next = launcher.nextShot;
+    const arc = launcher.trajectory({});
+    const last = arc.points[arc.points.length - 1];
+    return {
+      next,
+      range: Math.hypot(last.x - arc.origin.x, last.y - arc.origin.y),
+      flight: arc.flightTime,
+    };
+  };
+
+  const empty = arcFor(null);
+  assert.equal(empty.next.kind, 'pollen', 'an empty magazine assumes a POLLEN');
+
+  const withPollen = arcFor(pollen());
+  assert.equal(withPollen.next.kind, 'pollen');
+  assert.equal(withPollen.next.mass, POLLEN_MASS);
+  assert.ok(
+    Math.abs(withPollen.range - empty.range) < 1e-9,
+    'holding a POLLEN is the same as the default',
+  );
+
+  const withNectar = arcFor(nectar());
+  assert.equal(withNectar.next.kind, 'nectar');
+  assert.equal(withNectar.next.mass, NECTAR_MASS);
+  assert.equal(withNectar.next.radius, NECTAR_RADIUS, 'and its own radius, for the drag area');
+
+  // A NECTAR is two thirds again the mass, so the wheel's droop bites harder
+  // and it leaves slower; range goes as the square of speed. About 4 percent
+  // shorter, which is roughly 14 cm at CELL range -- a quarter of a 20 in
+  // opening, so it is the difference between the middle and the lip.
+  const shortfall = 1 - withNectar.range / withPollen.range;
+  assert.ok(
+    shortfall > 0.02 && shortfall < 0.08,
+    `a NECTAR should land a few percent short, got ${(shortfall * 100).toFixed(1)} percent ` +
+      `(${withNectar.range.toFixed(3)} m vs ${withPollen.range.toFixed(3)} m)`,
+  );
+
+  // The front of the magazine is what fires, so that is what is drawn -- not
+  // whatever happens to be deepest in it.
+  intake.held.length = 0;
+  intake.held.push(nectar(), pollen());
+  assert.equal(launcher.nextShot.kind, 'nectar', 'the front of the queue is the next shot');
+});
+
+test('a NECTAR needs a different solution from a POLLEN at the same target', () => {
+  const field = new Field(new Config().values);
+  const bb = new BiobuzzField({ field });
+  const { robot, launcher } = withLauncher();
+  const target = bb.hiveTarget('red');
+  robot.reset(target.x, target.y - STANDOFF, Math.PI / 2);
+
+  const forPollen = launcher.aimFor(target, POLLEN_MASS);
+  const forNectar = launcher.aimFor(target, NECTAR_MASS);
+  assert.ok(forPollen && forNectar, 'both elements have a shot from here');
+
+  // Same geometry, so a similar hood; but the heavier element needs the wheel
+  // turning faster to leave at the same speed.
+  assert.ok(
+    forNectar.rpm > forPollen.rpm,
+    `a NECTAR should need more RPM: ${forNectar.rpm.toFixed(0)} vs ${forPollen.rpm.toFixed(0)}`,
+  );
+  assert.ok(
+    forNectar.rpm < forPollen.rpm * 1.1,
+    'but not dramatically more -- it is the droop, not the drag',
+  );
 });

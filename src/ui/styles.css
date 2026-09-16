@@ -309,6 +309,75 @@ select { width: 100%; }
   .graphs { display: none; }
 }
 
+/* ---------- Match over ---------- */
+
+/*
+ * Above the other overlays, because it is the one that is not a panel the
+ * driver opened -- it arrives on its own at the buzzer, and anything drawn on
+ * top of it would look like a rendering bug.
+ */
+.match-over { z-index: 30; }
+.match-over-card { max-width: 460px; text-align: center; }
+
+.match-over-headline {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.22em;
+  color: var(--muted);
+}
+.match-over-headline[data-result='win'] { color: #47d18a; }
+.match-over-headline[data-result='loss'] { color: #ff9a95; }
+
+.match-over-score {
+  font-family: var(--mono);
+  font-size: 46px;
+  line-height: 1.1;
+  margin: 6px 0 14px;
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+}
+.match-over-red { color: #e2564f; }
+.match-over-blue { color: #5a8cf0; }
+.match-over-dash { color: var(--muted); }
+
+.match-over-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.match-over-table th {
+  font-weight: 400;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  padding-bottom: 4px;
+}
+.match-over-table td { padding: 2px 0; }
+.match-over-table td.label { text-align: left; opacity: 0.55; }
+.match-over-table td:not(.label) { width: 3.5em; text-align: right; }
+.match-over-table th:not(:first-child) { width: 3.5em; text-align: right; }
+
+.match-over-rp {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--accent-2);
+  margin-top: 12px;
+}
+.match-over-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.match-over-countdown {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 12px;
+}
+
 /* ---------- Multiplayer ---------- */
 
 /*

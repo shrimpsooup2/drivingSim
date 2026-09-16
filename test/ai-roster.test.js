@@ -408,7 +408,11 @@ test('a catapult is an energy source, so mass matters far more than it does to a
     Math.abs(nectar / pollen - Math.sqrt(POLLEN_MASS / NECTAR_MASS)) < 1e-12,
     'speed should go as one over the square root of mass',
   );
-  assert.ok(nectar < pollen * 0.75, `a NECTAR leaves at ${nectar.toFixed(2)} vs ${pollen.toFixed(2)}`);
+  // sqrt(24.9/41.3) = 0.777, so a catapult throws a NECTAR about a fifth
+  // slower. That is the whole difference between the two mechanisms: a
+  // catapult delivers a fixed amount of energy and the ball's mass decides the
+  // speed, where a flywheel delivers a speed and the mass barely enters.
+  assert.ok(nectar < pollen * 0.8, `a NECTAR leaves at ${nectar.toFixed(2)} vs ${pollen.toFixed(2)}`);
 
   // A flywheel barely notices, because it is a speed source and the mass only
   // shows up in the droop.

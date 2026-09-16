@@ -7,6 +7,7 @@ import { ParamPanel } from '../ui/ParamPanel.js';
 import { ChallengePanel } from '../ui/ChallengePanel.js';
 import { AutoPanel } from '../ui/AutoPanel.js';
 import { NetPanel } from '../ui/NetPanel.js';
+import { MatchOverPanel } from '../ui/MatchOverPanel.js';
 import { InputManager } from '../input/InputManager.js';
 import { Overlay2d } from '../render/Overlay2d.js';
 import { defaultConfig } from '../config/schema.js';
@@ -57,6 +58,9 @@ export class App {
     this.drills = new ChallengePanel(this.viewport, this.sim.challenges);
     this.auto = new AutoPanel(this.viewport, this.sim);
     this.net = new NetPanel(this.viewport, this.sim);
+    this.matchOver = new MatchOverPanel(this.viewport, {
+      onRestart: () => this.sim.game?.start(),
+    });
 
     /** Schema defaults, so a camera can be reset to its as-shipped framing. */
     this._defaultView = defaultConfig().view;
@@ -206,6 +210,7 @@ export class App {
       this.drills.toggle(false);
       this.auto.toggle(false);
       this.net.toggle(false);
+      this.matchOver.dismiss();
     });
 
     // Field centric and the heading reset are deliberately not here. They are
@@ -340,6 +345,10 @@ export class App {
       this.hud.setVisible(view.showHud, view.showGraphs);
       if (view.showHud || view.showGraphs) this.hud.update(this.sim, dt);
       this.matchPanel.update(view.showHud ? this.sim.game : null, this.input.activeSource);
+      // After `view` exists, and gated the same way the match panel is: with
+      // the HUD off the view is deliberately clean, and a full-screen result
+      // card is the last thing that belongs over it.
+      this.matchOver.update(view.showHud ? this.sim.game : null);
     } catch (err) {
       this.running = false;
       console.error('[App] frame failed:', err);

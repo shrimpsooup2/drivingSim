@@ -3,7 +3,15 @@ import assert from 'node:assert/strict';
 import { BallWorld } from '../src/physics/BallWorld.js';
 import { Ball } from '../src/physics/Ball.js';
 import { RigidBody2d } from '../src/physics/RigidBody2d.js';
-import { POLLEN_MASS, POLLEN_RADIUS } from '../src/field/biobuzz/constants.js';
+import {
+  ELEMENT_RESTITUTION,
+  NECTAR_MASS,
+  NECTAR_RADIUS,
+  POLLEN_MASS,
+  POLLEN_RADIUS,
+  SETTLE_SPEED,
+  TILE_RESTITUTION,
+} from '../src/field/biobuzz/constants.js';
 
 const SIZE = 3.6;
 const HALF = SIZE / 2;
@@ -269,9 +277,17 @@ test('drag costs a real fraction of the range of a shot', () => {
   );
 });
 
-test('a NECTAR is less affected by drag than a POLLEN', () => {
-  // Heavier for its frontal area, so the ballistics differ between the two
-  // element types -- one more reason a shot has to be re-aimed between them.
+test('the two elements are drag-matched, so drag is not what separates them', () => {
+  // This test used to assert the opposite, on estimated masses of 45 g and
+  // 85 g: a NECTAR was heavier for its frontal area and so about a tenth less
+  // affected. At the real masses that difference disappears.
+  //
+  // The ballistic coefficient is area over mass. A POLLEN is 1.4 in at 24.9 g
+  // and a NECTAR is 1.81 in at 41.3 g, and (1.81/1.4)^2 = 1.67 against a mass
+  // ratio of 1.66 -- so the two come out within one percent of each other.
+  // Whether that is deliberate on AndyMark's part or a coincidence of moulding
+  // two sizes in the same wall thickness, it is worth knowing: you do not
+  // re-aim between element types because of the air.
   const decel = (radius, mass) => {
     const w = world();
     const ball = new Ball({ id: 'x', kind: 'pollen', radius, mass });
@@ -283,22 +299,28 @@ test('a NECTAR is less affected by drag than a POLLEN', () => {
     return (before - ball.vx) * 2000;
   };
   const pollenDecel = decel(POLLEN_RADIUS, POLLEN_MASS);
-  const nectarDecel = decel(1.81 * 0.0254, 0.085);
-  // At 6 m/s: 0.5 * 1.204 * 0.6 * pi * 0.0356^2 * 36 / 0.045 = 1.15 m/s^2,
-  // which is a ninth of gravity and acts for the whole flight.
+  const nectarDecel = decel(NECTAR_RADIUS, NECTAR_MASS);
+
+  // At 6 m/s: 0.5 * 1.204 * 0.6 * pi * 0.0356^2 * 36 / 0.0249 = 2.07 m/s^2,
+  // which is a fifth of gravity and acts for the whole flight. It was 1.15
+  // when POLLEN was thought to weigh 45 g -- drag deceleration goes as 1/m, so
+  // halving the mass doubles it, and a lighter ball is pushed about by the air
+  // *more*, not less.
   assert.ok(
-    pollenDecel > 1 && pollenDecel < 1.4,
-    `POLLEN decelerates at ${pollenDecel.toFixed(2)} m/s^2, expected about 1.15`,
+    pollenDecel > 1.9 && pollenDecel < 2.25,
+    `POLLEN decelerates at ${pollenDecel.toFixed(2)} m/s^2, expected about 2.07`,
   );
-  // The comparison is `r^2 / m`, and a NECTAR is 1.81 in at 85 g against a
-  // POLLEN's 1.4 in at 45 g -- so it is less affected, but only by about a
-  // tenth. Worth knowing precisely rather than assuming: it is a small,
-  // consistent bias between the two element types, not a large one.
+
   const ratio = nectarDecel / pollenDecel;
   assert.ok(
-    ratio > 0.8 && ratio < 0.95,
-    `a NECTAR should decelerate about a tenth less, got ${(ratio * 100).toFixed(0)} percent of the POLLEN's ${pollenDecel.toFixed(2)}`,
+    ratio > 0.97 && ratio < 1.03,
+    `the two should be within a few percent, got ${(ratio * 100).toFixed(1)} percent`,
   );
+
+  // What *does* separate them is the flywheel, and that belongs to the
+  // launcher rather than the air: droop goes as the ball's inertia against the
+  // wheel's, so a NECTAR leaves slower at the same RPM. Asserted in
+  // `biobuzz-robot.test.js`; named here so the pair is findable.
 });
 
 test('a ball that lands skidding scrubs into a roll', () => {
@@ -447,4 +469,87 @@ test('a landing element ends up turned, because the floor spun it up', () => {
     Math.abs(ball.ow) < 0.999,
     'and the orientation followed it, so the perforations turn with the ball',
   );
+});
+
+test('an element bounces like a hollow plastic ball, not like a beanbag', () => {
+  // The complaint this comes from: elements "seem too heavy and they just
+  // drop". They did. At the old floor restitution of 0.35 a metre drop came
+  // back 11 cm and was dead on the second bounce.
+  //
+  // Note that the masses have nothing to do with it. Restitution is a property
+  // of the two materials, so an ideal bounce returns the same *fraction* of
+  // the drop whatever the ball weighs -- which is why correcting the masses
+  // (they were about double) did not change the bounce at all, and this is a
+  // separate fix.
+  const drop = (mass, radius) => {
+    const w = new BallWorld({
+      fieldSize: 3.6,
+      wallHeight: 0.29,
+      restitution: TILE_RESTITUTION,
+      settleSpeed: SETTLE_SPEED,
+    });
+    const ball = new Ball({ id: 'b', kind: 'pollen', mass, radius, restitution: ELEMENT_RESTITUTION });
+    w.add(ball);
+    ball.setPosition(0, 0, 1);
+    ball.stop();
+
+    const peaks = [];
+    let lastVz = 0;
+    let settled = null;
+    for (let i = 0; i < 2000 * 8; i++) {
+      w.step(1 / 2000);
+      if (lastVz > 0 && ball.vz <= 0 && ball.z > radius + 0.002) peaks.push(ball.z - radius);
+      lastVz = ball.vz;
+      if (settled === null && Math.abs(ball.vz) < 1e-4 && ball.z <= radius + 1e-4) {
+        settled = i / 2000;
+      }
+    }
+    return { peaks, settled, height: 1 - radius, restZ: ball.z, radius };
+  };
+
+  for (const [label, mass, radius] of [
+    ['POLLEN', POLLEN_MASS, POLLEN_RADIUS],
+    ['NECTAR', NECTAR_MASS, NECTAR_RADIUS],
+  ]) {
+    const r = drop(mass, radius);
+    const cor = Math.sqrt(r.peaks[0] / r.height);
+
+    assert.ok(
+      r.peaks[0] > 0.2 && r.peaks[0] < 0.4,
+      `${label} should come back about 29 cm of a metre, got ${(r.peaks[0] * 100).toFixed(1)} cm`,
+    );
+    assert.ok(
+      cor > 0.48 && cor < TILE_RESTITUTION + 0.01,
+      `${label} effective COR ${cor.toFixed(2)}, against a configured ${TILE_RESTITUTION}`,
+    );
+    // Drag takes a little out of the rebound, so the measured COR should come
+    // in just *under* the configured one rather than matching it exactly.
+    assert.ok(cor < TILE_RESTITUTION, `${label} should lose a little to the air, got ${cor.toFixed(3)}`);
+
+    assert.ok(
+      r.peaks.length >= 4,
+      `${label} should bounce several visible times, got ${r.peaks.length}`,
+    );
+    // And still come to rest, on the floor, rather than buzzing for ever --
+    // which is what the settle threshold is for.
+    assert.ok(r.settled !== null && r.settled < 3, `${label} settled at ${r.settled}`);
+    assert.ok(
+      Math.abs(r.restZ - r.radius) < 1e-4,
+      `${label} should rest on the tiles, at z ${r.restZ.toFixed(4)} against r ${r.radius.toFixed(4)}`,
+    );
+  }
+});
+
+test('the real element masses are the published ones', () => {
+  // AndyMark lists the BIOBUZZ Scoring Elements at 0.055 lb and 0.091 lb.
+  // Pinned because these were estimates of 45 g and 85 g, roughly double, and
+  // the error was invisible: it shows up as shots that carry too well and a
+  // HIVE that needs twice the load to tip.
+  assert.ok(Math.abs(POLLEN_MASS - 0.055 * 0.45359237) < 0.0004, `POLLEN ${POLLEN_MASS} kg`);
+  assert.ok(Math.abs(NECTAR_MASS - 0.091 * 0.45359237) < 0.0004, `NECTAR ${NECTAR_MASS} kg`);
+
+  // The listing's diameters agree with the CAD, which is the cross-check that
+  // makes the masses beside them worth trusting.
+  assert.ok(Math.abs(POLLEN_RADIUS * 2 - 2.8 * 0.0254) < 1e-4);
+  assert.ok(Math.abs(NECTAR_RADIUS * 2 - 3.62 * 0.0254) < 1e-4);
 });

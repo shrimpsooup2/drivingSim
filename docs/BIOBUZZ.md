@@ -26,7 +26,14 @@ Two sources, and the code says which for every value in
   bounding box picks up whatever is bolted through it, which is exactly how I
   got the flower's retrieval opening wrong at 3.19 in when the figure says 3.55.
 
-Where the two disagree the CAD wins, because the manual rounds: NECTAR is
+- **VENDOR** — the AndyMark product listing, for the two things neither the
+  manual nor the CAD carries: what an element *weighs*. The BIOBUZZ Scoring
+  Elements are listed at 0.055 lb (24.9 g) for POLLEN and 0.091 lb (41.3 g) for
+  NECTAR. The listing's diameters agree with the CAD, which is what makes the
+  masses beside them worth trusting — and they replaced estimates of 45 g and
+  85 g that were roughly double.
+
+Where two sources disagree the CAD wins, because the manual rounds: NECTAR is
 "3.6 in" in the text and 3.62 in the model.
 
 Before the CAD arrived, everything that only appears in a figure had to be
@@ -241,9 +248,29 @@ every shot takes angular momentum out of the wheel,
 J*w0 = J*w1 + m*v*R,    v = k*w1*R    =>    w1 = J*w0 / (J + k*m*R^2)
 ```
 
-so the next shot is slower until the motor puts it back. NECTAR costs nearly
-twice what POLLEN does. More inertia bites less per shot but spins up slower,
-which is the real trade when a team adds a heavier wheel.
+so the next shot is slower until the motor puts it back. NECTAR costs two
+thirds again what POLLEN does. More inertia bites less per shot but spins up
+slower, which is the real trade when a team adds a heavier wheel.
+
+### The guide shows the element you are holding
+
+A POLLEN weighs 24.9 g and a NECTAR 41.3 g, and the droop above is a ratio of
+the wheel's inertia to the ball's — so at the same RPM a NECTAR leaves about
+2.4% slower, and since range goes as the square of speed it lands about 4%
+short. At cell range that is 14 cm, which against a 20 in opening is a quarter
+of the aperture: the difference between the middle and the lip.
+
+So the trajectory guide reads the front of the magazine (`Launcher.nextShot`)
+rather than assuming POLLEN, and the solved arc is solved for that element too.
+A guide that assumed POLLEN while you held a NECTAR was wrong exactly when it
+mattered, and the panel now says `NECTAR` beside the RPM so a driver watching
+the arc drop has an explanation rather than a mystery.
+
+What does *not* differ is drag, which is the surprise. The ballistic
+coefficient is frontal area over mass, and 1.4 in at 24.9 g against 1.81 in at
+41.3 g come out within 1% of each other — (1.81/1.4)² = 1.67 against a mass
+ratio of 1.66. The two elements are drag-matched almost exactly. You re-aim
+between them because of the flywheel, not because of the air.
 
 The wheel also has to be spun up *past* the speed the shot needs, because the
 ball takes its share on the way out. A POLLEN leaves at about 94 percent of the
@@ -342,6 +369,40 @@ read it, so a ball rolling across the tiles kept a fixed pattern of holes and
 looked like a decal sliding along the floor. `Ball.integrateSpin` carries a unit
 quaternion through the same integration the velocities get, and the renderer
 composes it into the model matrix.
+
+## How an element bounces
+
+A drop from a metre comes back 29 cm and takes five visible bounces before it
+settles, which is about what a thin-walled perforated plastic ball does on foam
+tile. It used to come back 11 cm and be dead on the second bounce — a beanbag.
+
+Two coefficients, because the field is two materials: `TILE_RESTITUTION` (0.55)
+against the foam, which deforms and dissipates, and `ELEMENT_RESTITUTION`
+(0.62) against everything rigid — the polycarbonate perimeter, a cell's plates,
+a flower tube, and another element.
+
+Mass has nothing to do with it, which is worth stating because it is the
+intuitive wrong answer. Restitution is a property of the two surfaces, so an
+ideal bounce returns the same *fraction* of the drop whatever the ball weighs;
+correcting the masses (they were about double) changed the measured bounce by
+under a centimetre. What the masses *did* change is everything about flight and
+about being shoved: drag deceleration goes as 1/m, so halving the mass doubles
+how much the air takes out of a shot — 2.1 m/s² at 6 m/s, a fifth of gravity,
+acting for the whole flight. A lighter ball is pushed around by air more, not
+less.
+
+There is also a settle threshold (`SETTLE_SPEED`, 0.18 m/s) below which a floor
+contact just stops. Without one a settling ball chatters for ever at
+ever-smaller amplitudes, burning substeps and visibly buzzing. It was 0.35 m/s,
+which was fine when bounces died anyway and too eager once they stopped dying:
+it cut the last two or three bounces off and made an element stop as though it
+had been caught.
+
+Correcting the masses also moved the hive's latch. `holdMass` is a *ratio* to
+the element masses, not an absolute — the manual's constraint is that three
+staged nectar hold and the next element tips (Section 10.3.1), whatever an
+element weighs — so it came down from 0.28 kg to 0.136 kg with them. Left
+alone it would have taken thirteen pollen to tip a hive instead of six.
 
 ## Fouls, and the rules audit
 
@@ -563,6 +624,27 @@ they do.
 - **Autonomous is the host's.** A pasted routine runs on the host's robot.
   Joiners drive in teleop; their robots are AI-driven during auto.
 
+## The buzzer screen
+
+A match ending used to be nothing but the clock reaching zero and the robots
+going limp. The score was on the side panel the whole time, so there was no
+moment where the result *landed* — and a practice session is a sequence of
+results, which is the thing you are trying to improve.
+
+It has two lifetimes, because there are two ways to practise. One match at a
+time, it waits: you read it, you think about it, you dismiss it with
+**Continue** (or Escape, or a click off the card), and **Restart match** puts
+the next one up. On a loop — `match.autoRestart`, which resets the field and
+starts again a few seconds after the buzzer — it cannot wait, because waiting
+for a click is exactly the interruption that setting exists to remove. There it
+shows for the length of the restart delay, counts down, and gets out of the way
+on its own.
+
+Both lifetimes run off `game.endedFor`, the same simulated clock the
+auto-restart is timed from, rather than a `setTimeout`. A wall-clock timer
+would drift out of step whenever the simulation was paused or slowed, and the
+screen would still be up after the next match had started.
+
 ## Controls
 
 | Key | Does |
@@ -767,9 +849,6 @@ part of the game.
 Almost nothing is left inferred, but these are modelling decisions rather than
 measurements, and they are the places to look first if something feels wrong:
 
-- **Ball masses** (POLLEN 0.045 kg, NECTAR 0.085 kg) are not published. They
-  only affect how far a robot shoves a pile and how the flywheel behaves, not
-  scoring.
 - **The HIVE's `holdMass`**, and through it `M*h`, calibrated as above, plus its
   structure mass for the inertia. The CELL opening's angle used to be a third
   guess here; Figure 9‑9's two heights removed it, since the opening turns out to
@@ -821,6 +900,7 @@ src/teleop/AutoRunner.js         compiles and steps a pasted AUTO routine
 src/teleop/autoApi.js            the `robot` object a routine is handed
 src/teleop/autoExample.js        the worked example the editor starts with
 src/ui/AutoPanel.js              the editor, its errors and its log
+src/ui/MatchOverPanel.js         the buzzer screen, and its two lifetimes
 src/net/protocol.js              the wire format, and why it is host-authoritative
 src/net/snapshot.js              a live game to a snapshot, and back to a mirror
 src/net/NetLink.js               one connection, and a loopback pair for tests

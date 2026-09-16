@@ -147,12 +147,19 @@ export class Hive {
     /**
      * Element mass in the raised CELL that the latch will just hold.
      *
-     * Three NECTAR is 0.255 kg and must hold, so this has to be above that;
-     * one more element has to take it over, so it cannot be far above. 0.28 kg
+     * Three NECTAR is 0.124 kg and must hold, so this has to be above that;
+     * one more element has to take it over, so it cannot be far above. 0.136 kg
      * leaves 10 percent of margin on the staged load and tips on the next
-     * POLLEN, and means about seven POLLEN from empty.
+     * POLLEN, and means about six POLLEN from empty.
+     *
+     * It is a *ratio* to the element masses rather than an absolute, which is
+     * why correcting those (`POLLEN_MASS`, `NECTAR_MASS`, which were about
+     * double) moved this with them. The constraint comes from the manual, not
+     * from a weight: whatever an element weighs, three staged NECTAR have to
+     * hold and the next element has to go over. Leaving this at 0.28 kg with
+     * the real masses would have taken thirteen POLLEN to tip a HIVE.
      */
-    this.holdMass = opts.holdMass ?? 0.28;
+    this.holdMass = opts.holdMass ?? 0.136;
     /**
      * Mass of the moving structure, used only for its rotational inertia --
      * two sheet-metal baskets and a tube, so a few kilograms.

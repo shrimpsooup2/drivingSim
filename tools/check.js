@@ -1317,6 +1317,122 @@ async function main() {
     await writeFile(rosterPath, Buffer.from(shotRoster.data, 'base64'));
     console.log(`  Screenshot: ${rosterPath}`);
 
+    // --- The buzzer screen, in both of its lifetimes.
+    //
+    // It has two, and which one it takes depends on a setting, so both are
+    // checked here rather than just the one the default config happens to use.
+    const ended = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.config.set('ai.enabled', false);
+      app.config.set('match.autoRestart', false);
+      app.config.set('view.showHud', true);
+      app.sim.disableGame();
+      const g = app.sim.enableGame({ alliance: 'red', startPhase: 'teleop', teleopSeconds: 1 });
+      g.start();
+      const panel = app.matchOver;
+      const before = panel.open;
+      for (let i = 0; i < 90; i++) { app.sim.step(1 / 60); }
+      app.matchOver.update(app.sim.game);
+      const shown = panel.open;
+      const headline = panel.headline.textContent;
+      const rows = panel.table.querySelectorAll('tr').length;
+      const actions = !panel.actions.classList.contains('hidden');
+      // Held: many frames later it is still up, because nothing dismissed it.
+      for (let i = 0; i < 300; i++) { app.sim.step(1 / 60); app.matchOver.update(app.sim.game); }
+      const stillShown = panel.open;
+      return {
+        before, shown, stillShown, headline, rows, actions,
+        phase: app.sim.game.match.phase,
+        matchNumber: app.sim.game.matchNumber,
+      };
+    })()`);
+    console.log(
+      `  Match over: "${ended.headline}", ${ended.rows} breakdown rows, ` +
+        `held ${ended.stillShown ? 'until dismissed' : 'NOT held'}`,
+    );
+    if (ended.before) failures.push('the buzzer screen was up before the buzzer');
+    if (!ended.shown) failures.push('the buzzer screen never appeared');
+    if (!ended.stillShown) failures.push('the buzzer screen did not wait to be dismissed');
+    if (!ended.actions) failures.push('the buzzer screen offered no way to continue');
+    if (ended.rows < 2) failures.push(`the breakdown had ${ended.rows} rows`);
+
+    await sleep(300);
+    const shotOver = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const overPath = shotPath.replace(/\.png$/, '-match-over.png');
+    await writeFile(overPath, Buffer.from(shotOver.data, 'base64'));
+    console.log(`  Screenshot: ${overPath}`);
+
+    // Dismissing it must stick: the same finished match must not pop it back
+    // up on the next frame, and it must return for the *next* match.
+    const dismissed = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.matchOver.dismiss();
+      for (let i = 0; i < 60; i++) { app.sim.step(1 / 60); app.matchOver.update(app.sim.game); }
+      const stayedDown = !app.matchOver.open;
+      app.sim.game.start();
+      app.matchOver.update(app.sim.game);
+      const downDuringMatch = !app.matchOver.open;
+      for (let i = 0; i < 90; i++) { app.sim.step(1 / 60); app.matchOver.update(app.sim.game); }
+      return { stayedDown, downDuringMatch, backForNext: app.matchOver.open };
+    })()`);
+    if (!dismissed.stayedDown) failures.push('the buzzer screen came back after being dismissed');
+    if (!dismissed.downDuringMatch) failures.push('the buzzer screen was up during a running match');
+    if (!dismissed.backForNext) failures.push('the buzzer screen did not return for the next match');
+
+    // And in a practice loop it lets go on its own, because waiting for a
+    // click is the interruption `autoRestart` exists to remove.
+    const looped = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.config.set('match.autoRestart', true);
+      app.sim.disableGame();
+      const g = app.sim.enableGame({ alliance: 'red', startPhase: 'teleop', teleopSeconds: 1 });
+      g.start();
+      const first = app.sim.game.matchNumber;
+      for (let i = 0; i < 70; i++) { app.sim.step(1 / 60); app.matchOver.update(app.sim.game); }
+      const shown = app.matchOver.open;
+      const countdown = app.matchOver.countdown.textContent;
+      const actionsHidden = app.matchOver.actions.classList.contains('hidden');
+      // Past the restart delay the loop starts the next match, and the screen
+      // has to let go. Watched frame by frame rather than sampled at the end:
+      // this is a one-second match on a loop, so by four seconds later the
+      // *next* one has finished too and the screen is legitimately up again
+      // for it -- which sampling once would read as never having cleared.
+      let cleared = false;
+      for (let i = 0; i < 60 * 4; i++) {
+        app.sim.step(1 / 60);
+        app.matchOver.update(app.sim.game);
+        if (!app.matchOver.open) cleared = true;
+      }
+      return {
+        shown,
+        countdown,
+        actionsHidden,
+        gone: cleared,
+        restarted: app.sim.game.matchNumber > first,
+        phase: app.sim.game.match.phase,
+      };
+    })()`);
+    console.log(
+      `  Match over, looping: shown "${looped.countdown}", then ` +
+        `${looped.gone ? 'cleared itself' : 'STAYED UP'} and the next match ` +
+        `${looped.restarted ? 'started' : 'DID NOT start'}`,
+    );
+    if (!looped.shown) failures.push('the buzzer screen did not appear in a practice loop');
+    if (!looped.actionsHidden) {
+      failures.push('a looping buzzer screen should not ask for a click it will not wait for');
+    }
+    if (!/next match in/.test(looped.countdown ?? '')) {
+      failures.push(`no restart countdown: ${JSON.stringify(looped.countdown)}`);
+    }
+    if (!looped.gone) failures.push('the buzzer screen did not clear itself in a practice loop');
+    if (!looped.restarted) failures.push('the practice loop did not start the next match');
+
+    await cdp.evaluate(`(() => {
+      globalThis.ftcSim.config.set('match.autoRestart', false);
+      globalThis.ftcSim.matchOver.dismiss();
+      return true;
+    })()`);
+
     // Back to a solo FIELD, so the teardown check below sees what it expects.
     await cdp.evaluate(`(() => {
       const app = globalThis.ftcSim;

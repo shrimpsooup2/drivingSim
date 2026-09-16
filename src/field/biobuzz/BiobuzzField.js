@@ -27,6 +27,7 @@ import {
   HIVE_PIVOT_HEIGHT,
   HIVE_PIVOT_X,
   NECTAR_MASS,
+  ELEMENT_RESTITUTION,
   NECTAR_PER_ALLIANCE,
   NECTAR_RADIUS,
   POINTS,
@@ -36,6 +37,8 @@ import {
   PRELOAD_POLLEN,
   RED_START_UP,
   ROBOT_SIZE_LIMIT,
+  SETTLE_SPEED,
+  TILE_RESTITUTION,
 } from './constants.js';
 
 /**
@@ -152,6 +155,7 @@ export class BiobuzzField {
           alliance: 'neutral',
           radius: POLLEN_RADIUS,
           mass: POLLEN_MASS,
+          restitution: ELEMENT_RESTITUTION,
         }),
       );
     }
@@ -164,6 +168,7 @@ export class BiobuzzField {
             alliance,
             radius: NECTAR_RADIUS,
             mass: NECTAR_MASS,
+            restitution: ELEMENT_RESTITUTION,
           }),
         );
       }
@@ -172,6 +177,8 @@ export class BiobuzzField {
     this.ballWorld = new BallWorld({
       fieldSize: this.field.size,
       wallHeight: this.field.wallHeight,
+      restitution: TILE_RESTITUTION,
+      settleSpeed: SETTLE_SPEED,
     });
     for (const ball of this.allBalls) this.ballWorld.add(ball);
 

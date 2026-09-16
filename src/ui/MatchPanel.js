@@ -128,8 +128,8 @@ export class MatchPanel {
         ? `${(t.launchSystem ?? 'thrower').toUpperCase()} LOADED`
         : `winding  ${Math.round(s.recovery * 100)}%`
       : s.ready
-        ? `SHOOTER READY  ${Math.round(s.rpm)} rpm`
-        : `spinning up  ${Math.round(s.rpm)} / ${Math.round(s.target)} rpm`;
+        ? `SHOOTER READY  ${Math.round(s.rpm)} rpm${nextTag(s)}`
+        : `spinning up  ${Math.round(s.rpm)} / ${Math.round(s.target)} rpm${nextTag(s)}`;
     this.shooterText.classList.toggle('ready', s.ready);
     this.shooterBar.style.width = `${(s.recovery * 100).toFixed(1)}%`;
     this.shooterBar.style.background = s.ready ? '#47d18a' : '#f2a33c';
@@ -240,6 +240,19 @@ const PAD_LABEL = {
  * @param {ReturnType<import('../app/BiobuzzGame.js').BiobuzzGame['telemetry']>} t
  * @param {'gamepad'|'keyboard'|'none'} [source]
  */
+/**
+ * Which element is about to be fired, when it is not the usual one.
+ *
+ * Only shown for NECTAR. Labelling every POLLEN shot would be noise -- POLLEN
+ * is forty of the fifty-six elements -- and the reason to say anything at all
+ * is that a NECTAR lands about 5 percent short of where the same RPM puts a
+ * POLLEN, so a driver seeing the arc drop has an explanation rather than a
+ * mystery.
+ */
+function nextTag(shooter) {
+  return shooter.nextKind === 'nectar' ? '   NECTAR' : '';
+}
+
 export function nextStep(t, source = 'gamepad') {
   const name = (control) => controlLabel(control, source);
   if (t.phase === 'ended') return { text: 'MATCH OVER', urgent: false };
