@@ -10,6 +10,7 @@ import { NetPanel } from '../ui/NetPanel.js';
 import { MatchOverPanel } from '../ui/MatchOverPanel.js';
 import { StepBar } from '../ui/StepBar.js';
 import { HardwarePanel } from '../ui/HardwarePanel.js';
+import { GamepadView } from '../ui/GamepadView.js';
 import { cssColour } from '../teleop/FieldDrawing.js';
 import { InputManager } from '../input/InputManager.js';
 import { Overlay2d } from '../render/Overlay2d.js';
@@ -66,6 +67,7 @@ export class App {
     });
     this.hardware = new HardwarePanel(this.viewport, this.sim);
     this.stepBar = new StepBar(this.viewport, this.sim);
+    this.gamepadView = new GamepadView(this.viewport);
 
     /** Schema defaults, so a camera can be reset to its as-shipped framing. */
     this._defaultView = defaultConfig().view;
@@ -415,6 +417,7 @@ export class App {
       this.net.update();
       this.hardware.update();
       const view = this.config.values.view;
+      this.gamepadView.setVisible(view.showGamepad !== false).update(this.input);
       this.hud.setVisible(view.showHud, view.showGraphs);
       if (view.showHud || view.showGraphs) this.hud.update(this.sim, dt);
       this.matchPanel.update(view.showHud ? this.sim.game : null, this.input.activeSource);

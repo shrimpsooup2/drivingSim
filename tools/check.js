@@ -628,6 +628,80 @@ async function main() {
       }
     }
 
+    // --- The on-screen gamepad, including the delay between the two dots.
+    const pad = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const sim = app.sim;
+      const view = app.gamepadView;
+      const keys = sim.input.keyboardSource.keys;
+      sim.input.keyboardSource.active = true;
+
+      const read = () => ({
+        dot: view.left.node.querySelector('.pad-dot:not(.ghost)').style.top,
+        ghostHidden: view.left.node.querySelector('.pad-dot.ghost').classList.contains('hidden'),
+        rb: view.buttons.get('right_bumper').classList.contains('on'),
+        source: view.source.textContent,
+        rt: view.rightTrigger.node.querySelector('.pad-trigger-fill').style.width,
+      });
+
+      // Centred and idle.
+      for (let i = 0; i < 40; i++) sim.step(1 / 60);
+      view.update(sim.input);
+      const idle = read();
+
+      // Stick forward. For one frame the controller is reporting it and the
+      // op-mode is not yet, which is the input delay -- so the faint dot shows.
+      keys.add('KeyW');
+      sim.step(1 / 60);
+      view.update(sim.input);
+      const lagging = read();
+
+      // Once the delay line has caught up, the two agree again.
+      for (let i = 0; i < 20; i++) sim.step(1 / 60);
+      view.update(sim.input);
+      const settled = read();
+
+      keys.add('KeyH');
+      keys.add('Space');
+      for (let i = 0; i < 10; i++) sim.step(1 / 60);
+      view.update(sim.input);
+      const pressed = read();
+
+      keys.clear();
+      for (let i = 0; i < 20; i++) sim.step(1 / 60);
+
+      // It must not sit on top of the status pills, which are also bottom left.
+      const padBox = view.root.getBoundingClientRect();
+      const pills = app.hud.status.getBoundingClientRect();
+      const overlapsPills = padBox.bottom > pills.top + 0.5 && padBox.left < pills.right;
+
+      app.config.set('view.showGamepad', false);
+      view.setVisible(false);
+      const hiddenWhenOff = !view.visible;
+      app.config.set('view.showGamepad', true);
+      view.setVisible(true);
+      sim.resetRobot();
+      return { idle, lagging, settled, pressed, hiddenWhenOff, overlapsPills };
+    })()`);
+    console.log(
+      `  Gamepad: idle dot at ${pad.idle.dot}, pushed to ${pad.settled.dot}, ` +
+        `source "${pad.settled.source}", trigger ${pad.pressed.rt}`,
+    );
+    if (pad.idle.dot !== '50%') failures.push(`a centred stick drew at ${pad.idle.dot}`);
+    if (!pad.idle.ghostHidden) failures.push('a still stick drew two dots');
+    if (pad.lagging.ghostHidden) {
+      failures.push('the input delay should show as a second dot on the frame the stick moves');
+    }
+    if (!pad.settled.ghostHidden) failures.push('the two dots should agree once the delay catches up');
+    if (parseFloat(pad.settled.dot) >= 50) {
+      failures.push(`forward should move the dot up the screen, drew at ${pad.settled.dot}`);
+    }
+    if (!pad.pressed.rb) failures.push('the right bumper did not light up');
+    if (pad.pressed.rt !== '100%') failures.push(`the trigger bar read ${pad.pressed.rt}`);
+    if (pad.settled.source !== 'keyboard') failures.push(`source read "${pad.settled.source}"`);
+    if (!pad.hiddenWhenOff) failures.push('turning the gamepad view off left it on screen');
+    if (pad.overlapsPills) failures.push('the gamepad view is sitting on top of the status pills');
+
     // --- The hardware inspector, and breaking something with it.
     const hardware = await cdp.evaluate(`(() => {
       const app = globalThis.ftcSim;

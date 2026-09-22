@@ -1809,6 +1809,13 @@ export const SCHEMA = [
       { path: 'view.showSlip', label: 'Slip markers', type: 'boolean', default: true },
       { path: 'view.showTrail', label: 'Path trail', type: 'boolean', default: true },
       {
+        path: 'view.showGamepad',
+        label: 'On-screen gamepad',
+        type: 'boolean',
+        default: true,
+        help: 'Draw the sticks, triggers and buttons as the simulator sees them. Two dots per stick: the solid one is what your op-mode is being given, the faint one is what the controller is reporting right now, and the gap between them is the input delay. Also the quickest way to find out that an F310 is on the wrong mode.',
+      },
+      {
         path: 'view.showDrawings',
         label: 'Routine drawings',
         type: 'boolean',

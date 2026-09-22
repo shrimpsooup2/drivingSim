@@ -1047,3 +1047,96 @@ select { width: 100%; }
 .hardware-input:focus { outline: 1px solid var(--accent); }
 
 .hardware-actions { margin-top: 12px; }
+
+/* --- The on-screen gamepad ----------------------------------------------- */
+
+/* Bottom left, above the status pills -- which are also bottom left, and are
+   the row that tells you which run mode and which camera you are on. */
+.pad-view {
+  position: absolute;
+  bottom: 46px;
+  left: 12px;
+  z-index: 8;
+  width: 176px;
+  padding: 7px 9px 8px;
+  border-radius: 9px;
+  background: rgba(14, 17, 23, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(6px);
+  font: 9px/1.3 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: #e6e8ec;
+  pointer-events: none;
+}
+
+.pad-head { display: flex; justify-content: space-between; align-items: baseline; }
+.pad-title { letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.pad-source { color: var(--muted); }
+.pad-source[data-tone='good'] { color: #47d18a; }
+
+.pad-sticks { display: flex; gap: 8px; margin-top: 6px; }
+.pad-stick { flex: 1; }
+
+.pad-well {
+  position: relative;
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.pad-cross-x,
+.pad-cross-y {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.09);
+}
+.pad-cross-x { left: 12%; right: 12%; top: 50%; height: 1px; }
+.pad-cross-y { top: 12%; bottom: 12%; left: 50%; width: 1px; }
+
+.pad-dot {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: #8f9aa8;
+}
+.pad-dot.live { background: #33d1fa; }
+/* What the controller is reporting *now*, before the delay line. */
+.pad-dot.ghost { background: rgba(51, 209, 250, 0.3); width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; }
+
+.pad-stick-label { color: var(--muted); text-align: center; margin-top: 3px; }
+
+.pad-triggers { margin-top: 7px; display: flex; flex-direction: column; gap: 3px; }
+.pad-trigger { display: flex; align-items: center; gap: 5px; }
+.pad-trigger-label { color: var(--muted); min-width: 16px; }
+.pad-trigger-value { color: var(--muted); min-width: 26px; text-align: right; }
+.pad-trigger.on .pad-trigger-label,
+.pad-trigger.on .pad-trigger-value { color: #33d1fa; }
+
+.pad-trigger-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: #22272f;
+  overflow: hidden;
+}
+.pad-trigger-fill { height: 100%; width: 0; background: #33d1fa; }
+
+.pad-buttons { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; }
+
+.pad-button {
+  flex: 1;
+  min-width: 20px;
+  text-align: center;
+  padding: 2px 0;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.pad-button.on { border-color: #33d1fa; color: #0b0d10; background: #33d1fa; }
+
+/* A short window has the HUD and the pad fighting for the left column, and the
+   HUD wins -- it is the one with the numbers you steer by. */
+@media (max-height: 700px) {
+  .pad-view { display: none; }
+}

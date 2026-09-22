@@ -134,6 +134,25 @@ A key is on or off, so keyboard input is a square wave. The acceleration ramp
 smooths it, which makes the keyboard fine for learning the field and useless for
 learning throttle control. There is no substitute for a real controller there.
 
+## Watching your own hands
+
+The pad drawn in the bottom-left corner is the gamepad as the simulator sees
+it. Three things it tells you that you cannot otherwise see:
+
+- **The deadband.** A worn stick that never returns to centre shows up as a dot
+  sitting off the middle while your thumb is nowhere near it.
+- **The delay.** Two dots per stick: the solid one is what your op-mode is being
+  given, the faint one is what the controller is reporting *right now*. The gap
+  between them is `control.inputLatencyMs`, and seeing it is the fastest way to
+  understand why a real robot feels less immediate than a naive simulator.
+- **Whether the pad is on the right mode.** An F310 with its rear switch on `D`
+  reports nothing here, and "the controller does not work" stops being a
+  mystery.
+
+There is one pad rather than two because this simulator models one: `gamepad1`
+and `gamepad2` are handed the same state, since nothing in a driving trainer
+needs a second driver's controls. Turn it off under *Camera & view*.
+
 ## The hardware inspector
 
 Backquote (`` ` ``) opens it. Two jobs:
