@@ -75,6 +75,28 @@ export class Imu {
   }
 
   /**
+   * The robot was picked up and put down facing somewhere else.
+   *
+   * A real IMU would see that rotation happen and report it, which is correct
+   * for a robot being turned by hand -- but a teleport in a simulator is a
+   * setup action, and reporting a 180 degree turn in one cycle makes anything
+   * downstream (the odometry, a heading loop) book a rotation that did not
+   * happen. So the pipeline is flushed to the new heading instead of being
+   * dragged to it: the drift and the `resetYaw` offset are kept, because those
+   * are properties of the sensor and not of where the robot is.
+   *
+   * @param {number} trueHeading the heading it now has, radians
+   */
+  teleport(trueHeading) {
+    const raw = this._rawHeading(trueHeading) - this._offset;
+    this._history.length = 0;
+    this.filter.reset(raw);
+    this.heading = wrapAngle(raw);
+    this.angularVelocity = 0;
+    return this;
+  }
+
+  /**
    * @param {number} trueHeading radians, from the physics body
    * @param {number} trueAngularVelocity rad/s
    * @param {number} dt seconds

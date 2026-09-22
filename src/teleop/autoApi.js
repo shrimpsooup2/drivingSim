@@ -221,6 +221,64 @@ export function buildAutoApi(deps) {
     },
 
     /**
+     * The pose the odometry board reports.
+     *
+     * This is the one an AUTO should steer by: the pods do not slip, so unlike
+     * `travelled` it does not lie when a wheel scrubs. It does drift, because a
+     * pose is an integral -- mostly through the heading, which comes from the
+     * IMU on a two-pod setup. Compare it against `truth` to see by how much.
+     *
+     * One I2C transaction per read, and the board hands the whole pose back in
+     * one go, so `const p = robot.odometry.pose` is one read and reading `.x`,
+     * `.y` and `.heading` separately is three.
+     */
+    odometry: {
+      /** Whether the robot has pods at all. */
+      get fitted() {
+        return robot.odometry.enabled;
+      },
+      /** x, y and heading in `robot.frame`. */
+      get pose() {
+        const p = robot.readOdometry();
+        const out = toFrame(p, frame);
+        return {
+          x: out.x,
+          y: out.y,
+          heading: frame === 'sim' ? out.heading * DEG : out.heading,
+        };
+      },
+      get x() {
+        return api.odometry.pose.x;
+      },
+      get y() {
+        return api.odometry.pose.y;
+      },
+      get heading() {
+        return api.odometry.pose.heading;
+      },
+      /**
+       * `setPosition`: tell it where it is.
+       *
+       * What a team does after squaring the robot up on a known tile, and what
+       * a routine does if it ever gets a better fix -- from an AprilTag, or from
+       * driving into a wall at a known place.
+       */
+      set(pose) {
+        const next = fromFrame(
+          {
+            x: pose?.x ?? 0,
+            y: pose?.y ?? 0,
+            heading: frame === 'sim' ? (pose?.heading ?? 0) * DEG : pose?.heading ?? 0,
+          },
+          frame,
+        );
+        robot.bus.i2c();
+        robot.odometry.reset(next);
+        return api.odometry;
+      },
+    },
+
+    /**
      * Wheel encoder positions in ticks, by wheel name, quantised as they are.
      *
      * One reading each, out of the bulk packet when the caching mode allows it

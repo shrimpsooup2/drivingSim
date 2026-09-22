@@ -1009,6 +1009,19 @@ export class Renderer {
       }
     }
 
+    // Where the odometry thinks it went. Amber against the blue of the real
+    // path, and a hair higher off the tiles so the two do not fight over depth
+    // where they overlap -- which, with the odometry working, is most of it.
+    if (config.view.showTrail && config.view.showOdometryTrail && sim.odometryTrail?.length > 1) {
+      const n = sim.odometryTrail.length;
+      for (let i = 1; i < n; i++) {
+        const a = sim.odometryTrail[i - 1];
+        const b = sim.odometryTrail[i];
+        const alpha = (i / n) * 0.8;
+        this.lines.line(a[0], a[1], z + 0.002, b[0], b[1], z + 0.002, 0.98, 0.66, 0.24, alpha);
+      }
+    }
+
     const weight = robot.body.mass * 9.80665;
 
     for (const wheel of robot.drivetrain.wheels) {

@@ -4,6 +4,7 @@ import { Drivetrain } from '../drivetrain/Drivetrain.js';
 import { Battery } from '../hardware/Battery.js';
 import { HardwareBus } from '../hardware/HardwareBus.js';
 import { Imu } from '../hardware/Imu.js';
+import { Odometry } from '../hardware/Odometry.js';
 
 /**
  * The robot: a chassis body, a drivetrain, the electrical system, and a list of
@@ -45,6 +46,14 @@ export class Robot {
       latencySeconds: config.imu.latencySeconds,
       enabled: config.imu.enabled,
     });
+    /**
+     * Odometry pods and the board that integrates them.
+     *
+     * Stepped every substep and sampled every control cycle, whether or not
+     * anybody reads it -- which is how the HUD can tell you how far the pose has
+     * drifted from the truth without the op-mode having asked for it.
+     */
+    this.odometry = new Odometry(config.odometry);
 
     /** @type {import('./Subsystem.js').Subsystem[]} */
     this.subsystems = [];
@@ -133,6 +142,8 @@ export class Robot {
     this.battery.enabled = config.battery.enabled;
     this.battery.nominalVoltage = config.battery.nominalVoltage;
 
+    this.odometry.applySettings(config.odometry);
+
     this.imu.enabled = config.imu.enabled;
     this.imu.driftRateDegPerSec = config.imu.driftRateDegPerSec;
     this.imu.noiseDeg = config.imu.noiseDeg;
@@ -170,6 +181,18 @@ export class Robot {
   }
 
   /**
+   * The pose the odometry board reports, as `getPosX/getPosY/getHeading` do.
+   *
+   * One I2C transaction, whichever of the three you asked for -- the board
+   * hands back the whole pose in one read, which is the same reason the IMU's
+   * heading and rate come together.
+   */
+  readOdometry() {
+    this.bus.i2c();
+    return this.odometry.pose;
+  }
+
+  /**
    * An encoder, out of the bulk packet if one is warm.
    * @param {import('../hardware/DriveMotor.js').DriveMotor} motor
    * @param {'position'|'velocity'} what
@@ -198,6 +221,9 @@ export class Robot {
     const v = this.battery.busVoltage;
     this.drivetrain.updateControl(dt, v);
     this.imu.update(this.body.rotation.radians, this.body.angularVelocity, dt);
+    // After the IMU, because a two-pod setup takes its heading from it and a
+    // cycle-old heading is a cycle of rotation booked in the wrong direction.
+    this.odometry.sample(this.imu.heading);
     for (const sub of this.subsystems) {
       if (sub.enabled && gamepad) sub.updateControl(dt, gamepad);
     }
@@ -219,6 +245,11 @@ export class Robot {
 
     this.battery.update(current, dt);
     this.body.integrate(dt);
+
+    // Pods roll on the *new* velocity, every substep: the omega x r term needs
+    // the instantaneous yaw rate rather than a control-cycle average, which is
+    // the whole reason a pod at an offset reads what it reads.
+    this.odometry.step(this.body.bodyVelocity, this.body.angularVelocity, dt);
 
     if (!this.body.isFinite()) {
       console.error('[Robot] physics diverged; resetting body state');
@@ -251,6 +282,10 @@ export class Robot {
     this.battery.reset();
     this.battery.setStateOfCharge(this.config.battery.startingStateOfCharge);
     this.imu.reset(heading);
+    // Odometry starts knowing where it is, because a team squares the robot up
+    // on a known tile and calls `setPosition` before the match. Drift from
+    // there is the interesting part.
+    this.odometry.reset({ x, y, heading }, this.imu.heading);
     for (const sub of this.subsystems) sub.reset();
     this.stats = {
       topSpeed: 0,

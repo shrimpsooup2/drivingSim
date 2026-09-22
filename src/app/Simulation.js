@@ -99,6 +99,14 @@ export class Simulation {
 
     /** Recent positions for the path trail, as [x, y, t] triples. */
     this.trail = /** @type {number[][]} */ ([]);
+    /**
+     * The same thing from the odometry's point of view.
+     *
+     * Drawn alongside the true one, and the gap between them is the answer to
+     * "is my AUTO's problem the code or the odometry?" -- which on a real field
+     * takes a tape measure to tell apart.
+     */
+    this.odometryTrail = /** @type {number[][]} */ ([]);
 
     /** Driving drills. Null active challenge means free driving. */
     this.challenges = new ChallengeRunner(this);
@@ -312,7 +320,23 @@ export class Simulation {
     body.angularVelocity = 0;
     body.acceleration.set(0, 0);
     this.robot.teleportEpoch++;
+    // The IMU is flushed to the new heading rather than dragged to it over the
+    // next few cycles: see `Imu.teleport`. Without this, turning the robot by
+    // 180 degrees with the mouse hands the odometry a 180 degree rotation in
+    // one cycle and it dutifully integrates it.
+    this.robot.imu.teleport(pose.heading);
+    // The odometry comes along. A real board would carry on integrating from
+    // where it thought it was and be permanently wrong by however far the robot
+    // was moved -- but picking the robot up is a setup action, not something
+    // that happened to it, and leaving a metre of made-up error in the estimate
+    // makes the drift readout meaningless for the rest of the session. This is
+    // the `setPosition` a team calls after squaring up on a tile.
+    this.robot.odometry.reset(
+      { x: pose.x, y: pose.y, heading: pose.heading },
+      this.robot.imu.heading,
+    );
     this.trail.length = 0;
+    this.odometryTrail.length = 0;
     this.events.emit('placed', this.pose());
     return this;
   }
@@ -351,6 +375,7 @@ export class Simulation {
     this.controlPeriod = 1 / clamp(this.config.control.loopRateHz, 1, 1000);
     this._stepBudget = 0;
     this.trail.length = 0;
+    this.odometryTrail.length = 0;
     this.events.emit('reset');
     return this;
   }
@@ -659,17 +684,36 @@ export class Simulation {
   _updateTrail(dt) {
     if (!this.config.view.showTrail) {
       if (this.trail.length) this.trail.length = 0;
+      if (this.odometryTrail.length) this.odometryTrail.length = 0;
       return;
     }
     const p = this.robot.body.position;
-    const last = this.trail[this.trail.length - 1];
-    if (!last || Math.hypot(p.x - last[0], p.y - last[1]) > 0.01) {
-      this.trail.push([p.x, p.y, this.time]);
+    this._extendTrail(this.trail, p.x, p.y);
+    // Sampled on the *true* pose moving, not on the estimate moving, so the two
+    // trails have their points at the same moments and the gap between them at
+    // any point is the error at that moment rather than at some other one.
+    if (this.config.view.showOdometryTrail && this.robot.odometry.enabled) {
+      const o = this.robot.odometry.pose;
+      if (this.odometryTrail.length !== this.trail.length) {
+        this.odometryTrail.push([o.x, o.y, this.time]);
+      }
+    } else if (this.odometryTrail.length) {
+      this.odometryTrail.length = 0;
     }
     const cutoff = this.time - this.config.view.trailSeconds;
+    this._trimTrail(this.trail, cutoff);
+    this._trimTrail(this.odometryTrail, cutoff);
+  }
+
+  _extendTrail(trail, x, y) {
+    const last = trail[trail.length - 1];
+    if (!last || Math.hypot(x - last[0], y - last[1]) > 0.01) trail.push([x, y, this.time]);
+  }
+
+  _trimTrail(trail, cutoff) {
     let drop = 0;
-    while (drop < this.trail.length && this.trail[drop][2] < cutoff) drop++;
-    if (drop > 0) this.trail.splice(0, drop);
+    while (drop < trail.length && trail[drop][2] < cutoff) drop++;
+    if (drop > 0) trail.splice(0, drop);
   }
 
   /** Snapshot for the HUD and the graphs. */
@@ -690,6 +734,16 @@ export class Simulation {
       stateOfCharge: robot.battery.stateOfCharge,
       imuHeading: robot.imu.heading,
       headingError: robot.imu.heading - body.rotation.radians,
+      odometry: robot.odometry.enabled
+        ? {
+            ...robot.odometry.pose,
+            error: robot.odometry.error({
+              x: body.position.x,
+              y: body.position.y,
+              heading: body.rotation.radians,
+            }),
+          }
+        : null,
       peakGripUsage: dt.telemetry.peakGripUsage,
       slipping: dt.telemetry.slipping,
       measuredTwist: dt.telemetry.measuredTwist,

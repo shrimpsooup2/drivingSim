@@ -304,6 +304,8 @@ export class AutoRunner extends OpMode {
       resetHeading() {},
       readVoltage: () => 12,
       readEncoder: () => 0,
+      readOdometry: () => ({ x: 0, y: 0, heading: 0 }),
+      odometry: { enabled: false, pose: { x: 0, y: 0, heading: 0 }, reset() {} },
     };
     stub.bus.exempt = true;
     return {

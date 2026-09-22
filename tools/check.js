@@ -628,6 +628,68 @@ async function main() {
       }
     }
 
+    // --- Odometry: the pose it reports, how far it drifts, and the two trails.
+    const odometry = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const sim = app.sim;
+      const keys = sim.input.keyboardSource.keys;
+      sim.input.keyboardSource.active = true;
+      sim.placeRobot(-1.2, 0, 0);
+
+      const lap = (key, seconds) => {
+        keys.add(key);
+        for (let i = 0; i < Math.round(seconds * 60); i++) sim.step(1 / 60);
+        keys.delete(key);
+      };
+      lap('KeyW', 1.2);
+      lap('KeyQ', 0.7);
+      lap('KeyW', 1.0);
+      lap('KeyE', 0.7);
+      lap('KeyW', 0.8);
+      for (let i = 0; i < 40; i++) sim.step(1 / 60);
+
+      const t = sim.telemetry();
+      app.hud.update(sim, t, 1 / 60);
+      const rows = [...app.hud.odometryCard.querySelectorAll('.hud-row')].map(
+        (r) => r.textContent,
+      );
+
+      // A miscalibrated yaw scalar has to make it worse, or the knob is not wired.
+      const straight = t.odometry.error.distance;
+      app.config.set('odometry.yawScalar', 1.04);
+      sim.placeRobot(-1.2, 0, 0);
+      lap('KeyQ', 1.4);
+      lap('KeyW', 1.2);
+      for (let i = 0; i < 20; i++) sim.step(1 / 60);
+      const skewed = sim.telemetry().odometry.error.distance;
+      app.config.set('odometry.yawScalar', 1);
+
+      const trails = { real: sim.trail.length, odo: sim.odometryTrail.length };
+      sim.resetRobot();
+      return { straight, skewed, rows, trails, drift: t.odometry.error };
+    })()`);
+    console.log(
+      `  Odometry: after a lap it is ${(odometry.straight * 39.3701).toFixed(2)} in out ` +
+        `(${(odometry.drift.heading * 57.2958).toFixed(2)} deg); a 4% yaw scalar makes it ` +
+        `${(odometry.skewed * 39.3701).toFixed(2)} in`,
+    );
+    console.log(`    HUD says: ${odometry.rows.join('  |  ')}`);
+    if (!(odometry.straight < 0.08)) {
+      failures.push(`odometry drifted ${odometry.straight} m over one lap, which is too much`);
+    }
+    if (!(odometry.skewed > odometry.straight * 2)) {
+      failures.push(
+        `a 4% yaw scalar should hurt: ${odometry.straight} m calibrated, ${odometry.skewed} m not`,
+      );
+    }
+    if (odometry.rows.length !== 3) failures.push('the odometry card lost a row');
+    if (!/in/.test(odometry.rows.join(' '))) failures.push('the odometry card is not in inches');
+    if (odometry.trails.odo !== odometry.trails.real) {
+      failures.push(
+        `the two trails should have a point each: ${odometry.trails.real} real, ${odometry.trails.odo} odometry`,
+      );
+    }
+
     // --- Coordinate frames and putting the robot somewhere, through the UI.
     const frames = await cdp.evaluate(`(() => {
       const app = globalThis.ftcSim;

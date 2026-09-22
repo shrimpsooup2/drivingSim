@@ -1,6 +1,6 @@
 import { fmt, fmtClock, toDisplay } from '../util/units.js';
 import { Graph } from './Graph.js';
-import { clamp } from '../math/MathUtil.js';
+import { INCH, clamp } from '../math/MathUtil.js';
 
 /**
  * Telemetry readout over the field view.
@@ -30,7 +30,14 @@ export class Hud {
     this.gripRows = rows(this.gripCard, ['Grip used', 'Wheel slip', 'Load spread']);
     this.gripBar = bar(this.gripCard, '#47d18a');
 
-    root.append(this.speedCard, this.powerCard, this.gripCard);
+    // What the robot thinks, and how far that is from the truth. The error is
+    // the row worth having: on a real field you need a tape measure to tell
+    // "the routine drove to the wrong place" from "the routine drove to the
+    // right place and the pose was wrong".
+    this.odometryCard = card('Odometry');
+    this.odometryRows = rows(this.odometryCard, ['Pose', 'Heading', 'Drift']);
+
+    root.append(this.speedCard, this.powerCard, this.gripCard, this.odometryCard);
 
     this.status = div('status');
     /** @type {Map<string, HTMLElement>} */
@@ -98,6 +105,20 @@ export class Hud {
       loads.length > 0 ? `${fmt(minLoad, 0)} - ${fmt(maxLoad, 0)} N` : '-';
     this.gripRows['Load spread'].className = minLoad < 1 ? 'warn' : '';
     setBar(this.gripBar, clamp(grip, 0, 1), grip > 0.95 ? '#e2564a' : grip > 0.75 ? '#f2a33c' : '#47d18a');
+
+    const odo = t.odometry;
+    this.odometryCard.classList.toggle('hidden', !odo);
+    if (odo) {
+      this.odometryRows['Pose'].textContent =
+        `${fmt(odo.x / INCH, 1)}, ${fmt(odo.y / INCH, 1)} in`;
+      this.odometryRows['Heading'].textContent = `${fmt(toDisplay(odo.heading, 'deg'), 1)} deg`;
+      // Two centimetres is about the width of the CELL's margin for error, so
+      // it is the point at which drift starts costing shots.
+      const drift = odo.error.distance;
+      this.odometryRows['Drift'].textContent =
+        `${fmt(drift / INCH, 2)} in, ${fmt(toDisplay(odo.error.heading, 'deg'), 1)} deg`;
+      this.odometryRows['Drift'].className = drift > 0.06 ? 'danger' : drift > 0.02 ? 'warn' : '';
+    }
 
     // Status pills.
     const opTelemetry = sim.opMode.telemetry ?? {};

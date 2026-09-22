@@ -91,6 +91,56 @@ costs to the thread running the op-mode. Nothing in a browser can block a
 thread, so instead the charges are counted over a cycle and the total becomes
 the next cycle's period — the same arithmetic without the thread.
 
+## Odometry
+
+A drive wheel's encoder measures the wheel, and a drive wheel spends its life
+slipping — it scrubs on every acceleration, a mecanum's rollers scrub all the
+time, and a pushing match is nothing but slip. So wheel odometry lies, and it
+lies worst exactly when you need it. An odometry pod carries no load and drives
+nothing, so it rolls, and what it measures is how far the floor went past that
+point on the robot.
+
+A pod is not at the centre of the robot, so when the robot turns the pod is also
+being carried sideways. The velocity at its contact patch is
+
+```
+v_contact = v_robot + ω × r = (v.x − ω·r.y,  v.y + ω·r.x)
+```
+
+which is projected onto the direction the pod rolls and integrated. Dropping the
+`ω × r` term is the classic mistake: invisible in straight lines, ruinous the
+moment the robot turns.
+
+The board that reads the pods — a goBILDA Pinpoint, a SparkFun OTOS — integrates
+them into a pose, and **the integration is where the error lives**. A pose is an
+integral, so nothing averages out; every error is permanent and they add up:
+
+| Source | What it does |
+| --- | --- |
+| Heading | Rotating a displacement by a heading 1° out puts it 1.7 cm off per metre. The dominant term, and on a two-pod setup the heading comes from an IMU that drifts |
+| `odometry.yawScalar` | The Pinpoint's one calibration knob. 2% wrong is 7.2° after a full turn, and then every straight line goes the wrong way |
+| `odometry.offsetError` | How far the pods really are from where you told the board. Invisible driving straight; turns rotation into translation |
+| Quantisation | Whole ticks, accumulating |
+
+The pose update is a pose exponential, not a midpoint rotation: over one cycle
+the robot follows an arc, and integrating the chord is a systematic shortfall on
+every turn. Small per cycle, centimetres over a lap.
+
+With everything calibrated the pose is about 1 cm out after a lap of the field.
+Set the yaw scalar to 1.04 and the same lap ends 32 cm out. Both numbers are
+measured by `npm run check`.
+
+Two trails are drawn on the field: blue for where the robot actually went, amber
+for where the odometry thinks it went. The gap between them is the drift, and
+the HUD's Odometry card reports it as a number. That is not something a real
+robot can compute, which is exactly why it is worth having — "my auto ends up
+20 cm short" and "my odometry is 20 cm out" are different problems with
+different fixes, and on a real field it takes a tape measure to tell them apart.
+
+`robot.odometry.pose` in an AUTO routine is the pose to steer by, in whatever
+`robot.frame` is set to. One I2C transaction per read, because the board hands
+the whole pose back in one go.
+
 ## The wheel contact model
 
 Each wheel sits at a position in the chassis frame and rolls along a unit vector

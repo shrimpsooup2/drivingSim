@@ -599,6 +599,28 @@ same place. Published FIRST field diagrams name their axes from a chosen
 viewpoint and the letters move between seasons, so the reference here is the
 simulator's own frame, whose axes are pinned to the field CAD.
 
+### Steering by odometry
+
+`robot.odometry.pose` is the pose the board reports, in `robot.frame`:
+
+```js
+function* driveTo(robot, x, y) {
+  robot.drive(0.5, 0, 0);
+  yield () => {
+    const p = robot.odometry.pose;              // one I2C read, keep it
+    return Math.hypot(p.x - x, p.y - y) < 2;    // inches, in the 'ftc' frame
+  };
+  robot.drive(0, 0, 0);
+}
+```
+
+This is what an AUTO should steer by rather than `travelled`: the pods do not
+slip, so unlike the drive encoders it does not lie when a wheel scrubs. It does
+drift — a pose is an integral — and `robot.odometry.set(pose)` is the
+`setPosition` a team calls after squaring up on a known tile. See
+[PHYSICS](PHYSICS.md#odometry) for what makes it drift and by how much, and
+watch the amber trail on the field pull away from the blue one.
+
 ### Putting the robot somewhere
 
 "What does the routine do from two tiles left of here?" used to mean editing a
