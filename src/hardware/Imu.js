@@ -34,6 +34,15 @@ export class Imu {
     this.latencySeconds = opts.latencySeconds ?? 0.005;
     this.filterHz = opts.filterHz ?? 60;
     this.enabled = opts.enabled ?? true;
+    /**
+     * An injected fault. `'dead'` reports zero for ever, `'stuck'` holds
+     * whatever it was reading -- which is what an I2C bus that has stopped
+     * answering actually looks like from inside an op-mode, and is far nastier
+     * than a sensor that reports an error: field-centric drive quietly rotates
+     * its frame as the robot turns, and a heading loop turns for ever.
+     * @type {'none'|'dead'|'stuck'}
+     */
+    this.fault = 'none';
 
     this.filter = new LowPassFilter(this.filterHz);
     /** @type {{t:number, heading:number}[]} */
@@ -103,6 +112,15 @@ export class Imu {
    * @returns {number} reported heading, radians
    */
   update(trueHeading, trueAngularVelocity, dt) {
+    if (this.fault === 'dead') {
+      this.heading = 0;
+      this.angularVelocity = 0;
+      return this.heading;
+    }
+    if (this.fault === 'stuck') {
+      this.angularVelocity = 0;
+      return this.heading;
+    }
     if (!this.enabled) {
       this.heading = trueHeading;
       this.angularVelocity = trueAngularVelocity;

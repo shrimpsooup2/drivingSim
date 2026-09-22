@@ -182,6 +182,7 @@ function codeLabel(code) {
   if (code === 'ShiftLeft' || code === 'ShiftRight') return 'Shift';
   if (code === 'Period') return '.';
   if (code === 'Comma') return ',';
+  if (code === 'Backquote') return '`';
   if (code.startsWith('Key')) return code.slice(3);
   if (code.startsWith('Arrow')) return 'Arrow keys';
   return code;

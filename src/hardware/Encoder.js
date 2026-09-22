@@ -45,6 +45,25 @@ export class Encoder {
      */
     this.overflow16Bit = opts.overflow16Bit ?? true;
 
+    /**
+     * An injected fault, for finding out what your code does when the hardware
+     * lets you down.
+     *
+     *  - `'none'`
+     *  - `'dead'` -- reports zero, for ever. What an unplugged encoder cable
+     *    does, and it is silent: a position-based AUTO decides it has not moved
+     *    and drives until something stops it.
+     *  - `'stuck'` -- holds whatever it was reading when the fault started. A
+     *    slipping magnet or a shaft that has come loose in its hub.
+     *
+     * Worth being able to try, because these are the two failures that lose
+     * matches and neither of them looks like a code problem.
+     * @type {'none'|'dead'|'stuck'}
+     */
+    this.fault = 'none';
+    /** A constant added to what it reports: a miscounted reset, a bad splice. */
+    this.offsetTicks = 0;
+
     this.filter = new LowPassFilter(this.velocityFilterHz);
     this.reset();
   }
@@ -79,6 +98,9 @@ export class Encoder {
 
     this.rawTicks = exact;
     this.lastTicks = this.ticks;
+    if (this.fault === 'dead') ticks = 0;
+    else if (this.fault === 'stuck') ticks = this.lastTicks;
+    else ticks += this.offsetTicks;
     this.ticks = ticks;
 
     if (dt > 0) {

@@ -628,6 +628,133 @@ async function main() {
       }
     }
 
+    // --- The hardware inspector, and breaking something with it.
+    const hardware = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const sim = app.sim;
+      const panel = app.hardware;
+
+      // The row of viewport toggles must not overlap: they are positioned by
+      // hand in CSS and adding one is exactly how that gets broken.
+      const toggles = [...app.viewport.querySelectorAll('.panel-toggle')].map((b) => {
+        const r = b.getBoundingClientRect();
+        return { text: b.textContent, left: r.left, right: r.right, top: r.top };
+      });
+      toggles.sort((a, b) => a.left - b.left);
+      let overlap = null;
+      for (let i = 1; i < toggles.length; i++) {
+        if (toggles[i].left < toggles[i - 1].right - 0.5) {
+          overlap = toggles[i - 1].text + ' / ' + toggles[i].text;
+        }
+      }
+
+      panel.toggle(true);
+      panel.update();
+      const sections = panel.body.querySelectorAll('.hardware-section').length;
+      const rows = panel.body.querySelectorAll('.hardware-row').length;
+      const selects = panel.body.querySelectorAll('.hardware-fault').length;
+
+      // Drive straight with an intact robot, then again with a dead encoder on
+      // one port, and check the readout says so. An encoder-based routine is
+      // the thing this breaks, so the number that has to change is the tick
+      // count, not the robot's behaviour.
+      sim.input.keyboardSource.active = true;
+      const run = (seconds) => {
+        sim.input.keyboardSource.keys.add('KeyW');
+        for (let i = 0; i < Math.round(seconds * 60); i++) sim.step(1 / 60);
+        sim.input.keyboardSource.keys.delete('KeyW');
+      };
+      sim.resetRobot();
+      run(0.8);
+      const healthyTicks = sim.robot.drivetrain.motors[0].encoder.ticks;
+
+      // By device name, not by position: the sections move around.
+      const port = sim.robot.drivetrain.motors[0].name;
+      const select = panel.body.querySelector('[data-device="motor:' + port + '"]');
+      select.value = 'dead';
+      select.dispatchEvent(new Event('change'));
+      sim.resetRobot();
+      run(0.8);
+      const deadTicks = sim.robot.drivetrain.motors[0].encoder.ticks;
+      const faulted = panel.faultCount;
+      const pill = panel.faultPill.textContent;
+      const buttonFaulted = panel.button.classList.contains('faulted');
+
+      // And a stuck IMU, which is the nastier one: field centric quietly
+      // rotates its own frame because the heading never changes.
+      sim.robot.imu.fault = 'stuck';
+      const heldHeading = sim.robot.imu.heading;
+      sim.input.keyboardSource.keys.add('KeyQ');
+      for (let i = 0; i < 60; i++) sim.step(1 / 60);
+      sim.input.keyboardSource.keys.delete('KeyQ');
+      const stillHeading = sim.robot.imu.heading;
+      const trulyTurned = Math.abs(sim.robot.body.rotation.radians);
+
+      panel.repair();
+      panel.update();
+      const afterRepair = panel.faultCount;
+      // Left open with a fault showing, for the screenshot.
+      sim.robot.drivetrain.motors[1].encoder.fault = 'stuck';
+      sim.robot.odometry.pods[0].fault = 'dead';
+      panel.update();
+      return {
+        toggles: toggles.length,
+        overlap,
+        sections,
+        rows,
+        selects,
+        healthyTicks,
+        deadTicks,
+        faulted,
+        pill,
+        buttonFaulted,
+        headingHeld: Math.abs(stillHeading - heldHeading),
+        trulyTurned,
+        afterRepair,
+      };
+    })()`);
+    console.log(
+      `  Hardware: ${hardware.sections} sections, ${hardware.rows} rows, ` +
+        `${hardware.selects} fault selectors; a dead encoder read ` +
+        `${hardware.deadTicks} tk where a healthy one read ${hardware.healthyTicks}`,
+    );
+    console.log(
+      `    stuck IMU: heading moved ${hardware.headingHeld.toFixed(4)} rad while the robot ` +
+        `turned ${hardware.trulyTurned.toFixed(2)} rad`,
+    );
+    if (hardware.overlap) failures.push(`viewport toggles overlap: ${hardware.overlap}`);
+    if (hardware.toggles < 5) failures.push(`only ${hardware.toggles} viewport toggles found`);
+    if (hardware.sections !== 6) failures.push(`${hardware.sections} sections, expected 6`);
+    if (hardware.rows < 20) failures.push(`${hardware.rows} rows, expected a row per device`);
+    if (hardware.selects < 6) failures.push(`${hardware.selects} fault selectors, expected 6 or more`);
+    if (!(Math.abs(hardware.healthyTicks) > 200)) {
+      failures.push(`a healthy encoder only counted ${hardware.healthyTicks}`);
+    }
+    if (hardware.deadTicks !== 0) failures.push(`a dead encoder read ${hardware.deadTicks}`);
+    if (hardware.faulted !== 1) failures.push(`${hardware.faulted} devices reported faulted`);
+    if (!/1 device faulted/.test(hardware.pill)) failures.push(`the pill read "${hardware.pill}"`);
+    if (!hardware.buttonFaulted) failures.push('the toggle did not show that something is broken');
+    if (hardware.headingHeld > 1e-9) {
+      failures.push(`a stuck IMU moved by ${hardware.headingHeld} rad`);
+    }
+    if (!(hardware.trulyTurned > 0.3)) {
+      failures.push(`the robot needed to actually turn, only managed ${hardware.trulyTurned} rad`);
+    }
+    if (hardware.afterRepair !== 0) failures.push('Repair everything left something broken');
+
+    await sleep(300);
+    const shotHardware = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const hardwarePath = shotPath.replace(/\.png$/, '-hardware.png');
+    await writeFile(hardwarePath, Buffer.from(shotHardware.data, 'base64'));
+    console.log(`  Screenshot: ${hardwarePath}`);
+    await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.hardware.repair();
+      app.hardware.toggle(false);
+      app.sim.resetRobot();
+      return true;
+    })()`);
+
     // --- A routine draws on the field, and it comes out on the tiles.
     const drawn = await cdp.evaluate(`(() => {
       const app = globalThis.ftcSim;

@@ -193,6 +193,7 @@ export const APP_SHORTCUTS = [
   'KeyP',
   'Period',
   'Comma',
+  'Backquote',
   'Tab',
   'Slash',
   'Escape',
@@ -242,6 +243,7 @@ export function keyLabel(code) {
   if (code === 'ShiftLeft' || code === 'ShiftRight') return 'Shift';
   if (code === 'Period') return '.';
   if (code === 'Comma') return ',';
+  if (code === 'Backquote') return '`';
   if (code.startsWith('Key')) return code.slice(3);
   if (code.startsWith('Digit')) return code.slice(5);
   if (code.startsWith('Arrow')) return `${code.slice(5)} arrow`;
@@ -289,6 +291,7 @@ export const KEYBOARD_HELP = [
   ['M', 'Restart the match'],
   ['G', 'Put the game away / bring it back'],
   ['P', 'Pause'],
+  ['`', 'Hardware inspector'],
   ['.', 'Step one op-mode loop'],
   [',', 'Step one millisecond'],
   ['Tab', 'Show / hide settings'],

@@ -972,3 +972,78 @@ select { width: 100%; }
   color: var(--muted);
   margin: 6px 0 0;
 }
+
+/* --- The hardware inspector ---------------------------------------------- */
+
+.hardware-toggle { right: 336px; }
+.hardware-toggle.faulted { border-color: #e2564a; color: #e2564a; }
+
+.hardware-card { max-width: 720px; }
+.hardware-head { display: flex; align-items: baseline; gap: 10px; }
+
+.hardware-faults {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--muted);
+}
+.hardware-faults[data-tone='good'] { color: #47d18a; }
+.hardware-faults[data-tone='bad'] { color: #e2564a; border: 1px solid rgba(226, 86, 74, 0.4); }
+
+.hardware-blurb { font-size: 11px; color: var(--muted); margin: 8px 0 12px; }
+
+/* Two columns on a wide card, one on a narrow one. The sections are short, so
+   a single column wastes most of the width and makes the card scroll. */
+.hardware-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 10px;
+}
+
+.hardware-section {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+}
+
+.hardware-title {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.hardware-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font: 10px/1.35 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.hardware-section.wide { grid-column: 1 / -1; }
+
+.hardware-label { color: var(--muted); min-width: 76px; }
+.hardware-value { flex: 1; text-align: right; white-space: nowrap; }
+.hardware-after { display: flex; gap: 4px; flex-wrap: nowrap; }
+
+.hardware-fault,
+.hardware-input {
+  font: 10px/1 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: #e6e8ec;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 4px;
+}
+.hardware-input { width: 52px; text-align: right; }
+.hardware-fault:focus,
+.hardware-input:focus { outline: 1px solid var(--accent); }
+
+.hardware-actions { margin-top: 12px; }

@@ -63,6 +63,14 @@ export class DeadWheel {
     this.ticksPerRev = opts.ticksPerRev ?? 2000;
     this.reversed = opts.reversed ?? false;
     this.quantise = opts.quantise ?? true;
+    /**
+     * An injected fault. A pod is a free-spinning wheel on a spring arm, and
+     * the way it fails is that the arm lifts or the wheel jams -- either way it
+     * stops counting while the other pod carries on, and the pose walks sideways
+     * across the field for no reason the code can see.
+     * @type {'none'|'dead'|'stuck'}
+     */
+    this.fault = 'none';
 
     this.reset();
   }
@@ -102,6 +110,13 @@ export class DeadWheel {
 
   /** Sample it, as a hub read does: whole ticks, and the delta since last time. */
   sample() {
+    if (this.fault !== 'none') {
+      // Both faults report no movement. `dead` reads zero as well, which is
+      // what a disconnected pod does; `stuck` keeps its last count.
+      this.deltaTicks = 0;
+      if (this.fault === 'dead') this.ticks = 0;
+      return this.ticks;
+    }
     const exact = (this.sign * this.angle * this.ticksPerRev) / (2 * Math.PI);
     const ticks = this.quantise ? Math.round(exact) : exact;
     this.deltaTicks = ticks - this.ticks;

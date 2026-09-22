@@ -67,6 +67,7 @@ silently.
 | `M` | Restart the match from setup |
 | `G` | Toggle the BIOBUZZ game (on by default) |
 | `P` | Pause |
+| `` ` `` | Hardware inspector |
 | `.` | Step one op-mode loop |
 | `,` | Step one millisecond |
 | `Tab` | Show / hide settings |
@@ -132,6 +133,33 @@ minimum range inside which no hood angle can score.
 A key is on or off, so keyboard input is a square wave. The acceleration ramp
 smooths it, which makes the keyboard fine for learning the field and useless for
 learning throttle control. There is no substitute for a real controller there.
+
+## The hardware inspector
+
+Backquote (`` ` ``) opens it. Two jobs:
+
+**Seeing.** A Driver Station tells you what your op-mode chose to print. This
+tells you what the hardware is doing: the duty each port ended up at, what its
+encoder reads, what the pack is delivering, the loop time and what the hubs cost
+this cycle, the odometry pose and how far it has drifted, the flywheel. When a
+robot behaves oddly the answer is usually in one of those numbers, and usually
+in the one nobody printed.
+
+**Breaking.** Every sensor row has a fault selector — *working*, *dead* (reads
+zero), *stuck* (holds its last value) — on each drive encoder, the IMU, and each
+odometry pod. The IMU also takes a drift figure directly, in degrees.
+
+That half is the point. An encoder cable comes unplugged, a pod's arm lifts, an
+I2C bus stops answering, and none of those look like hardware failures from
+inside an op-mode: they look like a routine that drives into a wall, or a
+field-centric drive that slowly rotates its own frame, or a pose that walks
+sideways across the field. You cannot practise for that on a working robot and
+you cannot easily break a real one on purpose. Here it is a dropdown, and
+**Repair everything** puts it all back.
+
+The stuck IMU is the one worth trying first: the heading simply stops changing,
+your code gets a number that looks perfectly reasonable, and everything built on
+it goes wrong at once.
 
 ## Moving the robot by hand
 

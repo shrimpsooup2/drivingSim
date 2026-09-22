@@ -9,6 +9,7 @@ import { AutoPanel } from '../ui/AutoPanel.js';
 import { NetPanel } from '../ui/NetPanel.js';
 import { MatchOverPanel } from '../ui/MatchOverPanel.js';
 import { StepBar } from '../ui/StepBar.js';
+import { HardwarePanel } from '../ui/HardwarePanel.js';
 import { cssColour } from '../teleop/FieldDrawing.js';
 import { InputManager } from '../input/InputManager.js';
 import { Overlay2d } from '../render/Overlay2d.js';
@@ -63,6 +64,7 @@ export class App {
     this.matchOver = new MatchOverPanel(this.viewport, {
       onRestart: () => this.sim.game?.start(),
     });
+    this.hardware = new HardwarePanel(this.viewport, this.sim);
     this.stepBar = new StepBar(this.viewport, this.sim);
 
     /** Schema defaults, so a camera can be reset to its as-shipped framing. */
@@ -203,6 +205,10 @@ export class App {
       const view = this.config.values.view;
       this.config.set('view.showTrajectory', !view.showTrajectory);
     });
+    // Backquote, because every letter on the keyboard is either a gamepad key
+    // or an app shortcut already -- and it is the conventional key for a debug
+    // panel anyway.
+    keyboard.on('Backquote', () => this.hardware.toggle());
     keyboard.on('KeyP', () => this.stepBar.togglePause());
     // One op-mode loop, which is the unit a routine moves in -- and, with hub
     // latency on, a step whose own length is the loop time.
@@ -223,6 +229,7 @@ export class App {
       this.drills.toggle(false);
       this.auto.toggle(false);
       this.net.toggle(false);
+      this.hardware.toggle(false);
       this.matchOver.dismiss();
     });
 
@@ -406,6 +413,7 @@ export class App {
       this.drills.update();
       this.auto.update();
       this.net.update();
+      this.hardware.update();
       const view = this.config.values.view;
       this.hud.setVisible(view.showHud, view.showGraphs);
       if (view.showHud || view.showGraphs) this.hud.update(this.sim, dt);
