@@ -1041,6 +1041,37 @@ export class Renderer {
       }
     }
 
+    // The AprilTags, as squares in space. Drawn from the tag poses themselves
+    // rather than as decals on the CELL, so what you see is exactly what the
+    // camera model is looking at -- including the fact that they face the floor.
+    if (config.view.showAprilTags !== false && sim.game?.field?.aprilTags) {
+      const seen = new Set(sim.robot.camera?.detections?.map((d) => d.id) ?? []);
+      for (const tag of sim.game.field.aprilTags()) {
+        const half = tag.size / 2;
+        // Bright for a tag the camera can currently read, dim for the rest.
+        const lit = seen.has(tag.id);
+        const r = lit ? 0.35 : 0.5;
+        const g = lit ? 0.85 : 0.52;
+        const b = lit ? 1 : 0.56;
+        const alpha = lit ? 0.95 : 0.5;
+        const corners = [
+          [-1, -1],
+          [1, -1],
+          [1, 1],
+          [-1, 1],
+        ].map(([u, v]) => ({
+          x: tag.x + (tag.right.x * u + tag.up.x * v) * half,
+          y: tag.y + (tag.right.y * u + tag.up.y * v) * half,
+          z: tag.z + (tag.right.z * u + tag.up.z * v) * half,
+        }));
+        for (let i = 0; i < 4; i++) {
+          const a = corners[i];
+          const c = corners[(i + 1) % 4];
+          this.lines.line(a.x, a.y, a.z, c.x, c.y, c.z, r, g, b, alpha);
+        }
+      }
+    }
+
     // Whatever the routine drew. Last of the ground overlays and a hair above
     // both trails, because the point of drawing a target is to see it.
     if (config.view.showDrawings !== false && sim.drawing?.shapes.length) {

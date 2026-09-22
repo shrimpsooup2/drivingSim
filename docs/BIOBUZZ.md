@@ -621,6 +621,68 @@ drift — a pose is an integral — and `robot.odometry.set(pose)` is the
 [PHYSICS](PHYSICS.md#odometry) for what makes it drift and by how much, and
 watch the amber trail on the field pull away from the blue one.
 
+### AprilTags and a camera
+
+Sixteen tags, from Section 9.9: 3.25 in squares of the 36h11 family, in clusters
+of four, with IDs 30–33 on the red CELL away from the audience, 34–37 on the red
+CELL on the audience side, 38–41 on the blue CELL on the audience side and 42–45
+on the blue CELL away from it. Each cluster sits on the **bottom of a CELL,
+facing downward toward the tiles**, with its bottom edge pointing at the middle
+of the field.
+
+That last part is the whole story of using them:
+
+- A cluster on the underside of a raised CELL has its normal about 30° off
+  vertical, so a camera at robot height looking across the field sees it almost
+  edge-on and will not decode it. Pitch the camera up (the default is 20°) or
+  drive underneath.
+- Which CELL is raised decides which clusters face which way, so **tipping a
+  HIVE changes what you can see**. A pose fix that worked all through auto can
+  stop working the moment somebody tips something.
+
+The camera models the four things that actually decide whether this works:
+field of view (horizontal from the setting, vertical from the sensor's aspect),
+apparent size in pixels (derived from resolution and FOV, so a 3.25 in tag at
+4.5 m really is too small), incidence angle, and **timing** — 30 frames a second
+with about 60 ms of latency, so a detection describes where the robot was 60 ms
+ago. At 1 m/s that is 6 cm of error with a perfect tag reading, which is why a
+fix wants taking while stopped or slow.
+
+```js
+function loop(robot) {
+  const tags = robot.camera.tags;            // biggest first, free to read
+  if (!tags.length) return;
+  robot.telemetry.addData('tag', tags[0].id);
+  robot.telemetry.addData('range', tags[0].range);   // inches in 'ftc'
+  robot.telemetry.addData('stale', tags[0].ageMs);
+  if (robot.truth.speed < 0.1) robot.camera.fix();   // hand it to the odometry
+}
+```
+
+`robot.camera.pose()` gives the implied robot pose without applying it. A
+heading is needed, because a detection here is a *measurement* — range, bearing,
+elevation, as `AprilTagDetection.ftcPose` gives them — rather than a solved
+6-DoF pose; it defaults to the odometry's heading. The error in the fix is then
+honestly the measurement error plus your heading error, and both of those are
+modelled elsewhere rather than invented. Measured over a lap: 3–5 cm from a
+metre and a half, which `npm run check` reports.
+
+Reading the camera costs no loop time: vision runs on its own thread, and
+reading the latest detections is a Java call, not a hub transaction. Free and
+stale rather than expensive and fresh. `robot.camera.fix()` does cost one
+transaction, because it writes to the odometry board.
+
+**One honest limit.** The arrangement of the four tags *inside* a cluster —
+their spacing and which ID goes in which corner — is in Figure 9-15, and a
+figure is an image this was not built from. Those two numbers are assumptions,
+recorded in `INFERRED_APRILTAG` in `field/biobuzz/aprilTags.js`, and they are a
+few inches each — which is exactly the error a robot gets from a mis-specified
+tag library, so a routine written against them behaves the way one written
+against a wrong library would. Everything else (the IDs, the sizes, the family,
+which CELL each cluster is on, and where on the CELL it sits) comes from the
+manual's text. If you check the figure or measure a real field, that constant
+and `clusterTags` are the only two things to change.
+
 ### Showing your working
 
 The hard half of debugging an AUTO is not what the robot did — you can watch

@@ -5,6 +5,7 @@ import { Battery } from '../hardware/Battery.js';
 import { HardwareBus } from '../hardware/HardwareBus.js';
 import { Imu } from '../hardware/Imu.js';
 import { Odometry } from '../hardware/Odometry.js';
+import { Camera } from '../hardware/Camera.js';
 
 /**
  * The robot: a chassis body, a drivetrain, the electrical system, and a list of
@@ -54,6 +55,13 @@ export class Robot {
      * drifted from the truth without the op-mode having asked for it.
      */
     this.odometry = new Odometry(config.odometry);
+    /**
+     * A webcam looking for AprilTags.
+     *
+     * Advanced from `Simulation`, not from here: it needs the FIELD's tags as
+     * well as the robot's pose, and the robot does not know about the FIELD.
+     */
+    this.camera = new Camera(config.camera);
 
     /** @type {import('./Subsystem.js').Subsystem[]} */
     this.subsystems = [];
@@ -143,6 +151,7 @@ export class Robot {
     this.battery.nominalVoltage = config.battery.nominalVoltage;
 
     this.odometry.applySettings(config.odometry);
+    this.camera.applySettings(config.camera);
 
     this.imu.enabled = config.imu.enabled;
     this.imu.driftRateDegPerSec = config.imu.driftRateDegPerSec;
@@ -286,6 +295,7 @@ export class Robot {
     // on a known tile and calls `setPosition` before the match. Drift from
     // there is the interesting part.
     this.odometry.reset({ x, y, heading }, this.imu.heading);
+    this.camera.reset();
     for (const sub of this.subsystems) sub.reset();
     this.stats = {
       topSpeed: 0,

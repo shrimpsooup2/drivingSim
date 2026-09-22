@@ -798,7 +798,7 @@ async function main() {
     );
     if (hardware.overlap) failures.push(`viewport toggles overlap: ${hardware.overlap}`);
     if (hardware.toggles < 5) failures.push(`only ${hardware.toggles} viewport toggles found`);
-    if (hardware.sections !== 6) failures.push(`${hardware.sections} sections, expected 6`);
+    if (hardware.sections !== 7) failures.push(`${hardware.sections} sections, expected 7`);
     if (hardware.rows < 20) failures.push(`${hardware.rows} rows, expected a row per device`);
     if (hardware.selects < 6) failures.push(`${hardware.selects} fault selectors, expected 6 or more`);
     if (!(Math.abs(hardware.healthyTicks) > 200)) {
@@ -1176,6 +1176,97 @@ async function main() {
     if (Math.round(hubLoop.fixedMs) !== 25) {
       failures.push(`with charging off, 40 Hz should be 25 ms, got ${hubLoop.fixedMs}`);
     }
+
+    // --- AprilTags: sixteen of them, and a camera that can only see some.
+    //
+    // Last of the added blocks, because it has to re-stage the FIELD -- which
+    // CELL is raised decides which clusters face which way -- and restaging
+    // puts the MATCH back into AUTO, where a compiled routine has the ROBOT
+    // and the sticks do nothing. The AUTO editor block below restarts the
+    // MATCH itself, so nothing after this cares.
+    const vision = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const sim = app.sim;
+      // From a staged FIELD, because which CELL is raised decides which
+      // clusters face which way, and the MATCH above has been tipping HIVES.
+      sim.game.start();
+      for (let i = 0; i < 10; i++) sim.step(1 / 60);
+      const tags = sim.game.field.aprilTags();
+      const redUp = sim.game.field.hives.red.up;
+
+      const look = (x, y, heading) => {
+        sim.placeRobot(x, y, heading);
+        sim.robot.camera.reset();
+        for (let i = 0; i < 30; i++) sim.step(1 / 60);
+        return sim.robot.camera.detections;
+      };
+
+      const seen = look(-0.3, -1.4, Math.PI / 2);
+      const body = sim.robot.body;
+      const fix = sim.robot.camera.bestPose(body.rotation.radians);
+      const error = fix
+        ? Math.hypot(fix.x - body.position.x, fix.y - body.position.y)
+        : null;
+
+      // A level camera looks straight under a raised CELL and finds nothing
+      // close in, which is the thing to know about this season's tags.
+      app.config.set('camera.pitchDegrees', 0);
+      const level = look(-0.3, -0.9, Math.PI / 2).length;
+      app.config.set('camera.pitchDegrees', 25);
+      const pitched = look(-0.3, -0.9, Math.PI / 2).length;
+      app.config.set('camera.pitchDegrees', 20);
+
+      // Drawn where they are, and lit when read.
+      const drawn = look(-0.3, -1.4, Math.PI / 2).length;
+      sim.paused = true;
+      app.renderer.render(sim, 1 / 60);
+      return {
+        total: tags.length,
+        ids: [...tags.map((t) => t.id)].sort((a, b) => a - b),
+        seen: seen.length,
+        seenIds: seen.map((d) => d.id),
+        bestPixels: seen[0]?.pixels ?? 0,
+        ageMs: (seen[0]?.age ?? 0) * 1000,
+        error,
+        level,
+        pitched,
+        drawn,
+        redUp,
+      };
+    })()`);
+    console.log(
+      `  AprilTags: ${vision.total} on the field; from a metre and a half the camera reads ` +
+        `${vision.seen} [${vision.seenIds.join(' ')}] at ${vision.bestPixels.toFixed(0)} px, ` +
+        `${vision.ageMs.toFixed(0)} ms old, implying a pose ` +
+        `${vision.error === null ? 'n/a' : (vision.error * 1000).toFixed(0) + ' mm'} out`,
+    );
+    console.log(
+      `    red's ${vision.redUp} CELL is up; a level camera finds ${vision.level} up close, ` +
+        `pitched up, ${vision.pitched}`,
+    );
+    if (vision.total !== 16) failures.push(`${vision.total} tags on the field, expected 16`);
+    if (vision.ids[0] !== 30 || vision.ids[15] !== 45) {
+      failures.push(`tag IDs ran ${vision.ids[0]}..${vision.ids[15]}, expected 30..45`);
+    }
+    if (vision.seen < 4) failures.push(`the camera only read ${vision.seen} tags`);
+    if (!(vision.error !== null && vision.error < 0.06)) {
+      failures.push(`a tag fix was ${vision.error} m out`);
+    }
+    if (!(vision.ageMs > 40)) failures.push(`a detection was only ${vision.ageMs} ms old`);
+    if (vision.level !== 0) failures.push(`a level camera should see nothing up close, saw ${vision.level}`);
+    if (vision.pitched < 4) failures.push(`pitched up it should see the cluster, saw ${vision.pitched}`);
+
+    await sleep(300);
+    const shotTags = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const tagPath = shotPath.replace(/\.png$/, '-apriltags.png');
+    await writeFile(tagPath, Buffer.from(shotTags.data, 'base64'));
+    console.log(`  Screenshot: ${tagPath}`);
+    await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.sim.paused = false;
+      app.sim.resetRobot();
+      return true;
+    })()`);
 
     // --- The AUTO editor, through the real UI.
     //

@@ -4,6 +4,7 @@ import { Ball } from '../../physics/Ball.js';
 import { BallWorld } from '../../physics/BallWorld.js';
 import { Obstacle } from '../Obstacle.js';
 import { Hive } from './Hive.js';
+import { fieldTags } from './aprilTags.js';
 import { Flower } from './Flower.js';
 import { buildZones, gardenStagingPositions } from './zones.js';
 import {
@@ -292,6 +293,18 @@ export class BiobuzzField {
     }
 
     for (const obstacle of this.obstacles) this.field.addElement(obstacle);
+  }
+
+  /**
+   * Every AprilTag on the FIELD, where it is right now.
+   *
+   * Recomputed on demand rather than cached, because the HIVES tip and a
+   * cluster on a CELL that has just gone down is a foot lower and pointing
+   * somewhere else. Sixteen tags of arithmetic once per camera frame is
+   * nothing; a stale tag pose is a camera reading a tag through the floor.
+   */
+  aprilTags() {
+    return fieldTags(this.hives);
   }
 
   /**

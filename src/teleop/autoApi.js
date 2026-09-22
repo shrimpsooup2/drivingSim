@@ -506,6 +506,93 @@ export function buildAutoApi(deps) {
     },
 
     /**
+     * The webcam, and the AprilTags it can see.
+     *
+     * Free to read and out of date, which is the real trade: vision runs on its
+     * own thread, so reading it costs your loop nothing and the answer describes
+     * where the robot was about 60 ms ago. `ageMs` on each detection says how
+     * old, and at 1 m/s that is 6 cm -- so a fix is worth taking while stopped
+     * or slow, and worth distrusting at speed.
+     *
+     * The BIOBUZZ clusters face *downward* off the underside of a CELL, so
+     * whether you see anything at all depends mostly on the camera's pitch. If
+     * `count` is always zero, that is the first thing to look at.
+     */
+    camera: {
+      get fitted() {
+        return robot.camera.enabled;
+      },
+      /** How many tags are in the latest frame. */
+      get count() {
+        return robot.camera.detections.length;
+      },
+      /**
+       * The detections, biggest first. Range in `robot.frame`'s units, bearing
+       * and elevation in degrees, positive left and up.
+       */
+      get tags() {
+        return robot.camera.detections.map((d) => ({
+          id: d.id,
+          range: lengthInFrame(d.range, frame),
+          bearing: d.bearing * DEG,
+          elevation: d.elevation * DEG,
+          incidence: d.incidence * DEG,
+          pixels: d.pixels,
+          ageMs: d.age * 1000,
+        }));
+      },
+      /** One by id, or null. */
+      tag(id) {
+        return api.camera.tags.find((t) => t.id === id) ?? null;
+      },
+      /**
+       * Where the biggest tag in frame says the robot was, in `robot.frame`.
+       *
+       * A heading is needed because a detection is a measurement rather than a
+       * solved pose, and by default it uses the odometry's -- which is the one a
+       * routine is steering by. Null when nothing is in frame.
+       */
+      pose(heading) {
+        const h =
+          heading === undefined
+            ? robot.odometry.enabled
+              ? robot.odometry.pose.heading
+              : robot.imu.heading
+            : frame === 'sim'
+              ? heading / DEG
+              : fromFrame({ x: 0, y: 0, heading }, frame).heading;
+        const fix = robot.camera.bestPose(h);
+        if (!fix) return null;
+        const out = toFrame(fix, frame);
+        return {
+          x: out.x,
+          y: out.y,
+          heading: frame === 'sim' ? out.heading * DEG : out.heading,
+          range: lengthInFrame(fix.range, frame),
+          ageMs: fix.age * 1000,
+        };
+      },
+      /**
+       * Take the fix: hand the pose to the odometry, as `setPosition` does.
+       *
+       * Returns true if there was one to take. Worth doing when a tag is close
+       * and square and the robot is slow; not worth doing every loop at speed,
+       * because a 60 ms old fix applied to a moving robot is a 6 cm step
+       * backwards in the estimate.
+       */
+      fix() {
+        const heading = robot.odometry.enabled
+          ? robot.odometry.pose.heading
+          : robot.imu.heading;
+        const pose = robot.camera.bestPose(heading);
+        if (!pose) return false;
+        robot.bus.i2c();
+        robot.odometry.reset({ x: pose.x, y: pose.y, heading }, robot.imu.heading);
+        return true;
+      },
+    },
+
+    /**
      * Draw on the field, in `robot.frame`.
      *
      * For showing what the routine *believes*, which is the hard half of

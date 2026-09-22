@@ -179,6 +179,14 @@ export class AutoRunner extends OpMode {
     this.finished = false;
     this._started = false;
     this.log = [];
+    // The API closes over the telemetry object and the log array, and
+    // `super.reset()` has just replaced the first of them -- so an API built
+    // before this point writes into an object nothing reads any more. It looks
+    // exactly like a routine whose `telemetry.addData` calls do nothing, which
+    // is what it was: a routine compiled *after* the game was switched on kept
+    // a stale API, because the only thing that used to force a rebuild was the
+    // game changing.
+    this._api = null;
     return this;
   }
 
@@ -307,6 +315,7 @@ export class AutoRunner extends OpMode {
       readEncoder: () => 0,
       readOdometry: () => ({ x: 0, y: 0, heading: 0 }),
       odometry: { enabled: false, pose: { x: 0, y: 0, heading: 0 }, reset() {} },
+      camera: { enabled: false, detections: [], bestPose: () => null },
     };
     stub.bus.exempt = true;
     return {

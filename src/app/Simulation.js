@@ -536,6 +536,18 @@ export class Simulation {
     // time, so the MATCH clock cannot drift away from the world when the
     // browser stutters or a substep budget is hit.
     this.game?.update(advanced);
+    // After the game, because the HIVES have just moved and the tags are on
+    // them: a frame exposed against last step's CELL angle would read a tag
+    // through the structure.
+    this.robot.camera.update(
+      advanced,
+      {
+        x: this.robot.body.position.x,
+        y: this.robot.body.position.y,
+        heading: this.robot.body.rotation.radians,
+      },
+      this.game?.field?.aprilTags?.() ?? [],
+    );
     this.net?.update(advanced);
     this.field.update(advanced);
     this.robot.updateStats(advanced);

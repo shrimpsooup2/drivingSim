@@ -132,6 +132,7 @@ export class HardwarePanel {
     this._section('hub', 'Control Hub', ['Loop', 'Hub time', 'Transactions', 'Caching']);
     this._section('battery', 'Battery', ['Bus voltage', 'Current', 'Charge']);
     this._imuSection();
+    this._section('camera', 'Camera', ['Tags', 'Newest', 'Frames']);
     this._section('subsystems', 'Mechanisms', ['Flywheel', 'Held']);
 
     // One row per drive port, plus a fault selector for its encoder.
@@ -339,6 +340,25 @@ export class HardwarePanel {
     for (const { index, select } of odometry.podFaults) {
       const pod = robot.odometry.pods[index];
       if (pod && select.value !== pod.fault) select.value = pod.fault;
+    }
+
+    // --- camera
+    const camera = this._sections.get('camera').rows;
+    const vision = robot.camera.status();
+    if (vision.enabled) {
+      camera['Tags'].value.textContent = vision.ids.length
+        ? `${vision.ids.length}: ${vision.ids.join(' ')}`
+        : 'none in frame';
+      const best = robot.camera.detections[0];
+      camera['Newest'].value.textContent = best
+        ? `${fmt(best.range / INCH, 1)} in \u00b7 ${fmt((best.bearing * 180) / Math.PI, 1)} deg \u00b7 ` +
+          `${fmt(best.pixels, 0)} px \u00b7 ${fmt(vision.ageMs, 0)} ms old`
+        : '-';
+      camera['Frames'].value.textContent = `${vision.frames} taken, ${vision.published} read`;
+    } else {
+      camera['Tags'].value.textContent = 'not fitted';
+      camera['Newest'].value.textContent = '-';
+      camera['Frames'].value.textContent = '-';
     }
 
     // --- mechanisms
