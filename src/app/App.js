@@ -9,6 +9,7 @@ import { AutoPanel } from '../ui/AutoPanel.js';
 import { NetPanel } from '../ui/NetPanel.js';
 import { MatchOverPanel } from '../ui/MatchOverPanel.js';
 import { StepBar } from '../ui/StepBar.js';
+import { cssColour } from '../teleop/FieldDrawing.js';
 import { InputManager } from '../input/InputManager.js';
 import { Overlay2d } from '../render/Overlay2d.js';
 import { defaultConfig } from '../config/schema.js';
@@ -377,6 +378,16 @@ export class App {
         background,
         bold: label.status === 'active',
         size: label.status === 'active' ? 13 : 11,
+      });
+    }
+
+    // Text a routine drew, in the colour it asked for.
+    for (const label of this.renderer.drawingLabels(this.sim)) {
+      if (!label.visible) continue;
+      this.overlay.label(label, label.text, {
+        color: cssColour(label.colour, label.alpha),
+        background: 'rgba(10, 13, 17, 0.72)',
+        size: 11,
       });
     }
   }

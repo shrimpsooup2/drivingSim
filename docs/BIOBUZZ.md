@@ -621,6 +621,34 @@ drift — a pose is an integral — and `robot.odometry.set(pose)` is the
 [PHYSICS](PHYSICS.md#odometry) for what makes it drift and by how much, and
 watch the amber trail on the field pull away from the blue one.
 
+### Showing your working
+
+The hard half of debugging an AUTO is not what the robot did — you can watch
+that — it is what the routine *believed*. `robot.draw` puts marks on the tiles,
+in whatever `robot.frame` is set to:
+
+```js
+function loop(robot) {
+  robot.draw.clear();
+  robot.draw.point(robot.cellTarget, 'amber');       // a cross
+  robot.draw.pose(robot.odometry.pose, 'cyan');      // an arrow
+  robot.draw.path(waypoints, 'magenta');             // a planned route
+  robot.draw.circle(robot.cellTarget, 12, 'green');  // a tolerance
+  robot.draw.text(target, 'shot 3');
+}
+```
+
+Points are `{x, y}` or `[x, y]`, radii are in the frame's units, and colours are
+a name (`red`, `blue`, `green`, `amber`, `cyan`, `magenta`, `white`, `grey`), a
+`#rrggbb` or an `[r, g, b]`. Whatever is drawn stays until `clear()`, so a path
+planned once can be drawn once; a reset clears it, because stale drawings look
+current. A routine that draws in a loop without clearing keeps its most recent
+500 shapes.
+
+This is the local version of what a real robot sends to FTC Dashboard or Pedro
+Pathing's field view. The example routine draws its target, its odometry pose
+and its firing line, so there is something to look at straight away.
+
 ### Putting the robot somewhere
 
 "What does the routine do from two tiles left of here?" used to mean editing a

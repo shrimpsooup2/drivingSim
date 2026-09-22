@@ -21,6 +21,8 @@ export const EXAMPLE_AUTO = `// BIOBUZZ auto. Runs during the 30-second AUTO per
 //   yield                     wait one op-mode cycle (20 ms)
 //   yield* helper(robot)      run another generator to completion
 //
+// robot.draw.* marks the tiles, so you can see what the routine thinks.
+//
 // Closed-loop on the IMU and the encoders, which is how a real auto goes.
 // robot.truth is the exact pose -- useful for working out what went wrong, but
 // steer by it and this will not survive the trip to a real field.
@@ -39,6 +41,18 @@ function init(robot) {
   START = robot.match.alliance === 'red' ? 0 : 180;
   robot.log('auto on ' + robot.match.alliance + ', ' + robot.held + ' pre-loaded');
 }
+
+// Show your working. robot.draw puts marks on the tiles, which is how you see
+// what the routine *believed* rather than only what the robot did. Called from
+// loop(), which runs every cycle alongside the generator below.
+function loop(robot) {
+  robot.draw.clear();
+  robot.draw.point(robot.cellTarget, 'amber');
+  if (robot.odometry.fitted) robot.draw.pose(robot.odometry.pose, 'cyan');
+  if (aiming) robot.draw.line(robot.truth, robot.cellTarget, 'green');
+}
+
+let aiming = false;
 
 // Where the robot is pointing on the field, in degrees.
 //
@@ -116,6 +130,7 @@ function* auto(robot) {
 
   // Onto the CELL and empty the magazine.
   robot.shooter.spinUp();
+  aiming = true;
   for (let shot = 0; shot < 4; shot++) {
     yield* turnTo(robot, robot.bearingTo(robot.cellTarget));
     if (!robot.shooter.aimAtCell()) {
@@ -130,6 +145,7 @@ function* auto(robot) {
     yield 0.45;
   }
   robot.shooter.spinDown();
+  aiming = false;
 
   // Into the LOADING ZONE: AUTO PARK is 5 more.
   yield* driveTo(robot, robot.loadingZone);

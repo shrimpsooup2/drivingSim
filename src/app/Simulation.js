@@ -6,6 +6,7 @@ import { Robot } from '../robot/Robot.js';
 import { Field } from '../field/Field.js';
 import { TeleOpDrive } from '../teleop/TeleOpDrive.js';
 import { AutoRunner } from '../teleop/AutoRunner.js';
+import { FieldDrawing } from '../teleop/FieldDrawing.js';
 import { InputManager } from '../input/InputManager.js';
 import { EventBus } from '../util/events.js';
 import { Vec2 } from '../math/Vec2.js';
@@ -62,6 +63,15 @@ export class Simulation {
     this.autoRunner.robot = this.robot;
     this.autoRunner.sim = this;
     this.autoRunner.init();
+
+    /**
+     * What a routine has drawn on the field. See `FieldDrawing`.
+     *
+     * On the simulation rather than on the runner because the renderer has to
+     * find it, and because anything else that wants to show its working -- a
+     * drill, one day -- can draw here too.
+     */
+    this.drawing = new FieldDrawing();
 
     /** Simulated seconds since the last reset. */
     this.time = 0;
@@ -367,6 +377,8 @@ export class Simulation {
     // with this, and having to press Compile each time would be absurd.
     this.autoRunner.reset();
     this.autoRunner.init();
+    // Stale drawings from the last run are worse than none: they look current.
+    this.drawing.clear();
     this.input.reset();
     this.field.reset();
     this.time = 0;

@@ -1809,6 +1809,13 @@ export const SCHEMA = [
       { path: 'view.showSlip', label: 'Slip markers', type: 'boolean', default: true },
       { path: 'view.showTrail', label: 'Path trail', type: 'boolean', default: true },
       {
+        path: 'view.showDrawings',
+        label: 'Routine drawings',
+        type: 'boolean',
+        default: true,
+        help: 'Show what a pasted AUTO routine draws with robot.draw -- its targets, its planned path, its waypoints. The hard part of debugging an AUTO is not what the robot did but what the routine believed, and a cross on the tiles says that better than three decimals on a panel.',
+      },
+      {
         path: 'view.showOdometryTrail',
         label: 'Odometry trail',
         type: 'boolean',

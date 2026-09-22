@@ -194,6 +194,7 @@ export class AutoRunner extends OpMode {
       },
       runtime: () => this.runtime,
       loopSeconds: () => this.sim?.controlPeriod ?? 0,
+      drawing: this.sim?.drawing,
     });
   }
 
@@ -315,6 +316,10 @@ export class AutoRunner extends OpMode {
       log: (message) => this.log.push(message),
       runtime: () => 0,
       loopSeconds: () => 0,
+      // No drawing at compile time: the module body runs then, and a stray
+      // top-level `robot.draw.point(...)` must not leave a mark on the field of
+      // a match that is already staged.
+      drawing: undefined,
     };
   }
 }

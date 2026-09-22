@@ -234,6 +234,25 @@ export class Renderer {
     return out;
   }
 
+  /**
+   * Text a routine drew, projected for the 2D overlay.
+   *
+   * Text cannot be drawn in the 3D pass -- there is no glyph geometry -- so it
+   * takes the same route the drill labels do: project the world point here, let
+   * the overlay draw at those pixels.
+   * @param {import('../app/Simulation.js').Simulation} sim
+   */
+  drawingLabels(sim) {
+    if (sim.config.view.showDrawings === false) return [];
+    const labels = sim.drawing?.labels ?? [];
+    const out = [];
+    for (const shape of labels) {
+      const p = this.camera.project(shape.x, shape.y, 0.06);
+      out.push({ ...p, text: shape.text, colour: shape.colour, alpha: shape.alpha });
+    }
+    return out;
+  }
+
   /** Posts and other solid geometry belonging to the active drill. */
   _drawChallengeSolids(sim) {
     const challenge = sim.challenges?.active;
@@ -1019,6 +1038,16 @@ export class Renderer {
         const b = sim.odometryTrail[i];
         const alpha = (i / n) * 0.8;
         this.lines.line(a[0], a[1], z + 0.002, b[0], b[1], z + 0.002, 0.98, 0.66, 0.24, alpha);
+      }
+    }
+
+    // Whatever the routine drew. Last of the ground overlays and a hair above
+    // both trails, because the point of drawing a target is to see it.
+    if (config.view.showDrawings !== false && sim.drawing?.shapes.length) {
+      for (const shape of sim.drawing.shapes) {
+        if (shape.kind !== 'line') continue;
+        const [r, g, b] = shape.colour;
+        this.lines.line(shape.ax, shape.ay, z + 0.004, shape.bx, shape.by, z + 0.004, r, g, b, shape.alpha);
       }
     }
 

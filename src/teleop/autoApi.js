@@ -4,6 +4,7 @@ import {
   angleInFrame,
   fromFrame,
   isFieldFrame,
+  lengthFromFrame,
   lengthInFrame,
   toFrame,
 } from '../math/fieldFrames.js';
@@ -64,6 +65,7 @@ const DEG = 180 / Math.PI;
  *   log: (message: string) => void,
  *   runtime: () => number,
  *   loopSeconds?: () => number,
+ *   drawing?: import('./FieldDrawing.js').FieldDrawing,
  * }} deps
  */
 export function buildAutoApi(deps) {
@@ -503,6 +505,85 @@ export function buildAutoApi(deps) {
       return lengthInFrame(Math.hypot(target.x - p.x, target.y - p.y), frame);
     },
 
+    /**
+     * Draw on the field, in `robot.frame`.
+     *
+     * For showing what the routine *believes*, which is the hard half of
+     * debugging an AUTO -- where it thinks the target is, what path it planned,
+     * which waypoint it is driving at. A cross on the tiles is a thing you see;
+     * three decimals on a side panel is a thing you decode.
+     *
+     * ```js
+     * function loop(robot) {
+     *   robot.draw.clear();
+     *   robot.draw.point(robot.cellTarget, 'amber');
+     *   robot.draw.pose(robot.odometry.pose, 'cyan');
+     * }
+     * ```
+     *
+     * Whatever is drawn stays until `clear()`, so a path planned once can be
+     * drawn once. Points are `{x, y}` or `[x, y]`; colours are a name
+     * ('red', 'blue', 'green', 'amber', 'cyan', 'magenta', 'white', 'grey'),
+     * a '#rrggbb', or an [r, g, b].
+     */
+    draw: {
+      clear() {
+        deps.drawing?.clear();
+        return api.draw;
+      },
+      /** How many shapes are on the field. */
+      get count() {
+        return deps.drawing?.count ?? 0;
+      },
+      line(from, to, colour) {
+        const a = inward(asPoint(from));
+        const b = inward(asPoint(to));
+        deps.drawing?.line(a.x, a.y, b.x, b.y, colour);
+        return api.draw;
+      },
+      /** A polyline through the points: a planned path, a set of waypoints. */
+      path(points, colour) {
+        const mapped = (points ?? []).map((p) => {
+          const q = inward(asPoint(p));
+          return [q.x, q.y];
+        });
+        deps.drawing?.path(mapped, colour);
+        return api.draw;
+      },
+      /** `radius` is in the frame's units too, so inches in 'ftc'. */
+      circle(centre, radius, colour) {
+        const c = inward(asPoint(centre));
+        deps.drawing?.circle(c.x, c.y, lengthFromFrame(radius ?? 0, frame), colour);
+        return api.draw;
+      },
+      /** A cross. What you want for a target or a waypoint. */
+      point(at, colour) {
+        const p = inward(asPoint(at));
+        deps.drawing?.point(p.x, p.y, colour);
+        return api.draw;
+      },
+      /** An arrow: where, and which way. Takes a heading in the frame's units. */
+      pose(at, colour) {
+        const source = asPoint(at);
+        const p = fromFrame(
+          {
+            x: source.x,
+            y: source.y,
+            heading: frame === 'sim' ? (source.heading ?? 0) * DEG : source.heading ?? 0,
+          },
+          frame,
+        );
+        deps.drawing?.pose(p.x, p.y, p.heading, colour);
+        return api.draw;
+      },
+      /** A word or two on the tiles. */
+      text(at, text, colour) {
+        const p = inward(asPoint(at));
+        deps.drawing?.text(p.x, p.y, text, colour);
+        return api.draw;
+      },
+    },
+
     /** FTC-style telemetry, shown in the panel. */
     telemetry: {
       addData(key, value) {
@@ -523,4 +604,16 @@ export function buildAutoApi(deps) {
   };
 
   return api;
+}
+
+/**
+ * A point the routine handed us, however it wrote it.
+ *
+ * `{x, y}` is the shape everything here hands *back*, so it is the one people
+ * pass in; `[x, y]` is what a list of waypoints tends to be written as. Taking
+ * both costs four lines and saves everybody a `.map`.
+ */
+function asPoint(value) {
+  if (Array.isArray(value)) return { x: value[0] ?? 0, y: value[1] ?? 0, heading: value[2] };
+  return { x: value?.x ?? 0, y: value?.y ?? 0, heading: value?.heading };
 }

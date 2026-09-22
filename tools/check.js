@@ -628,6 +628,60 @@ async function main() {
       }
     }
 
+    // --- A routine draws on the field, and it comes out on the tiles.
+    const drawn = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const sim = app.sim;
+      sim.autoRunner.compile([
+        "function init(robot) { robot.frame = 'ftc'; }",
+        "function loop(robot) {",
+        "  robot.draw.clear();",
+        "  robot.draw.circle([0, 0], 24, 'green');",
+        "  robot.draw.point(robot.cellTarget, 'amber');",
+        "  robot.draw.pose(robot.odometry.pose, 'cyan');",
+        "  robot.draw.path([[-60, -24], [-24, -24], [0, 24], [36, 36]], 'magenta');",
+        "  robot.draw.text({ x: 0, y: 30 }, 'centre');",
+        "}",
+      ].join('\\n'));
+      sim.game.start();
+      for (let i = 0; i < 90; i++) sim.step(1 / 60);
+
+      const shapes = sim.drawing.shapes.length;
+      const labels = sim.drawing.labels.length;
+      const projected = app.renderer.drawingLabels(sim);
+      // Freeze it so the page's own frame loop cannot run the routine past the
+      // screenshot and redraw something else.
+      sim.paused = true;
+      app.renderer.render(sim, 1 / 60);
+      app.overlay.begin();
+      return { shapes, labels, projected: projected.length, visible: projected.filter((p) => p.visible).length };
+    })()`);
+    console.log(`  Drawings: ${drawn.shapes} shapes, ${drawn.labels} label(s), ${drawn.visible} on screen`);
+    if (drawn.shapes < 40) failures.push(`the routine only drew ${drawn.shapes} shapes`);
+    if (drawn.labels !== 1) failures.push(`${drawn.labels} text shapes, expected 1`);
+    if (drawn.visible !== 1) failures.push('the text did not project onto the screen');
+
+    await sleep(300);
+    const shotDrawn = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const drawnPath = shotPath.replace(/\.png$/, '-drawing.png');
+    await writeFile(drawnPath, Buffer.from(shotDrawn.data, 'base64'));
+    console.log(`  Screenshot: ${drawnPath}`);
+
+    // Switched off in the panel, nothing is drawn -- and the routine's own
+    // shapes are untouched, because the setting is about showing them.
+    const hidden = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.config.set('view.showDrawings', false);
+      const labels = app.renderer.drawingLabels(app.sim).length;
+      app.config.set('view.showDrawings', true);
+      app.sim.autoRunner.clear();
+      app.sim.paused = false;
+      app.sim.resetRobot();
+      return { labels, shapes: app.sim.drawing.shapes.length };
+    })()`);
+    if (hidden.labels !== 0) failures.push('turning drawings off still drew text');
+    if (hidden.shapes !== 0) failures.push('a reset left drawings on the field');
+
     // --- Odometry: the pose it reports, how far it drifts, and the two trails.
     const odometry = await cdp.evaluate(`(() => {
       const app = globalThis.ftcSim;
