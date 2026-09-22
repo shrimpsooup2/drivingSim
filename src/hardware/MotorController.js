@@ -1,5 +1,6 @@
 import { clamp } from '../math/MathUtil.js';
 import { PIDF } from '../math/PIDF.js';
+import { HubPidf, hubDefaultGains } from './HubPidf.js';
 
 /** @typedef {'RUN_WITHOUT_ENCODER'|'RUN_USING_ENCODER'|'RUN_TO_POSITION'} RunMode */
 /** @typedef {'BRAKE'|'FLOAT'} ZeroPowerBehavior */
@@ -19,9 +20,18 @@ import { PIDF } from '../math/PIDF.js';
  *    consistent and tracks straighter, at the cost of some responsiveness and
  *    of hiding a dragging wheel from the driver.
  *
- * Gains are expressed against *normalised* velocity (fraction of free speed)
- * so they stay meaningful when the gear ratio changes: kF = 1 means "full duty
- * at full speed", which is the correct feedforward for an ideal motor.
+ * ## Two velocity loops
+ *
+ * `velocityLoop: 'hub'` runs the hub's own arithmetic -- ticks per second in,
+ * 16-bit duty out, I and D scaled by a 20 Hz internal rate -- so the F, P and I
+ * a team tuned in the SDK mean the same thing here. See `HubPidf`. That is the
+ * default, because numbers you cannot port are not much use.
+ *
+ * `velocityLoop: 'normalised'` runs `math/PIDF.js` against velocity as a
+ * fraction of free speed, where kF = 1 means "full duty at full speed". Its
+ * gains stay meaningful when the gearing changes, which makes it the better one
+ * for experimenting with the *shape* of a loop rather than with a robot's
+ * actual numbers.
  */
 export class MotorController {
   /**
@@ -34,6 +44,8 @@ export class MotorController {
    *   positionP?: number,
    *   maxDuty?: number,
    *   bus?: import('./HardwareBus.js').HardwareBus|null,
+   *   velocityLoop?: 'hub'|'normalised',
+   *   hubGains?: {p?: number, i?: number, d?: number, f?: number}|null,
    * }} [opts]
    */
   constructor(opts = {}) {
@@ -68,6 +80,22 @@ export class MotorController {
       maxIntegral: 1,
       derivativeFilterHz: 30,
     });
+
+    /** @type {'hub'|'normalised'} */
+    this.velocityLoop = opts.velocityLoop ?? 'hub';
+    /**
+     * Coefficients in the hub's units, or null to use the SDK's own defaults
+     * derived from the motor's top speed. See `hubDefaultGains`.
+     * @type {{p?: number, i?: number, d?: number, f?: number}|null}
+     */
+    this.hubGains = opts.hubGains ?? null;
+    this.hubPid = new HubPidf();
+    /**
+     * Counts per revolution of the output shaft, so the hub loop can work in
+     * ticks per second. Written by `DriveMotor` on every cycle, because the
+     * encoder is the thing that knows it and a controller on its own does not.
+     */
+    this.ticksPerOutputRev = 0;
 
     /** Commanded power, -1..1, as the op-mode set it. */
     this.power = 0;
@@ -104,6 +132,7 @@ export class MotorController {
     this.duty = 0;
     this.open = false;
     this.pid.reset();
+    this.hubPid.reset();
     return this;
   }
 
@@ -202,6 +231,9 @@ export class MotorController {
 
   _velocityLoop(targetVel, measuredVel, nominalMaxVelocity, busMaxVelocity, dt) {
     if (nominalMaxVelocity <= 1e-6) return 0;
+    if (this.velocityLoop === 'hub') {
+      return this._hubLoop(targetVel, measuredVel, nominalMaxVelocity, dt);
+    }
     // Normalise the loop against the nominal maximum so the gains are
     // independent of gearing and of the battery's state.
     const sp = clamp(targetVel / nominalMaxVelocity, -1, 1);
@@ -216,5 +248,23 @@ export class MotorController {
       return clamp(feedback + this.gains.kF * sp * compensation, -1, 1);
     }
     return feedback;
+  }
+
+  /**
+   * The hub's loop, in ticks per second.
+   *
+   * No bus-voltage correction, deliberately: the hub does not do one. Its F
+   * term assumes full duty gets you full speed, and on a sagging pack it does
+   * not -- so the loop runs a standing error that P and I have to make up,
+   * which is exactly what a real robot does at the end of a match.
+   */
+  _hubLoop(targetVel, measuredVel, nominalMaxVelocity, dt) {
+    const perRev = this.ticksPerOutputRev;
+    if (!(perRev > 0)) return 0;
+    const toTicks = perRev / (2 * Math.PI);
+    const maxTps = nominalMaxVelocity * toTicks;
+    const gains = this.hubGains ?? hubDefaultGains(maxTps);
+    this.hubPid.set(gains);
+    return this.hubPid.update(targetVel * toTicks, measuredVel * toTicks, dt);
   }
 }

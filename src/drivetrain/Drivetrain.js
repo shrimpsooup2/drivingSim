@@ -120,12 +120,15 @@ export class Drivetrain {
             kD: config.control.kD,
             kF: config.control.kF,
             bus: this.bus,
+            velocityLoop: config.control.velocityLoop,
+            hubGains: hubGainsFrom(config.control),
           }),
           encoder: new Encoder({
             ticksPerRev: m.ticksPerRev,
             gearRatio: totalRatio,
             velocityFilterHz: config.control.encoderFilterHz,
             quantise: config.control.quantiseEncoders,
+            overflow16Bit: config.control.hub?.velocityOverflow !== false,
           }),
         }),
     );
@@ -184,7 +187,10 @@ export class Drivetrain {
       dm.controller.gains.kD = config.control.kD;
       dm.controller.gains.kF = config.control.kF;
       dm.controller.syncGains();
+      dm.controller.velocityLoop = config.control.velocityLoop;
+      dm.controller.hubGains = hubGainsFrom(config.control);
       dm.encoder.velocityFilterHz = config.control.encoderFilterHz;
+      dm.encoder.overflow16Bit = config.control.hub?.velocityOverflow !== false;
       dm.encoder.filter.cutoffHz = config.control.encoderFilterHz;
       dm.encoder.quantise = config.control.quantiseEncoders;
     }
@@ -358,4 +364,16 @@ export class Drivetrain {
   static clampPower(p) {
     return clamp(p, -1, 1);
   }
+}
+
+/**
+ * The hub coefficients from the config, or null for the SDK's own defaults.
+ *
+ * Null rather than zeroes, because "use the defaults" and "F is zero" are
+ * different instructions and a motor told the second one does not turn.
+ * @param {any} control
+ */
+function hubGainsFrom(control) {
+  if (control.hubPidfDefaults !== false) return null;
+  return { f: control.hubF ?? 0, p: control.hubP ?? 0, i: control.hubI ?? 0, d: control.hubD ?? 0 };
 }

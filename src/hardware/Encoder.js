@@ -19,6 +19,7 @@ export class Encoder {
    *   quantise?: boolean,
    *   noiseTicks?: number,
    *   reversed?: boolean,
+   *   overflow16Bit?: boolean,
    * }} [opts]
    */
   constructor(opts = {}) {
@@ -31,6 +32,18 @@ export class Encoder {
     /** Uniform noise amplitude in ticks; models a marginal cable or connector. */
     this.noiseTicks = opts.noiseTicks ?? 0;
     this.reversed = opts.reversed ?? false;
+    /**
+     * Report velocity as the hub does: a signed 16-bit value in ticks per
+     * second, so anything past 32767 wraps round.
+     *
+     * A famous way to lose an afternoon. Position is 32-bit and fine, but
+     * velocity is not, and a bare motor with an 8192-count through-bore encoder
+     * goes past the limit at about 240 rpm -- so the reported speed suddenly
+     * reads large and negative, a velocity loop slams full reverse, and nothing
+     * about the code looks wrong. It only bites fast shafts with fine encoders,
+     * which is exactly what a flywheel is.
+     */
+    this.overflow16Bit = opts.overflow16Bit ?? true;
 
     this.filter = new LowPassFilter(this.velocityFilterHz);
     this.reset();
@@ -69,7 +82,9 @@ export class Encoder {
     this.ticks = ticks;
 
     if (dt > 0) {
-      const raw = (this.ticks - this.lastTicks) / dt;
+      const raw = wrap16(this.overflow16Bit, (this.ticks - this.lastTicks) / dt);
+      // Filtered after wrapping, because the hub wraps the number it measures
+      // and anything downstream only ever sees the wrapped one.
       this.velocityTicksPerSec = this.filter.update(raw, dt);
     }
     return this.ticks;
@@ -95,4 +110,19 @@ export class Encoder {
   get positionRadians() {
     return (this.ticks / this.ticksPerOutputRev) * 2 * Math.PI;
   }
+}
+
+/**
+ * A ticks-per-second reading as a signed 16-bit field.
+ *
+ * Wrapped rather than clamped: the hub sends the low 16 bits and the Driver
+ * Station reads them as signed, so 33000 comes back as -32536 and not as 32767.
+ * Clamping would look like a sensor limit; wrapping looks like the sign flip it
+ * actually is, which is the whole reason this is a trap.
+ */
+function wrap16(enabled, ticksPerSec) {
+  if (!enabled) return ticksPerSec;
+  const rounded = Math.round(ticksPerSec);
+  if (rounded >= -32768 && rounded <= 32767) return ticksPerSec;
+  return ((((rounded + 32768) % 65536) + 65536) % 65536) - 32768;
 }

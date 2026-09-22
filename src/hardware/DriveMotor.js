@@ -97,6 +97,9 @@ export class DriveMotor {
 
   /** Run the controller. Call at the control-loop rate, not the physics rate. */
   updateController(busVoltage, dt) {
+    // The hub loop works in ticks per second, and the encoder is the only thing
+    // that knows how many ticks a revolution is.
+    this.controller.ticksPerOutputRev = this.encoder?.ticksPerOutputRev ?? 0;
     this.duty = this.controller.update(
       this.encoder.velocityRadPerSec,
       this.encoder.positionRadians,

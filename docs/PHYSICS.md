@@ -91,6 +91,47 @@ costs to the thread running the op-mode. Nothing in a browser can block a
 thread, so instead the charges are counted over a cycle and the total becomes
 the next cycle's period — the same arithmetic without the thread.
 
+### The velocity loop
+
+`RUN_USING_ENCODER` can run either of two loops, and the difference matters if
+you want to port numbers.
+
+`control.velocityLoop: 'hub'` (the default) is the arithmetic that actually runs
+on a REV hub: **ticks per second in, 16-bit duty out**. That is what makes
+`F = 32767 / maxTicksPerSecond` the correct feedforward — the advice every FTC
+tuning guide gives, which only parses in these units — and it means the F, P and
+I a team tuned in the SDK mean the same thing here. I and D are scaled by a
+20 Hz internal rate, because the hub closes this loop at its own rate and not at
+your op-mode's; without that scaling the usual
+`F = 32767/maxTps, P = 0.1F, I = 0.01F` starting point behaves completely
+differently at 50 Hz than at 200 and the advice stops being advice. The integral
+resets on a zero crossing (error built up spinning up must not carry past the
+setpoint, or every flywheel overshoots) and the I term alone is capped at a
+quarter of full scale.
+
+It does **not** correct its feedforward for bus voltage, because the hub does
+not: F is a constant and has no idea what the pack is doing. What makes up the
+difference is feedback — once the speed sags there is an error and P and I push
+the duty up — which is why a robot at the end of a match still holds its
+commanded speed but with no headroom left.
+
+`control.velocityLoop: 'normalised'` runs against velocity as a fraction of free
+speed, where `kF = 1` means full duty at full speed, and it *does* correct for
+bus voltage. Its gains stay meaningful when the gearing changes, which makes it
+the better one for experimenting with the shape of a loop rather than with a
+robot's actual numbers.
+
+### The 16-bit velocity trap
+
+The hub reports encoder **velocity** as a signed 16-bit value in ticks per
+second. Position is 32 bits and fine; velocity is not, so past 32767 ticks/s it
+wraps and reads large and negative. A velocity loop then slams into reverse and
+nothing about the code looks wrong.
+
+It only bites a fast shaft with a fine encoder — a bare motor with an 8192-count
+through-bore encoder crosses the limit at about 240 rpm — which is exactly what a
+flywheel is. `control.hub.velocityOverflow` turns it off.
+
 ## Odometry
 
 A drive wheel's encoder measures the wheel, and a drive wheel spends its life

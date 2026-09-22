@@ -181,9 +181,14 @@ test('IMU resetYaw zeroes the reported heading', () => {
   near(imu.heading, 0, 0.01);
 });
 
-test('RUN_USING_ENCODER targets a fixed speed regardless of bus voltage', () => {
+test('the normalised loop corrects its feedforward for bus voltage', () => {
   const build = () => {
-    const dm = new DriveMotor({ motor: makeMotor(), gearRatio: 19.2, efficiency: 1 });
+    const dm = new DriveMotor({
+      motor: makeMotor(),
+      gearRatio: 19.2,
+      efficiency: 1,
+      controller: new MotorController({ velocityLoop: 'normalised' }),
+    });
     dm.controller.setMode('RUN_USING_ENCODER');
     dm.controller.setPower(0.5);
     return dm;
@@ -207,6 +212,66 @@ test('RUN_USING_ENCODER targets a fixed speed regardless of bus voltage', () => 
     duty10 > duty12 + 0.03,
     `closed loop must command more duty on a sagging pack: ${duty10} vs ${duty12}`,
   );
+});
+
+test('the hub loop does not, because the hub does not', () => {
+  // The same experiment on the hub emulation. Its F is a fixed constant -- the
+  // real hub has no idea what the pack is doing -- so at the same *reported*
+  // speed it asks for the same duty whatever the voltage. What makes up the
+  // difference is feedback: once the speed actually sags there is an error, and
+  // P and I push the duty up. Which is why a robot near the end of a match
+  // holds its commanded speed but with less headroom left over.
+  const build = () => {
+    const dm = new DriveMotor({
+      motor: makeMotor(),
+      gearRatio: 19.2,
+      efficiency: 1,
+      controller: new MotorController({ velocityLoop: 'hub' }),
+    });
+    dm.controller.setMode('RUN_USING_ENCODER');
+    dm.controller.setPower(0.5);
+    return dm;
+  };
+  const atSpeed = (dm, busVoltage, fraction) => {
+    const target = dm.nominalOutputSpeed * fraction;
+    let duty = 0;
+    for (let i = 0; i < 400; i++) {
+      dm.encoder.velocityTicksPerSec = (target / (2 * Math.PI)) * dm.encoder.ticksPerOutputRev;
+      duty = dm.updateController(busVoltage, 0.02);
+    }
+    return duty;
+  };
+
+  // Exactly on target: pure feedforward, and F = 32767 / maxTicksPerSecond
+  // makes that the commanded fraction of full duty.
+  near(atSpeed(build(), 12, 0.5), 0.5, 1e-6);
+  near(atSpeed(build(), 10, 0.5), 0.5, 1e-6);
+
+  // Ten percent short of target, which is what a sagging pack actually gives
+  // you: now there is an error, and the loop asks for more.
+  const short = atSpeed(build(), 10, 0.45);
+  assert.ok(short > 0.55, `a short wheel should be pushed harder: ${short}`);
+});
+
+test('the hub loop uses the coefficients a team tuned in the SDK', () => {
+  const dm = new DriveMotor({
+    motor: makeMotor(),
+    gearRatio: 19.2,
+    efficiency: 1,
+    controller: new MotorController({ velocityLoop: 'hub' }),
+  });
+  dm.controller.setMode('RUN_USING_ENCODER');
+  dm.controller.setPower(1);
+  dm.encoder.velocityTicksPerSec = 0;
+
+  const maxTps = (dm.nominalOutputSpeed / (2 * Math.PI)) * dm.encoder.ticksPerOutputRev;
+  // Pure feedforward at the guide's own F, stalled: F * maxTps / 32767 = 1.
+  dm.controller.hubGains = { f: 32767 / maxTps, p: 0, i: 0, d: 0 };
+  near(dm.updateController(12, 0.02), 1, 1e-9);
+
+  // Half that F, and it asks for half the duty. The units are the SDK's.
+  dm.controller.hubGains = { f: 32767 / maxTps / 2, p: 0, i: 0, d: 0 };
+  near(dm.updateController(12, 0.02), 0.5, 1e-9);
 });
 
 test('open loop speed sags with the battery, closed loop does not', () => {
