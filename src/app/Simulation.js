@@ -10,6 +10,7 @@ import { InputManager } from '../input/InputManager.js';
 import { EventBus } from '../util/events.js';
 import { Vec2 } from '../math/Vec2.js';
 import { clamp } from '../math/MathUtil.js';
+import { fromFrame, toFrame } from '../math/fieldFrames.js';
 
 /**
  * Owns the simulated world and drives it forward in time.
@@ -268,10 +269,64 @@ export class Simulation {
     this.events.emit('opponentsChanged', this.opponents);
   }
 
-  /** Set where `resetRobot` puts the robot. */
-  setStartPose(x, y, heading) {
-    this.startPose = { x, y, heading };
+  /**
+   * Set where `resetRobot` puts the robot.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {number} heading
+   * @param {import('../math/fieldFrames.js').FieldFrame} [frame] the frame the
+   *   three numbers are in; the simulator's own by default
+   */
+  setStartPose(x, y, heading, frame = 'sim') {
+    const pose = fromFrame({ x, y, heading }, frame);
+    this.startPose = { x: pose.x, y: pose.y, heading: pose.heading };
     return this;
+  }
+
+  /**
+   * Put the robot here, now, without changing where a reset puts it.
+   *
+   * What dragging the robot across the field does, and what typing a pose into
+   * the AUTO panel does. Deliberately *not* `robot.reset`: that would also
+   * recharge the battery, zero the encoders and empty the intake, and "move it
+   * two tiles left to see what the routine does from there" should not do any
+   * of that.
+   *
+   * Motion is cleared, because a teleport has no velocity that means anything,
+   * and `teleportEpoch` ticks so that anything integrating a pose -- odometry,
+   * the path trail -- knows the jump was not something the robot did.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {number} [heading] radians; left alone if omitted
+   * @param {import('../math/fieldFrames.js').FieldFrame} [frame]
+   */
+  placeRobot(x, y, heading, frame = 'sim') {
+    const body = this.robot.body;
+    const turn = heading ?? body.rotation.radians;
+    const pose = fromFrame({ x, y, heading: turn }, frame);
+    body.position.set(pose.x, pose.y);
+    body.rotation.setRadians(pose.heading);
+    body.velocity.set(0, 0);
+    body.angularVelocity = 0;
+    body.acceleration.set(0, 0);
+    this.robot.teleportEpoch++;
+    this.trail.length = 0;
+    this.events.emit('placed', this.pose());
+    return this;
+  }
+
+  /**
+   * Where the robot is, in whichever frame you asked for.
+   * @param {import('../math/fieldFrames.js').FieldFrame} [frame]
+   */
+  pose(frame = 'sim') {
+    const body = this.robot.body;
+    return toFrame(
+      { x: body.position.x, y: body.position.y, heading: body.rotation.radians },
+      frame,
+    );
   }
 
   resetRobot() {

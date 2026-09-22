@@ -49,6 +49,17 @@ export class Robot {
     /** @type {import('./Subsystem.js').Subsystem[]} */
     this.subsystems = [];
 
+    /**
+     * Bumped whenever the robot is picked up and put somewhere.
+     *
+     * Anything that integrates a pose over time -- odometry, the path trail --
+     * has to be able to tell "the robot drove there" from "the robot was
+     * dragged there", because integrating a teleport produces a metre of
+     * imaginary travel in one substep. Ported from the JVM simulator's
+     * `Chassis.teleportEpoch`, which exists for exactly this.
+     */
+    this.teleportEpoch = 0;
+
     this.stats = {
       topSpeed: 0,
       distanceTravelled: 0,
@@ -234,6 +245,7 @@ export class Robot {
    */
   reset(x = 0, y = 0, heading = 0) {
     this.body.reset(x, y, heading);
+    this.teleportEpoch++;
     this.bus.reset();
     this.drivetrain.reset();
     this.battery.reset();

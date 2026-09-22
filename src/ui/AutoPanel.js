@@ -1,4 +1,5 @@
 import { EXAMPLE_AUTO } from '../teleop/autoExample.js';
+import { FIELD_FRAMES, FRAME_LABELS } from '../math/fieldFrames.js';
 
 /** Where the routine is kept between sessions. */
 const STORAGE_KEY = 'ftcsim.auto.source';
@@ -16,6 +17,15 @@ const STORAGE_KEY = 'ftcsim.auto.source';
  * What it reports while running is the part worth having: the state, the
  * runtime, whatever the routine logged, and its telemetry -- the same three
  * things a Driver Station shows, for the same reason.
+ *
+ * ## The pose row
+ *
+ * Underneath is where the robot starts, in whichever coordinate frame your
+ * routine uses. An AUTO is a list of coordinates and the first of them is the
+ * start pose, so being able to type it -- in the inches and degrees the routine
+ * is written in, rather than in metres from the field centre -- is the
+ * difference between testing a routine and porting it first. The frame picker
+ * is the same three frames `robot.frame` offers.
  */
 export class AutoPanel {
   /**
@@ -83,6 +93,52 @@ export class AutoPanel {
     actions.append(this.compileButton, this.restartButton, this.exampleButton, this.clearButton);
     this.card.append(actions);
 
+    // ------------------------------------------------------------- the pose row
+    const pose = el('div', 'auto-pose');
+    pose.append(el('span', 'auto-pose-label', 'Pose'));
+
+    this.frameSelect = document.createElement('select');
+    this.frameSelect.className = 'auto-pose-frame';
+    for (const name of FIELD_FRAMES) {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = FRAME_LABELS[name].label;
+      this.frameSelect.append(option);
+    }
+    this.frameSelect.value = 'ftc';
+    this.frameSelect.setAttribute('aria-label', 'Coordinate frame');
+    this.frameSelect.addEventListener('change', () => this._showPose());
+    pose.append(this.frameSelect);
+
+    this.poseInputs = {};
+    for (const axis of ['x', 'y', 'heading']) {
+      const field = document.createElement('input');
+      field.className = 'auto-pose-input';
+      field.inputMode = 'decimal';
+      field.setAttribute('aria-label', axis);
+      field.placeholder = axis;
+      field.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') this.placeRobot();
+      });
+      this.poseInputs[axis] = field;
+      pose.append(field);
+    }
+
+    this.placeButton = button('Put it here', () => this.placeRobot());
+    this.startHereButton = button('Start here', () => this.useAsStart());
+    this.readPoseButton = button('Read back', () => this._showPose(true));
+    pose.append(this.placeButton, this.startHereButton, this.readPoseButton);
+    this.card.append(pose);
+    this.card.append(
+      el(
+        'p',
+        'auto-pose-hint',
+        'Ctrl-drag on the field moves the robot too. "Start here" is where a ' +
+          'match reset puts it, which is what you want between runs of a routine.',
+      ),
+    );
+    this._showPose(true);
+
     this.readout = el('div', 'auto-readout');
     this.card.append(this.readout);
 
@@ -129,6 +185,61 @@ export class AutoPanel {
     return this;
   }
 
+  /** The frame the pose row is working in. */
+  get frame() {
+    return this.frameSelect.value;
+  }
+
+  /** What is typed in the three boxes, or null if any of them is not a number. */
+  readPose() {
+    const out = {};
+    for (const axis of ['x', 'y', 'heading']) {
+      const value = Number(this.poseInputs[axis].value);
+      if (!Number.isFinite(value)) return null;
+      out[axis] = value;
+    }
+    return out;
+  }
+
+  /** Move the robot to the typed pose, leaving the match alone. */
+  placeRobot() {
+    const pose = this.readPose();
+    if (!pose) {
+      this.message.textContent = 'Type three numbers: x, y and a heading.';
+      this.message.classList.remove('hidden');
+      return null;
+    }
+    this.sim.placeRobot(pose.x, pose.y, pose.heading, this.frame);
+    this._showPose(true);
+    return pose;
+  }
+
+  /** And make it the pose a reset goes back to. */
+  useAsStart() {
+    const pose = this.placeRobot();
+    if (pose) this.sim.setStartPose(pose.x, pose.y, pose.heading, this.frame);
+    return pose;
+  }
+
+  /**
+   * Fill the boxes from where the robot actually is.
+   *
+   * `force` overwrites whatever is typed; without it a number the user is part
+   * way through typing is left alone, because a field that rewrites itself
+   * under the cursor cannot be typed into.
+   */
+  _showPose(force = false) {
+    const pose = this.sim.pose(this.frame);
+    const decimals = this.frame === 'sim' ? 3 : 1;
+    for (const [axis, value] of Object.entries(pose)) {
+      const field = this.poseInputs[axis];
+      if (!field) continue;
+      if (!force && field === document.activeElement) continue;
+      field.value = value.toFixed(decimals);
+    }
+    return this;
+  }
+
   /** Called every frame while the panel is open. */
   update() {
     if (!this.open) return this;
@@ -153,6 +264,7 @@ export class AutoPanel {
     if (telemetry.length) {
       lines.push(telemetry.map(([k, v]) => `${k}: ${v}`).join('   '));
     }
+    this._showPose();
     this.readout.innerHTML = '';
     this.readout.append(el('div', 'auto-stats', lines.join('   -   ')));
     if (status.log.length) {

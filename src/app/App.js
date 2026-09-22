@@ -275,12 +275,26 @@ export class App {
     const set = (path, value) => this.config.set(path, value);
     const view = () => this.config.values.view;
 
+    // Ctrl (or Cmd) held turns a drag into picking the robot up and putting it
+    // down somewhere else, which is how you answer "what does the routine do
+    // from two tiles left of here?" without editing a start pose. Every other
+    // modifier combination was already the camera's.
+    let placing = false;
+
     this.canvas.addEventListener('pointerdown', (e) => {
       dragging = true;
       button = e.button;
       lastX = e.clientX;
       lastY = e.clientY;
-      this.canvas.setPointerCapture(e.pointerId);
+      placing = button === 0 && (e.ctrlKey || e.metaKey);
+      if (placing) this._placeAt(e);
+      try {
+        this.canvas.setPointerCapture(e.pointerId);
+      } catch {
+        // A synthetic event has no live pointer to capture, which is how the
+        // check harness drives this. Dragging still works; it is only capture
+        // outside the canvas that is lost.
+      }
     });
     this.canvas.addEventListener('pointermove', (e) => {
       if (!dragging) return;
@@ -288,12 +302,14 @@ export class App {
       const dy = e.clientY - lastY;
       lastX = e.clientX;
       lastY = e.clientY;
+      if (placing) this._placeAt(e);
       // Left drag looks around; right drag (or shift) pans.
-      if (button === 0 && !e.shiftKey) this.renderer.camera.drag(view(), set, dx, dy);
+      else if (button === 0 && !e.shiftKey) this.renderer.camera.drag(view(), set, dx, dy);
       else this.renderer.camera.pan(view(), set, dx, dy);
     });
     const stop = (e) => {
       dragging = false;
+      placing = false;
       if (e.pointerId !== undefined && this.canvas.hasPointerCapture?.(e.pointerId)) {
         this.canvas.releasePointerCapture(e.pointerId);
       }
@@ -310,6 +326,32 @@ export class App {
       },
       { passive: false },
     );
+  }
+
+  /**
+   * Drop the robot where the pointer is.
+   *
+   * The pointer is on a screen and the robot is on a floor, so the screen point
+   * has to be turned into a point on the tiles -- `Renderer.pickGround` does
+   * that by intersecting the camera ray with z = 0. Off the field (a ray that
+   * never reaches the floor, which happens looking at the horizon) it returns
+   * null and nothing moves, rather than putting the robot somewhere absurd.
+   */
+  _placeAt(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    const point = this.renderer.pickGround(
+      event.clientX - rect.left,
+      event.clientY - rect.top,
+      rect.width,
+      rect.height,
+    );
+    if (!point) return null;
+    const half = this.sim.field.halfSize - Math.max(this.sim.robot.halfLength, this.sim.robot.halfWidth);
+    this.sim.placeRobot(
+      Math.max(-half, Math.min(half, point.x)),
+      Math.max(-half, Math.min(half, point.y)),
+    );
+    return point;
   }
 
   _resetCamera() {

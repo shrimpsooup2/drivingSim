@@ -163,6 +163,17 @@ export class Renderer {
   }
 
   /**
+   * Where a point on the canvas lands on the tiles. See `Camera.pickGround`.
+   * @param {number} px
+   * @param {number} py
+   * @param {number} width
+   * @param {number} height
+   */
+  pickGround(px, py, width, height) {
+    return this.camera.pickGround(px, py, width, height);
+  }
+
+  /**
    * @param {import('../app/Simulation.js').Simulation} sim
    * @param {number} dt seconds since the last frame
    */

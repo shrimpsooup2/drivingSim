@@ -565,6 +565,55 @@ cell's opening is tilted and faces one way, so from the starting wall there is n
 arc at any speed), empties the pre-load into the cell, and parks: 32 points,
 including a tip, with no fouls.
 
+### Coordinates your routine already uses
+
+An AUTO is a list of coordinates, and a coordinate only means something inside a
+frame. `robot.frame` picks one, and every pose, point, bearing and distance
+`robot` hands you or takes from you is in it:
+
+| `robot.frame` | Units | Origin | +X | +Y | Heading |
+| --- | --- | --- | --- | --- | --- |
+| `'sim'` (default) | metres | field centre | red wall to blue wall | audience to rear wall | degrees CCW from +X |
+| `'ftc'` | inches | field centre | red wall to blue wall | audience to rear wall | degrees CCW from +X |
+| `'pedro'` | inches | a corner | audience to rear wall | blue wall to red wall | degrees, 0 along +X |
+
+```js
+function init(robot) { robot.frame = 'pedro'; }
+function* auto(robot) {
+  yield* driveTo(robot, { x: 60, y: 84 });   // the numbers off your own path
+}
+```
+
+`'ftc'` is the simulator's own frame in inches and degrees, which is most of
+what anybody wants. `'pedro'` is Pedro Pathing's corner origin, via the same
+transform WheatleyFromPortal2's simulator uses — `pedro_x = ftc_y + 72`,
+`pedro_y = 72 - ftc_x`, `ftc_heading = pedro_heading + 90` — so a routine
+written against that setup reads the same numbers here. `robot.frames.to` and
+`robot.frames.from` convert explicitly for a routine that has to mix them, and
+`robot.ticksPerUnit` follows the frame so an encoder-driven move is in the units
+the rest of the routine is written in.
+
+Before trusting an AUTO to a frame, check it: driving to `ftc` (0, 0) should put
+the robot on the middle of the field, and `pedro` (72, 72) should put it in the
+same place. Published FIRST field diagrams name their axes from a chosen
+viewpoint and the letters move between seasons, so the reference here is the
+simulator's own frame, whose axes are pinned to the field CAD.
+
+### Putting the robot somewhere
+
+"What does the routine do from two tiles left of here?" used to mean editing a
+start pose. Now the AUTO panel has a pose row: pick a frame, type x, y and a
+heading, and **Put it here** moves the robot without touching anything else —
+the intake keeps its load, the battery keeps its charge, the match keeps running.
+**Start here** also makes it the pose a reset goes back to, which is what you
+want between runs of the same routine. **Read back** fills the boxes from where
+the robot actually is, in whichever frame you picked.
+
+Ctrl-drag (Cmd-drag on a Mac) on the field does the same thing with the mouse.
+A teleport bumps `robot.teleportEpoch`, so anything integrating a pose over time
+can tell "the robot drove there" from "the robot was dragged there" instead of
+booking a metre of imaginary travel in one substep.
+
 It is compiled with `new Function` and runs with the page's own privileges.
 There is no sandbox and no attempt at one — it is a tool for running *your* auto.
 A routine that loops forever without yielding will hang the tab exactly as it

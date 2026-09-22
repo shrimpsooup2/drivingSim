@@ -133,6 +133,17 @@ A key is on or off, so keyboard input is a square wave. The acceleration ramp
 smooths it, which makes the keyboard fine for learning the field and useless for
 learning throttle control. There is no substitute for a real controller there.
 
+## Moving the robot by hand
+
+Ctrl-drag (Cmd-drag on a Mac) on the field picks the robot up and puts it
+wherever the pointer is. Plain left-drag still looks around and right-drag still
+pans, so nothing the camera did has moved.
+
+The AUTO panel (**F**) has a pose row for typing one instead, in metres from the
+field centre, FTC inches, or Pedro Pathing's corner-origin inches — whichever
+frame your routine is written in. See
+[BIOBUZZ](BIOBUZZ.md#putting-the-robot-somewhere).
+
 ## Stepping through time
 
 The bar at the bottom of the screen pauses the world and walks it forward.

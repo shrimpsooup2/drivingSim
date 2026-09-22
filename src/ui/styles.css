@@ -935,3 +935,40 @@ select { width: 100%; }
   .step-bar .step-jump:nth-of-type(2),
   .step-bar .step-jump:nth-of-type(4) { display: none; }
 }
+
+/* --- The AUTO panel's pose row ------------------------------------------- */
+
+.auto-pose {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.auto-pose-label {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.auto-pose-frame,
+.auto-pose-input {
+  font: 11px/1 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: #e6e8ec;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 5px 6px;
+}
+
+.auto-pose-input { width: 62px; text-align: right; }
+.auto-pose-input:focus,
+.auto-pose-frame:focus { outline: 1px solid var(--accent); }
+
+.auto-pose-hint {
+  font-size: 10px;
+  color: var(--muted);
+  margin: 6px 0 0;
+}

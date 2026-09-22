@@ -628,6 +628,95 @@ async function main() {
       }
     }
 
+    // --- Coordinate frames and putting the robot somewhere, through the UI.
+    const frames = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const sim = app.sim;
+      const panel = app.auto;
+      panel.toggle(true);
+
+      // Type a pose in FTC inches and press the button.
+      panel.frameSelect.value = 'ftc';
+      panel.poseInputs.x.value = '12';
+      panel.poseInputs.y.value = '-63';
+      panel.poseInputs.heading.value = '90';
+      panel.placeButton.click();
+      const placedFtc = sim.pose('ftc');
+      const placedPedro = sim.pose('pedro');
+
+      // Read it back in Pedro's frame, which is what the picker is for.
+      panel.frameSelect.value = 'pedro';
+      panel.frameSelect.dispatchEvent(new Event('change'));
+      const shown = {
+        x: panel.poseInputs.x.value,
+        y: panel.poseInputs.y.value,
+        heading: panel.poseInputs.heading.value,
+      };
+
+      // Ctrl-drag: the pointer picks a point on the tiles and the robot goes
+      // there. Aiming at the middle of the canvas in the overhead view, which
+      // looks straight down, so the answer is near the field centre.
+      app.config.set('view.camera', 'overhead');
+      sim.step(1 / 60);
+      app.renderer.render(sim, 1 / 60);
+      const rect = app.canvas.getBoundingClientRect();
+      const picked = app.renderer.pickGround(rect.width / 2, rect.height / 2, rect.width, rect.height);
+      const before = sim.robot.teleportEpoch;
+      app.canvas.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+          button: 0,
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
+      app.canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      const dragged = sim.pose();
+      const epochs = sim.robot.teleportEpoch - before;
+
+      // And the ray misses the floor when it is pointed above the horizon.
+      app.config.set('view.camera', 'driverStation');
+      sim.step(1 / 60);
+      app.renderer.render(sim, 1 / 60);
+      const sky = app.renderer.pickGround(rect.width / 2, 2, rect.width, rect.height);
+
+      panel.toggle(false);
+      app.config.set('view.camera', 'driverStation');
+      sim.resetRobot();
+      return { placedFtc, placedPedro, shown, picked, dragged, epochs, skyMissed: sky === null };
+    })()`);
+    console.log(
+      `  Frames: typed FTC 12, -63, 90 -> Pedro ${frames.shown.x}, ${frames.shown.y}, ` +
+        `${frames.shown.heading}; ctrl-drag landed at ` +
+        `${frames.dragged.x.toFixed(2)}, ${frames.dragged.y.toFixed(2)} m`,
+    );
+    for (const [axis, want] of [['x', 12], ['y', -63], ['heading', 90]]) {
+      if (Math.abs(frames.placedFtc[axis] - want) > 1e-6) {
+        failures.push(`the pose row put it at ${axis} = ${frames.placedFtc[axis]}, not ${want}`);
+      }
+    }
+    for (const [axis, want] of [['x', 9], ['y', 60], ['heading', 0]]) {
+      if (Math.abs(Number(frames.shown[axis]) - want) > 0.05) {
+        failures.push(`read back in Pedro, ${axis} was ${frames.shown[axis]}, not ${want}`);
+      }
+      if (Math.abs(frames.placedPedro[axis] - want) > 1e-6) {
+        failures.push(`sim.pose('pedro') gave ${axis} = ${frames.placedPedro[axis]}, not ${want}`);
+      }
+    }
+    if (!frames.picked) failures.push('looking straight down did not hit the floor');
+    else if (Math.hypot(frames.picked.x, frames.picked.y) > 0.6) {
+      failures.push(
+        `the middle of an overhead view should be the field centre, got ` +
+          `${frames.picked.x.toFixed(2)}, ${frames.picked.y.toFixed(2)}`,
+      );
+    }
+    if (frames.epochs !== 1) failures.push(`ctrl-drag teleported ${frames.epochs} times`);
+    if (frames.picked && Math.hypot(frames.dragged.x - frames.picked.x, frames.dragged.y - frames.picked.y) > 0.01) {
+      failures.push('ctrl-drag did not put the robot where the pointer was');
+    }
+    if (!frames.skyMissed) failures.push('a ray at the horizon claimed to hit the floor');
+
     // --- Pause and step, through the real buttons.
     const stepping = await cdp.evaluate(`(() => {
       const app = globalThis.ftcSim;

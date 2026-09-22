@@ -58,7 +58,12 @@ export class CameraRig {
   update(aspect, s) {
     const v = s.view;
     this.mode = v.camera;
-    mat4.perspective(this.projection, v.fov * DEG, Math.max(aspect, 0.05), this.near, this.far);
+    // Kept, because `pickGround` builds a ray from them and inverting the
+    // projection matrix to get the same thing back would be more code and less
+    // obvious.
+    this.fovRadians = v.fov * DEG;
+    this.aspect = Math.max(aspect, 0.05);
+    mat4.perspective(this.projection, this.fovRadians, this.aspect, this.near, this.far);
 
     if (!this._initialised) {
       this._followX = s.robotX;
@@ -164,6 +169,47 @@ export class CameraRig {
       // A small margin keeps labels from popping at the exact screen edge.
       visible: ndcX > -1.15 && ndcX < 1.15 && ndcY > -1.15 && ndcY < 1.15,
     };
+  }
+
+  /**
+   * Where a screen point lands on a horizontal plane in the world.
+   *
+   * The inverse of `project`, for the one thing a pointer is good for in a 3D
+   * view: pointing at the floor. Built as a ray from the eye rather than by
+   * inverting the view-projection matrix, because the camera basis is right
+   * here and a 4x4 inverse is not.
+   *
+   * Returns null when the ray never reaches the plane -- looking at or above
+   * the horizon, which in the driver-station view is most of the upper half of
+   * the screen. Better than handing back a point four hundred metres away.
+   *
+   * @param {number} px pixels from the left of the viewport
+   * @param {number} py pixels from the top
+   * @param {number} width viewport width in the same units
+   * @param {number} height viewport height
+   * @param {number} [z] the plane's height; the tile surface by default
+   * @returns {{x: number, y: number, z: number}|null}
+   */
+  pickGround(px, py, width, height, z = 0) {
+    if (!(width > 0) || !(height > 0) || !this.fovRadians) return null;
+    const ndcX = (px / width) * 2 - 1;
+    const ndcY = 1 - (py / height) * 2;
+
+    const forward = normalise(sub(this.target, this.eye));
+    const right = normalise(cross(forward, this.up));
+    const up = cross(right, forward);
+    const tanHalf = Math.tan(this.fovRadians / 2);
+
+    const dir = normalise([
+      forward[0] + right[0] * ndcX * tanHalf * this.aspect + up[0] * ndcY * tanHalf,
+      forward[1] + right[1] * ndcX * tanHalf * this.aspect + up[1] * ndcY * tanHalf,
+      forward[2] + right[2] * ndcX * tanHalf * this.aspect + up[2] * ndcY * tanHalf,
+    ]);
+
+    if (Math.abs(dir[2]) < 1e-6) return null;
+    const t = (z - this.eye[2]) / dir[2];
+    if (t <= 0) return null;
+    return { x: this.eye[0] + dir[0] * t, y: this.eye[1] + dir[1] * t, z };
   }
 
   // ------------------------------------------------------------------
@@ -288,4 +334,21 @@ function wrapDegrees(deg) {
   if (d > 180) d -= 360;
   if (d < -180) d += 360;
   return d;
+}
+
+function sub(a, b) {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function cross(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+function normalise(v) {
+  const length = Math.hypot(v[0], v[1], v[2]);
+  return length > 1e-12 ? [v[0] / length, v[1] / length, v[2] / length] : [0, 0, 1];
 }

@@ -1,4 +1,12 @@
 import { clamp } from '../math/MathUtil.js';
+import {
+  FIELD_FRAMES,
+  angleInFrame,
+  fromFrame,
+  isFieldFrame,
+  lengthInFrame,
+  toFrame,
+} from '../math/fieldFrames.js';
 
 /**
  * The `robot` object a pasted AUTO routine is handed.
@@ -16,6 +24,15 @@ import { clamp } from '../math/MathUtil.js';
  * The exact pose is exposed too, as `robot.truth`, clearly labelled and
  * separate. It is genuinely useful for working out *why* a routine went wrong,
  * and hiding it would only mean people reached for `sim` instead.
+ *
+ * ## Coordinates in the frame your routine already uses
+ *
+ * `robot.frame = 'ftc'` switches every pose, point, bearing and distance below
+ * to inches and degrees from the field centre; `'pedro'` switches them to Pedro
+ * Pathing's corner-origin frame. The default is `'sim'` -- metres and radians
+ * -- so nothing changes until a routine asks. Set it once in `init` and paste
+ * your real coordinates in. See `math/fieldFrames.js` for exactly what each
+ * frame's axes mean.
  *
  * ## Reading things is not free
  *
@@ -52,6 +69,15 @@ const DEG = 180 / Math.PI;
 export function buildAutoApi(deps) {
   const { robot, telemetry, log } = deps;
   const game = () => deps.game ?? null;
+  /** @type {import('../math/fieldFrames.js').FieldFrame} */
+  let frame = 'sim';
+  /** A point the routine handed us, in the simulator's metres. */
+  const inward = (point) => fromFrame({ x: point?.x ?? 0, y: point?.y ?? 0 }, frame);
+  /** A point of ours, in whatever frame the routine asked for. */
+  const outward = (point) => {
+    const out = toFrame({ x: point.x, y: point.y, heading: 0 }, frame);
+    return { x: out.x, y: out.y };
+  };
   const intake = () => robot.subsystems.find((s) => 'held' in s && 'capacity' in s) ?? null;
   const shooter = () =>
     robot.subsystems.find((s) => typeof s.fire === 'function') ?? null;
@@ -245,7 +271,16 @@ export function buildAutoApi(deps) {
       if (motors.length === 0) return 0;
       let total = 0;
       for (const motor of motors) total += Math.abs(robot.readEncoder(motor));
-      return total / motors.length / perMetre;
+      return lengthInFrame(total / motors.length / perMetre, frame);
+    },
+
+    /**
+     * Encoder ticks per unit of wheel travel in `robot.frame` -- per metre in
+     * `sim`, per inch in the other two. The number a distance-based AUTO is
+     * built on, in the units that AUTO is written in.
+     */
+    get ticksPerUnit() {
+      return api.ticksPerMetre * (frame === 'sim' ? 1 : 0.0254);
     },
 
     /** Bus voltage, which sags under load and sets how fast you actually go. */
@@ -311,12 +346,53 @@ export function buildAutoApi(deps) {
      * survive the trip to a real FIELD.
      */
     get truth() {
+      const pose = toFrame(
+        {
+          x: robot.body.position.x,
+          y: robot.body.position.y,
+          heading: robot.body.rotation.radians,
+        },
+        frame,
+      );
       return {
-        x: robot.body.position.x,
-        y: robot.body.position.y,
-        heading: robot.body.rotation.radians * DEG,
-        speed: robot.body.speed,
+        x: pose.x,
+        y: pose.y,
+        heading: frame === 'sim' ? pose.heading * DEG : pose.heading,
+        speed: lengthInFrame(robot.body.speed, frame),
       };
+    },
+
+    /**
+     * Which frame the coordinates above and below are in.
+     *
+     * `'sim'` (metres and radians from the field centre), `'ftc'` (inches and
+     * degrees from the field centre) or `'pedro'` (inches and degrees from a
+     * corner). Set it in `init` and the rest of the routine can use the numbers
+     * your team already wrote down.
+     */
+    get frame() {
+      return frame;
+    },
+    set frame(next) {
+      if (!isFieldFrame(next)) {
+        throw new Error(`robot.frame must be one of ${FIELD_FRAMES.join(', ')}, not ${next}`);
+      }
+      frame = next;
+    },
+
+    /**
+     * The conversions themselves, for a routine that has to mix frames --
+     * a Pedro path whose waypoints came off a field drawing in inches, say.
+     */
+    frames: {
+      /** A simulator point or pose, in `to`. */
+      to(pose, to = frame) {
+        return toFrame(pose, to);
+      },
+      /** A point or pose in `from`, in the simulator's metres and radians. */
+      from(pose, from = frame) {
+        return fromFrame(pose, from);
+      },
     },
 
     /**
@@ -332,7 +408,8 @@ export function buildAutoApi(deps) {
     get cellTarget() {
       const g = game();
       if (!g) return { x: 0, y: 0, z: 0 };
-      return g.field.hiveTarget(g.alliance);
+      const target = g.field.hiveTarget(g.alliance);
+      return { ...outward(target), z: lengthInFrame(target.z ?? 0, frame) };
     },
 
     /** The middle of this ALLIANCE'S own LOADING ZONE, where PARK is scored. */
@@ -343,20 +420,29 @@ export function buildAutoApi(deps) {
       if (!zone) return { x: 0, y: 0 };
       // A little in from the wall, so a ROBOT driving to it does not grind
       // along the perimeter to get there.
-      const inward = zone.centerX < 0 ? 1 : -1;
-      return { x: zone.centerX + inward * zone.width * 0.4, y: zone.centerY };
+      const step = zone.centerX < 0 ? 1 : -1;
+      return outward({ x: zone.centerX + step * zone.width * 0.4, y: zone.centerY });
     },
 
-    /** Absolute field heading from the ROBOT to a point, in degrees. */
+    /**
+     * Absolute field heading from the ROBOT to a point.
+     *
+     * In `robot.frame`: degrees in `ftc` and `pedro`, degrees in `sim` too
+     * (headings were always degrees here), and measured the way that frame
+     * measures them -- which for `pedro` is 90 degrees off `ftc`.
+     */
     bearingTo(point) {
+      const target = inward(point);
       const p = robot.body.position;
-      return Math.atan2(point.y - p.y, point.x - p.x) * DEG;
+      const radians = Math.atan2(target.y - p.y, target.x - p.x);
+      return frame === 'sim' ? radians * DEG : angleInFrame(radians, frame);
     },
 
-    /** Straight-line distance from the ROBOT to a point, in metres. */
+    /** Straight-line distance from the ROBOT to a point, in `robot.frame`. */
     distanceTo(point) {
+      const target = inward(point);
       const p = robot.body.position;
-      return Math.hypot(point.x - p.x, point.y - p.y);
+      return lengthInFrame(Math.hypot(target.x - p.x, target.y - p.y), frame);
     },
 
     /** FTC-style telemetry, shown in the panel. */
