@@ -17,6 +17,15 @@ import { clamp } from '../math/MathUtil.js';
  * separate. It is genuinely useful for working out *why* a routine went wrong,
  * and hiding it would only mean people reached for `sim` instead.
  *
+ * ## Reading things is not free
+ *
+ * Every accessor here that stands for a hardware reading is charged to the hub
+ * bus, and the bus decides how long your loop takes -- so a routine that reads
+ * the IMU three times a cycle really does run slower than one that reads it
+ * once and keeps the value. `robot.hub` exposes the loop time and the
+ * transaction count so you can see it happening, and `robot.hub.clearBulkCache()`
+ * is there for MANUAL caching. See `HardwareBus`.
+ *
  * ## Shape
  *
  * Named after the FTC SDK where the SDK has a name for it -- `drive`,
@@ -37,6 +46,7 @@ const DEG = 180 / Math.PI;
  *   telemetry: Record<string, string|number>,
  *   log: (message: string) => void,
  *   runtime: () => number,
+ *   loopSeconds?: () => number,
  * }} deps
  */
 export function buildAutoApi(deps) {
@@ -83,8 +93,14 @@ export function buildAutoApi(deps) {
       return api;
     },
 
-    /** How many SCORING ELEMENTS the intake is holding. */
+    /**
+     * How many SCORING ELEMENTS the intake is holding.
+     *
+     * Charged as an I2C reading, because on a real robot this is a colour or
+     * distance sensor looking into the hopper and nothing else.
+     */
     get held() {
+      robot.bus.i2c();
       return intake()?.count ?? 0;
     },
 
@@ -162,29 +178,42 @@ export function buildAutoApi(deps) {
     },
 
     imu: {
-      /** Heading in degrees, from the modelled IMU: drift, noise and latency. */
+      /**
+       * Heading in degrees, from the modelled IMU: drift, noise and latency.
+       *
+       * One I2C transaction per read, so keep the value in a variable rather
+       * than reading it four times in one cycle.
+       */
       get heading() {
-        return robot.imu.heading * DEG;
+        return robot.readHeading() * DEG;
       },
       /** Zero the heading here, as `resetYaw()` does. */
       reset() {
-        robot.imu.reset(robot.body.rotation.radians);
+        robot.resetHeading();
         return api.imu;
       },
     },
 
-    /** Wheel encoder positions in ticks, by wheel name, quantised as they are. */
+    /**
+     * Wheel encoder positions in ticks, by wheel name, quantised as they are.
+     *
+     * One reading each, out of the bulk packet when the caching mode allows it
+     * -- so this whole object costs a single 2 ms bulk read in AUTO, and four
+     * separate 2 ms reads with caching OFF.
+     */
     get encoders() {
       /** @type {Record<string, number>} */
       const out = {};
       for (const motor of robot.drivetrain.motors) {
-        out[motor.name ?? `motor${Object.keys(out).length}`] = motor.encoder?.ticks ?? 0;
+        out[motor.name ?? `motor${Object.keys(out).length}`] = robot.readEncoder(motor);
       }
       return out;
     },
 
     /** Zero every wheel encoder, as `STOP_AND_RESET_ENCODER` does. */
     resetEncoders() {
+      // A write per port: the SDK sends a run-mode change to each motor.
+      robot.bus.write(robot.drivetrain.motors.length);
       for (const motor of robot.drivetrain.motors) motor.encoder?.reset?.();
       return api;
     },
@@ -215,13 +244,47 @@ export function buildAutoApi(deps) {
       const motors = robot.drivetrain.motors;
       if (motors.length === 0) return 0;
       let total = 0;
-      for (const motor of motors) total += Math.abs(motor.encoder?.ticks ?? 0);
+      for (const motor of motors) total += Math.abs(robot.readEncoder(motor));
       return total / motors.length / perMetre;
     },
 
     /** Bus voltage, which sags under load and sets how fast you actually go. */
     get voltage() {
-      return robot.battery?.busVoltage ?? 12;
+      return robot.readVoltage?.() ?? robot.battery?.busVoltage ?? 12;
+    },
+
+    /**
+     * The hubs: what your loop is costing, and the one call that controls it.
+     *
+     * This is the readout that answers "why is my auto not repeatable?" --
+     * a cycle that varies between 8 and 30 ms is a cycle whose timed waits
+     * land in different places every run.
+     */
+    hub: {
+      /** `LynxModule.clearBulkCache()`. Only does anything in MANUAL mode. */
+      clearBulkCache() {
+        robot.bus.clearBulkCache();
+        return api.hub;
+      },
+      /** 'OFF', 'AUTO' or 'MANUAL'. Settable, as `setBulkCachingMode` is. */
+      get cachingMode() {
+        return robot.bus.cachingMode;
+      },
+      set cachingMode(mode) {
+        if (mode === 'OFF' || mode === 'AUTO' || mode === 'MANUAL') robot.bus.cachingMode = mode;
+      },
+      /** How long the last complete cycle took, milliseconds. */
+      get loopMs() {
+        return (deps.loopSeconds?.() ?? 0) * 1000;
+      },
+      /** How much of that was spent waiting on the hubs. */
+      get ioMs() {
+        return robot.bus.lastSeconds * 1000;
+      },
+      /** Transactions the last complete cycle made. */
+      get transactions() {
+        return robot.bus.lastTransactions;
+      },
     },
 
     /**

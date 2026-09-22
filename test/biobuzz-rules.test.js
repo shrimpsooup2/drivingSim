@@ -4,6 +4,7 @@ import { Config } from '../src/config/Config.js';
 import { Simulation } from '../src/app/Simulation.js';
 import { PENALTY_POINTS, RULES, rulesByCoverage } from '../src/field/biobuzz/rules.js';
 import { MAX_CONTROLLED } from '../src/field/biobuzz/constants.js';
+import { BUTTON_KEYS } from '../src/input/KeyboardSource.js';
 import {
   BUILD_QUALITIES,
   ROBOT_ARCHETYPES,
@@ -567,11 +568,18 @@ test('the intake refuses the opponent NECTAR, and takes it when told not to sort
   // Through `sim.step`, because the roller only ramps and only sweeps when the
   // robot's subsystems are actually stepped -- `game.update` advances the MATCH
   // and the FIELD and nothing on the ROBOT.
+  //
+  // Held on the gamepad rather than by poking `intake.command`, because the
+  // op-mode rewrites the command from the bumpers on every cycle: a value set
+  // between frames lasts only until the next cycle, and how many of those a
+  // frame contains depends on the loop rate. Holding the bumper is what a
+  // driver does and does not care about the rate.
+  game.sim.input.keyboardSource.active = true;
   const run = () => {
-    for (let i = 0; i < 60; i++) {
-      game.intake.command = 1;
-      game.sim.step(1 / 60);
-    }
+    const keys = game.sim.input.keyboardSource.keys;
+    keys.add(BUTTON_KEYS.right_bumper);
+    for (let i = 0; i < 90; i++) game.sim.step(1 / 60);
+    keys.delete(BUTTON_KEYS.right_bumper);
   };
 
   const theirs = game.field.nectar.blue[0];

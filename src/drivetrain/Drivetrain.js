@@ -33,9 +33,17 @@ import { Encoder } from '../hardware/Encoder.js';
 export class Drivetrain {
   /**
    * @param {import('../config/schema.js').SimConfig} config
+   * @param {{bus?: import('../hardware/HardwareBus.js').HardwareBus}} [opts]
    */
-  constructor(config) {
+  constructor(config, opts = {}) {
     this.config = config;
+    /**
+     * The hub bus every motor controller writes through, so a `setPower` is
+     * charged wherever it comes from. Null in a bare drivetrain built for a
+     * test, which then costs nothing.
+     * @type {import('../hardware/HardwareBus.js').HardwareBus|null}
+     */
+    this.bus = opts.bus ?? null;
     /** @type {import('../physics/Wheel.js').Wheel[]} */
     this.wheels = [];
     /** @type {DriveMotor[]} */
@@ -111,6 +119,7 @@ export class Drivetrain {
             kI: config.control.kI,
             kD: config.control.kD,
             kF: config.control.kF,
+            bus: this.bus,
           }),
           encoder: new Encoder({
             ticksPerRev: m.ticksPerRev,

@@ -2,6 +2,7 @@ import { Vec2 } from '../math/Vec2.js';
 import { RigidBody2d } from '../physics/RigidBody2d.js';
 import { Drivetrain } from '../drivetrain/Drivetrain.js';
 import { Battery } from '../hardware/Battery.js';
+import { HardwareBus } from '../hardware/HardwareBus.js';
 import { Imu } from '../hardware/Imu.js';
 
 /**
@@ -20,7 +21,15 @@ export class Robot {
   constructor(config) {
     this.config = config;
     this.body = new RigidBody2d();
-    this.drivetrain = new Drivetrain(config);
+    /**
+     * The hubs, and what talking to them costs.
+     *
+     * Created before the drivetrain because every motor controller holds a
+     * reference to it: a `setPower` is a hub write and has to be charged for
+     * wherever it comes from.
+     */
+    this.bus = new HardwareBus().applySettings(config.control?.hub);
+    this.drivetrain = new Drivetrain(config, { bus: this.bus });
     this.battery = new Battery({
       nominalVoltage: config.battery.nominalVoltage,
       openCircuitVoltage: config.battery.openCircuitVoltage,
@@ -102,6 +111,7 @@ export class Robot {
   /** Apply a changed config. Rebuilds the drivetrain only when asked to. */
   applySettings(config, rebuild = false) {
     this.config = config;
+    this.bus.applySettings(config.control?.hub);
     if (rebuild) this.drivetrain.rebuild(config);
     else this.drivetrain.applySettings(config);
 
@@ -119,6 +129,44 @@ export class Robot {
 
     this.updateMassProperties();
     return this;
+  }
+
+  // ------------------------------------------------- reading it as robot code
+  //
+  // Everything an op-mode or an AUTO routine reads off the robot goes through
+  // one of these, so the hub transaction is charged in one obvious place. The
+  // simulator's own reads -- the renderer, the HUD, the referee, the AI --
+  // touch `imu`, `battery` and `encoder` directly and pay nothing, because
+  // none of those reads happen on a real robot.
+
+  /** The IMU, over I2C, as `imu.getRobotYawPitchRollAngles()` is. */
+  readHeading() {
+    this.bus.i2c();
+    return this.imu.heading;
+  }
+
+  /** `imu.resetYaw()`, which is a write to the sensor. */
+  resetHeading() {
+    this.bus.i2c();
+    this.imu.resetYaw(this.body.rotation.radians);
+    return this;
+  }
+
+  /** Bus voltage, as `voltageSensor.getVoltage()` is: one hub read. */
+  readVoltage() {
+    this.bus.read();
+    return this.battery.busVoltage;
+  }
+
+  /**
+   * An encoder, out of the bulk packet if one is warm.
+   * @param {import('../hardware/DriveMotor.js').DriveMotor} motor
+   * @param {'position'|'velocity'} what
+   */
+  readEncoder(motor, what = 'position') {
+    this.bus.cachedRead(`${motor.name}.${what}`);
+    if (!motor.encoder) return 0;
+    return what === 'velocity' ? motor.encoder.velocityTicksPerSec : motor.encoder.ticks;
   }
 
   get halfLength() {
@@ -186,6 +234,7 @@ export class Robot {
    */
   reset(x = 0, y = 0, heading = 0) {
     this.body.reset(x, y, heading);
+    this.bus.reset();
     this.drivetrain.reset();
     this.battery.reset();
     this.battery.setStateOfCharge(this.config.battery.startingStateOfCharge);

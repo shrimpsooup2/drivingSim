@@ -58,12 +58,16 @@ export class TeleOpDrive extends OpMode {
     this.runtime += dt;
 
     if (gamepad1.justPressed('x')) this.driver.toggleFieldCentric();
-    if (gamepad1.justPressed('a')) robot.imu.resetYaw(robot.body.rotation.radians);
+    if (gamepad1.justPressed('a')) robot.resetHeading();
     if (gamepad1.justPressed('back')) this.sim?.resetRobot();
 
+    // One I2C reading, charged, and it covers the rate as well as the angle --
+    // a real IMU read hands back both in the same transaction. This is most of
+    // why a field-centric loop is slower than a robot-centric one.
+    const heading = robot.readHeading();
     const command = this.driver.process(
       gamepad1,
-      robot.imu.heading,
+      heading,
       robot.body.angularVelocity,
       dt,
     );

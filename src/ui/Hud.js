@@ -113,6 +113,17 @@ export class Hud {
     else this._removePill('nonstd');
     if (sim.paused) this._pill('paused', 'PAUSED', false, true);
     else this._removePill('paused');
+    // The loop time, because with hub latency on it is a number the code earns
+    // rather than one you set, and watching it move is the whole point. The
+    // transaction count is what it is made of.
+    this._pill(
+      'loop',
+      t.hub?.enabled
+        ? `LOOP ${fmt(t.loopMs, 1)} ms  ${t.hub.transactions} hub call${t.hub.transactions === 1 ? '' : 's'}`
+        : `LOOP ${fmt(t.loopMs, 1)} ms  fixed`,
+      false,
+      t.loopMs > 50,
+    );
     this._pill('perf', `${t.substeps} substeps  ${fmt(t.stepCostMs, 1)} ms`);
 
     // Graphs at 20 Hz: fast enough to see a transient, slow enough to be free.

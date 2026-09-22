@@ -1,5 +1,6 @@
 import { OpMode } from './OpMode.js';
 import { buildAutoApi } from './autoApi.js';
+import { HardwareBus } from '../hardware/HardwareBus.js';
 
 /**
  * Runs an AUTO routine pasted in as JavaScript.
@@ -192,6 +193,7 @@ export class AutoRunner extends OpMode {
         if (this.log.length > 200) this.log.shift();
       },
       runtime: () => this.runtime,
+      loopSeconds: () => this.sim?.controlPeriod ?? 0,
     });
   }
 
@@ -296,13 +298,21 @@ export class AutoRunner extends OpMode {
       imu: { heading: 0, reset() {} },
       battery: { busVoltage: 12 },
       body: { position: { x: 0, y: 0 }, rotation: { radians: 0 }, speed: 0 },
+      // A bus that charges nothing, because the module body is not a cycle.
+      bus: new HardwareBus({ enabled: false }),
+      readHeading: () => 0,
+      resetHeading() {},
+      readVoltage: () => 12,
+      readEncoder: () => 0,
     };
+    stub.bus.exempt = true;
     return {
       robot: /** @type {any} */ (stub),
       game: null,
       telemetry: {},
       log: (message) => this.log.push(message),
       runtime: () => 0,
+      loopSeconds: () => 0,
     };
   }
 }

@@ -39,16 +39,57 @@ robot:
 | Rate | Default | What happens |
 | --- | --- | --- |
 | Render | display refresh | Draw a frame |
-| **Op-mode loop** | 50 Hz | Read the gamepad, run drive logic, change motor commands, sample encoders |
+| **Op-mode loop** | earned, typically 7–25 ms | Read the gamepad, run drive logic, change motor commands, sample encoders |
 | **Physics substep** | 2000 Hz | Evaluate motor torque, contact forces, integrate |
 
 Collapsing these into one rate is the usual shortcut and it makes a simulated
 robot feel unrealistically crisp. A real robot cannot change what it is doing
-more than ~50 times a second, no matter how fast the driver's hands are.
+more than a few tens of times a second, no matter how fast the driver's hands
+are.
 
 On top of that sits an input **delay line** (default 40 ms) covering the gamepad
 poll, the Driver Station app, the wifi hop to the Control Hub, and waiting for
 the next loop cycle.
+
+### The loop rate is earned, not set
+
+The op-mode rate is not a number you type in. Every conversation with a hub is a
+round trip over USB and RS-485, and the loop period is what those round trips
+add up to plus `control.loopOverheadMs` for everything that is not a
+transaction:
+
+| Transaction | Cost | What it is |
+| --- | --- | --- |
+| Write | 2.5 ms | One motor power, servo position, run mode or LED |
+| Bulk read | 2.0 ms | One hub's encoders, currents and digital inputs in a single packet |
+| Single read | 2.0 ms | Battery voltage, a servo position, an analogue input |
+| I2C reading | 2.5 ms | The built-in IMU, a colour sensor, a Pinpoint, an OTOS |
+
+So a field-centric teleop cycle that writes four motor powers and reads the IMU
+costs 4 × 2.5 + 2.5 + 5 = 17.5 ms, about 57 Hz — and the same robot standing
+still costs 7.5 ms, because the SDK skips a motor power identical to the one it
+already sent. Both of those are what a real robot does, and the loop pill in the
+HUD shows it happening.
+
+Bulk caching works as `LynxModule.BulkCachingMode` does:
+
+- **AUTO** (the default) takes one bulk packet and expires it the moment you
+  read the *same* sensor twice, so one packet covers one pass over the sensors
+  and a loop that reads an encoder in two places quietly pays for two packets.
+- **MANUAL** keeps the packet until `robot.hub.clearBulkCache()`. Fastest, and
+  the easiest to get wrong: forget the call and every reading in the match is
+  the one from the first loop.
+- **OFF** makes every encoder reading its own 2 ms round trip. Reading four
+  encoders then costs 8 ms instead of 2.
+
+Turn `control.hub.latency` off to go back to the fixed `control.loopRateHz`.
+The transactions are still counted so the readout still means something; they
+just cost nothing.
+
+This is ported from a teammate's JVM simulator, which charges the same four
+costs to the thread running the op-mode. Nothing in a browser can block a
+thread, so instead the charges are counted over a cycle and the total becomes
+the next cycle's period — the same arithmetic without the thread.
 
 ## The wheel contact model
 

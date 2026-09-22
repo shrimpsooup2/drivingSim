@@ -18,8 +18,10 @@ import { clamp } from '../math/MathUtil.js';
  * a real robot:
  *
  *  - **Render rate** -- whatever the browser gives us, typically 60 Hz.
- *  - **Op-mode rate** (default 50 Hz) -- how often driver input is read and
- *    motor commands change. A real robot cannot react faster than this.
+ *  - **Op-mode rate** -- how often driver input is read and motor commands
+ *    change. A real robot cannot react faster than this, and with hub latency
+ *    switched on the rate is not a setting at all: it is whatever the code's
+ *    hub transactions add up to. See `HardwareBus`.
  *  - **Physics rate** (default 2000 Hz) -- wheel contact is stiff enough that
  *    it needs sub-millisecond steps to stay stable.
  *
@@ -69,6 +71,15 @@ export class Simulation {
 
     this._physicsAccumulator = 0;
     this._controlAccumulator = 0;
+    /**
+     * How long the next op-mode cycle is, in seconds.
+     *
+     * A field rather than a setting, because with hub latency on it is earned:
+     * after each cycle it becomes that cycle's own hub time plus the loop
+     * overhead, so code that talks to the hubs more runs slower. See
+     * `_nextControlPeriod`.
+     */
+    this.controlPeriod = 1 / clamp(this.config.control.loopRateHz, 1, 1000);
     this.startPose = { x: 0, y: 0, heading: 0 };
 
     /** Recent positions for the path trail, as [x, y, t] triples. */
@@ -268,6 +279,7 @@ export class Simulation {
     this.time = 0;
     this._physicsAccumulator = 0;
     this._controlAccumulator = 0;
+    this.controlPeriod = 1 / clamp(this.config.control.loopRateHz, 1, 1000);
     this.trail.length = 0;
     this.events.emit('reset');
     return this;
@@ -300,7 +312,6 @@ export class Simulation {
     this._physicsAccumulator += scaled;
 
     const h = 1 / clamp(cfg.sim.substepHz, 50, 20000);
-    const controlPeriod = 1 / clamp(cfg.control.loopRateHz, 1, 1000);
     // Bound the work one frame may do, so a slow machine degrades into slow
     // motion rather than freezing.
     const maxSubsteps = Math.ceil(cfg.sim.maxFrameSeconds / h) + 2;
@@ -308,6 +319,9 @@ export class Simulation {
     let substeps = 0;
     while (this._physicsAccumulator >= h && substeps < maxSubsteps) {
       this._controlAccumulator += h;
+      // Read once: the cycle sets the *next* period, and the accumulator has to
+      // be charged the one that just elapsed.
+      const controlPeriod = this.controlPeriod;
       if (this._controlAccumulator >= controlPeriod) {
         this._runControlCycle(controlPeriod);
         this._controlAccumulator -= controlPeriod;
@@ -355,6 +369,9 @@ export class Simulation {
    */
   _mirrorFrame(frameSeconds) {
     const dt = Math.min(frameSeconds, this.config.sim.maxFrameSeconds);
+    // The configured rate, not an earned one: a joiner has no hubs of its own
+    // to wait on -- its robot is simulated on the host -- and what this loop
+    // decides is only how often a gamepad packet goes out.
     const controlPeriod = 1 / clamp(this.config.control.loopRateHz, 1, 1000);
     this._controlAccumulator += dt;
     while (this._controlAccumulator >= controlPeriod) {
@@ -368,7 +385,29 @@ export class Simulation {
     this._updateTrail(dt);
   }
 
+  /**
+   * How long the cycle that just ran actually took.
+   *
+   * With hub latency off this is the rate from the settings panel, as it always
+   * was. With it on, the panel's rate is ignored and the period is the time the
+   * cycle spent talking to the hubs plus `control.loopOverheadMs` for
+   * everything that is not a transaction -- your own arithmetic, the telemetry
+   * packet, the SDK's own bookkeeping. Clamped to between 2 and 200 ms: a loop
+   * that made no hardware calls at all is not really running at 10 kHz, and one
+   * that somehow charged a second of I/O should still be steppable.
+   */
+  _nextControlPeriod() {
+    const cfg = this.config.control;
+    const configured = 1 / clamp(cfg.loopRateHz, 1, 1000);
+    const bus = this.robot.bus;
+    if (!bus?.enabled) return configured;
+    const overhead = Math.max(0, cfg.loopOverheadMs ?? 0) / 1000;
+    return clamp(overhead + bus.lastSeconds, 0.002, 0.2);
+  }
+
   _runControlCycle(dt) {
+    const bus = this.robot.bus;
+    bus?.beginCycle();
     const gamepad = this.input.update(dt);
     // During AUTO a compiled routine has the ROBOT, and the sticks do nothing
     // -- which is both G401 ("DRIVE TEAM members may not directly or
@@ -384,6 +423,10 @@ export class Simulation {
       this.opMode.loop(dt, gamepad, gamepad);
       this.robot.updateControl(dt, gamepad);
     }
+
+    // What the cycle cost at the hubs is what the next one waits.
+    bus?.endCycle();
+    this.controlPeriod = this._nextControlPeriod();
 
     if (this.opponents.length === 0) return;
     // Opponents are told what the player is doing and, if a drill is running,
@@ -504,6 +547,8 @@ export class Simulation {
       measuredTwist: dt.telemetry.measuredTwist,
       maxSpeeds: dt.telemetry.maxSpeeds,
       substeps: this.substepsLastFrame,
+      loopMs: this.controlPeriod * 1000,
+      hub: robot.bus.status(),
       stepCostMs: this.stepCostMs,
       stats: robot.stats,
     };

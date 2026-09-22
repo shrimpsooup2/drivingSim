@@ -27,15 +27,30 @@ export const EXAMPLE_AUTO = `// BIOBUZZ auto. Runs during the 30-second AUTO per
 
 const WRAP = (deg) => ((deg + 540) % 360) - 180;
 
+// resetYaw() makes the IMU read zero wherever the robot happens to be sitting,
+// so it measures how far you have turned *since the start*, not where you are
+// pointing on the field. Every field heading below is therefore start + yaw,
+// and START is the heading of the tile you are placed on -- which your team
+// decides before the match and writes down, exactly like this.
+let START = 0;
+
 function init(robot) {
   robot.imu.reset();
+  START = robot.match.alliance === 'red' ? 0 : 180;
   robot.log('auto on ' + robot.match.alliance + ', ' + robot.held + ' pre-loaded');
 }
 
-// Turn onto an absolute heading, closing the loop on the IMU.
+// Where the robot is pointing on the field, in degrees.
+//
+// One IMU read, kept in a variable. Each read is an I2C transaction and costs
+// about 2.5 ms of loop time, so reading it three times in one cycle really does
+// make the routine run slower -- watch robot.hub.loopMs.
+const facing = (robot) => WRAP(START + robot.imu.heading);
+
+// Turn onto an absolute field heading, closing the loop on the IMU.
 function* turnTo(robot, degrees) {
   for (let cycle = 0; cycle < 300; cycle++) {
-    const error = WRAP(degrees - robot.imu.heading);
+    const error = WRAP(degrees - facing(robot));
     if (Math.abs(error) < 2) break;
     robot.drive(0, 0, Math.max(-0.45, Math.min(0.45, error / 45)));
     yield;

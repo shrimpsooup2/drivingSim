@@ -33,9 +33,16 @@ export class MotorController {
    *   kP?: number, kI?: number, kD?: number, kF?: number,
    *   positionP?: number,
    *   maxDuty?: number,
+   *   bus?: import('./HardwareBus.js').HardwareBus|null,
    * }} [opts]
    */
   constructor(opts = {}) {
+    /**
+     * The hubs. Commands are charged to it, because every one of them is a
+     * transaction over RS-485 and that is what sets your loop time.
+     * @type {import('./HardwareBus.js').HardwareBus|null}
+     */
+    this.bus = opts.bus ?? null;
     this.mode = opts.mode ?? 'RUN_WITHOUT_ENCODER';
     this.zeroPowerBehavior = opts.zeroPowerBehavior ?? 'BRAKE';
     this.reversed = opts.reversed ?? false;
@@ -100,15 +107,26 @@ export class MotorController {
     return this;
   }
 
-  /** FTC `setPower`. In RUN_USING_ENCODER this becomes a fraction of free speed. */
+  /**
+   * FTC `setPower`. In RUN_USING_ENCODER this becomes a fraction of free speed.
+   *
+   * Charged as a hub write only when the value changes, because that is what
+   * the SDK does: `LynxDcMotorController` remembers the last power it sent to
+   * each port and skips the transaction when you send it again. Holding a stick
+   * perfectly still is therefore free, and a loop that writes four motors every
+   * cycle costs 10 ms -- which is most of a typical FTC loop time.
+   */
   setPower(power) {
-    this.power = clamp(power, -1, 1);
+    const next = clamp(power, -1, 1);
+    if (next !== this.power || this.usingDirectVelocity) this.bus?.write();
+    this.power = next;
     this.usingDirectVelocity = false;
     return this;
   }
 
   /** FTC `setVelocity`, in rad/s at the output shaft. */
   setVelocity(radPerSec) {
+    if (radPerSec !== this.targetVelocity || !this.usingDirectVelocity) this.bus?.write();
     this.targetVelocity = radPerSec;
     this.usingDirectVelocity = true;
     return this;
@@ -116,6 +134,9 @@ export class MotorController {
 
   setMode(mode) {
     if (mode !== this.mode) {
+      // A run-mode change is its own transaction, which is why setting the mode
+      // inside the loop rather than in init costs you 2.5 ms a cycle.
+      this.bus?.write();
       this.mode = mode;
       this.pid.reset();
     }

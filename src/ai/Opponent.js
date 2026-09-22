@@ -153,6 +153,11 @@ export class Opponent {
       : this.profile.config;
     this.config = buildConfig(opts.baseConfig, overrides);
     this.robot = new Robot(this.config);
+    // Nobody is writing code for this one. It is not an op-mode, it has no loop
+    // time to model, and counting its hub transactions would only put numbers
+    // in the inspector that stand for nothing.
+    this.robot.bus.enabled = false;
+    this.robot.bus.exempt = true;
     this.robot.reset(this.start.x, this.start.y, this.start.heading);
 
     /**

@@ -628,6 +628,68 @@ async function main() {
       }
     }
 
+    // --- The loop rate is earned from hub transactions, in the real page.
+    //
+    // The arithmetic is covered in `test/hardware-bus.test.js`; what this is
+    // for is that the number reaches the HUD, because a loop time nobody can
+    // see teaches nothing.
+    const hubLoop = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const sim = app.sim;
+      const keys = sim.input.keyboardSource.keys;
+      sim.input.keyboardSource.active = true;
+
+      // Idle: no motor power changes, so nothing is written.
+      for (let i = 0; i < 40; i++) sim.step(1 / 60);
+      const idleMs = sim.controlPeriod * 1000;
+      const idleWrites = sim.robot.bus.lastCounts.write;
+
+      // Driving: the ramp moves all four powers every cycle.
+      keys.add('KeyW');
+      let peakMs = 0;
+      let writes = 0;
+      for (let i = 0; i < 20; i++) {
+        sim.step(1 / 60);
+        peakMs = Math.max(peakMs, sim.controlPeriod * 1000);
+        writes = Math.max(writes, sim.robot.bus.lastCounts.write);
+      }
+      keys.delete('KeyW');
+      app.hud.update(sim, sim.telemetry(), 1 / 60);
+      const pill = [...app.hud.status.querySelectorAll('.pill')]
+        .map((p) => p.textContent)
+        .find((t) => t.startsWith('LOOP'));
+
+      // And with the charging switched off it goes back to the panel's rate.
+      app.config.set('control.hub.latency', false);
+      app.config.set('control.loopRateHz', 40);
+      for (let i = 0; i < 20; i++) sim.step(1 / 60);
+      const fixedMs = sim.controlPeriod * 1000;
+      app.config.set('control.hub.latency', true);
+      app.config.set('control.loopRateHz', 50);
+      sim.resetRobot();
+      return { idleMs, idleWrites, peakMs, writes, pill, fixedMs };
+    })()`);
+    console.log(
+      `  Loop rate: idle ${hubLoop.idleMs.toFixed(1)} ms, driving ${hubLoop.peakMs.toFixed(1)} ms ` +
+        `(${hubLoop.writes} writes), fixed ${hubLoop.fixedMs.toFixed(1)} ms`,
+    );
+    console.log(`    HUD says: ${hubLoop.pill}`);
+    if (hubLoop.idleWrites !== 0) {
+      failures.push(`an idle robot wrote ${hubLoop.idleWrites} motor powers`);
+    }
+    if (hubLoop.writes !== 4) failures.push(`driving wrote ${hubLoop.writes} powers, not 4`);
+    if (!(hubLoop.peakMs > hubLoop.idleMs + 9)) {
+      failures.push(
+        `four motor writes should add 10 ms: ${hubLoop.idleMs.toFixed(1)} -> ${hubLoop.peakMs.toFixed(1)}`,
+      );
+    }
+    if (!/^LOOP \d/.test(hubLoop.pill ?? '')) {
+      failures.push(`the loop time did not reach the HUD: ${hubLoop.pill}`);
+    }
+    if (Math.round(hubLoop.fixedMs) !== 25) {
+      failures.push(`with charging off, 40 Hz should be 25 ms, got ${hubLoop.fixedMs}`);
+    }
+
     // --- The AUTO editor, through the real UI.
     //
     // The whole point of the feature is that you paste a routine in and it
