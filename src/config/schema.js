@@ -147,6 +147,19 @@ export const SCHEMA = [
         help: 'Left wheel centre to right wheel centre. Wider is more stable against tipping and gives more turning leverage.',
       },
       {
+        path: 'drivetrain.mirroredSide',
+        label: 'Mirrored motor side',
+        type: 'enum',
+        options: [
+          { value: 'left', label: 'Left (the usual build)' },
+          { value: 'right', label: 'Right' },
+          { value: 'none', label: 'Neither' },
+        ],
+        default: 'left',
+        rebuild: true,
+        help: 'Which side has its motors bolted on facing the other way, so positive power turns those wheels backwards. It is why every team\u2019s code reverses one side. The built-in driving divides it back out, so this only changes what a pasted op-mode has to do -- and it has to do the same thing it does on your robot.',
+      },
+      {
         path: 'drivetrain.wheelRadius',
         label: 'Wheel radius',
         type: 'number',

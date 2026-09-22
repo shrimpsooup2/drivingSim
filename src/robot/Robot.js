@@ -170,6 +170,28 @@ export class Robot {
   // touch `imu`, `battery` and `encoder` directly and pay nothing, because
   // none of those reads happen on a real robot.
 
+  /**
+   * `resetDeviceConfigurationForOpMode`, which the SDK calls when an op-mode
+   * starts.
+   *
+   * Directions, run modes and zero-power behaviours are op-mode state, not
+   * robot state: a Java op-mode that reverses its left side must not leave the
+   * ports reversed for whatever runs next. Without this, running a team's auto
+   * and then the built-in one made the second drive in a circle -- from code
+   * that had not changed.
+   */
+  resetDeviceConfiguration() {
+    const control = this.config.control;
+    for (const motor of this.drivetrain.motors) {
+      motor.controller.reversed = false;
+      motor.controller.setMode(control.runMode);
+      motor.controller.zeroPowerBehavior = control.zeroPowerBehavior;
+      motor.controller.setPower(0);
+      motor.controller.targetPosition = 0;
+    }
+    return this;
+  }
+
   /** The IMU, over I2C, as `imu.getRobotYawPitchRollAngles()` is. */
   readHeading() {
     this.bus.i2c();
@@ -285,6 +307,7 @@ export class Robot {
    */
   reset(x = 0, y = 0, heading = 0) {
     this.body.reset(x, y, heading);
+    this.resetDeviceConfiguration();
     this.teleportEpoch++;
     this.bus.reset();
     this.drivetrain.reset();

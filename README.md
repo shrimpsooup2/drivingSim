@@ -30,7 +30,8 @@ For development:
 ```
 npm start      # serves locally and opens your browser
 npm run lan    # same, but reachable from the rest of your network (multiplayer)
-npm test       # 157 unit and integration tests
+npm run repo -- ../your-FtcRobotController   # also serves your team's .java files
+npm test       # 545 unit and integration tests
 npm run check  # headless browser smoke test + screenshots
 ```
 
@@ -130,6 +131,17 @@ robot. `Import` loads it back.
   slip, with strip charts.
 - **Debug overlays**: per-wheel force vectors coloured by how much grip is left,
   slip markers, wheel load rings and a path trail.
+- **Your team's actual autonomous, in Java.** Point it at your
+  `FtcRobotController` checkout -- a folder, a GitHub repo, or files dragged
+  onto the window -- and it finds your op-modes, compiles the Java, and runs
+  them against the simulated hardware. `hardwareMap.get()` resolves your device
+  names against the simulated ports and tells you what it wired to what,
+  `waitForStart()` and `sleep()` block the way they do on a real Control Hub,
+  telemetry appears in the panel, and a loop that reads four motors costs you
+  the bus time it would really cost. Forget `setDirection(REVERSE)` on the
+  mirrored side and the robot spins here too. See
+  **[docs/JAVA.md](docs/JAVA.md)** for the supported subset and the handful of
+  places it is deliberately not the JVM.
 - **Fully adjustable cameras**: driver station (the default, and the one that
   actually builds useful skill), chase, overhead and free orbit. Drag and scroll
   in any view; the driver-station camera can be set to your real eye height and
@@ -188,6 +200,9 @@ touching the core, and the game itself is built entirely on those seams.
 - **[docs/RULES.md](docs/RULES.md)** — all forty Game Rules and what the
   simulator does about each one: eleven officiated live, and an explicit reason
   for every one that is not.
+- **[docs/JAVA.md](docs/JAVA.md)** — running your team's real Java op-modes:
+  the four ways to load them, how device names are matched, and exactly which
+  parts of Java and of the SDK are supported.
 
 ## Layout
 
@@ -205,11 +220,15 @@ src/
   challenges/  timed driving drills: geometry, state machine, records
   input/       Gamepad API with FTC semantics, keyboard, latency model
   teleop/      OpMode extension point, drive schemes, driver-feel processing
+  java/        Java tokenizer, parser and JavaScript emitter for op-modes
+  ftc/         the shimmed FTC SDK surface the compiled op-modes run against
+  net/         multiplayer transport, and loading your repo's .java files
   render/      WebGL2 renderer, cameras, procedural geometry and textures
   ui/          schema-driven settings panel, HUD, telemetry graphs
   config/      parameter schema, config store, motor and robot presets
   app/         simulation loop, application wiring, BIOBUZZ coordinator
-test/          281 tests: unit, physics validation, drills, AI, the game, end-to-end
+test/          545 tests: unit, physics validation, drills, AI, the game,
+               the Java compiler, end-to-end
 tools/         static server, headless browser check
 ```
 

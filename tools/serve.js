@@ -16,16 +16,24 @@
  * the server stays on localhost, which is the right default for a machine that
  * is only ever driving on its own.
  *
- * Usage: node tools/serve.js [--port 8080] [--host 127.0.0.1] [--lan] [--no-open]
+ * It can also attach a team's FTC repository, the way a teammate's JVM
+ * simulator does with `-Prepo`: `--repo ../FtcRobotController` serves the
+ * `.java` files it finds at `/repo/files`, and with no flag it looks for a
+ * sibling checkout, because that is where one usually is. The browser then has
+ * the team's op-modes without anybody copying a file about, and editing one in
+ * an IDE and pressing Reload picks it up.
+ *
+ * Usage: node tools/serve.js [--port 8080] [--host 127.0.0.1] [--lan] [--no-open] [--repo DIR]
  */
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { networkInterfaces } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Relay } from './relay.js';
+import { REPO_LIMITS, chooseRepoFiles, isTeamJavaFile, shortName } from '../src/net/repo.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -45,12 +53,14 @@ const MIME = {
 };
 
 function parseArgs(argv) {
-  const out = { port: 8080, host: '127.0.0.1', open: true, lan: false };
+  const out = { port: 8080, host: '127.0.0.1', open: true, lan: false, repo: null, samples: false };
   for (let i = 0; i < argv.length; i++) {
     if ((argv[i] === '--port' || argv[i] === '-p') && argv[i + 1]) out.port = Number(argv[++i]);
     else if (argv[i] === '--host' && argv[i + 1]) out.host = argv[++i];
     else if (argv[i] === '--no-open') out.open = false;
     else if (argv[i] === '--lan') out.lan = true;
+    else if (argv[i] === '--repo' && argv[i + 1]) out.repo = argv[++i];
+    else if (argv[i] === '--samples') out.samples = true;
   }
   // `--lan` is shorthand for "listen on every interface", and it must not
   // silently lose an explicit `--host` given alongside it.
@@ -119,7 +129,121 @@ function openBrowser(url) {
 
 const options = parseArgs(process.argv.slice(2));
 
+/**
+ * Where the team's repository is, if there is one.
+ *
+ * An explicit `--repo` wins. Otherwise the parent directory is searched one
+ * level for something that looks like an FTC project -- a `TeamCode` folder
+ * next to a `FtcRobotController` one -- because a team's checkout is almost
+ * always a sibling of whatever else they cloned, and finding it is friendlier
+ * than a flag nobody knew to pass.
+ */
+async function findRepo(explicit) {
+  if (explicit) {
+    const path = resolve(explicit);
+    if (await looksLikeFtcProject(path)) return path;
+    // An explicit path is honoured even if it does not look like one: somebody
+    // pointing at a directory of loose .java files means that directory.
+    try {
+      if ((await stat(path)).isDirectory()) return path;
+    } catch {
+      console.log(`  (No repository at ${path}.)`);
+      return null;
+    }
+  }
+  const parent = resolve(ROOT, '..');
+  let entries;
+  try {
+    entries = await readdir(parent, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    const candidate = join(parent, entry.name);
+    if (candidate === ROOT) continue;
+    if (await looksLikeFtcProject(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function looksLikeFtcProject(path) {
+  try {
+    const entries = await readdir(path);
+    return entries.includes('TeamCode') || entries.includes('FtcRobotController');
+  } catch {
+    return false;
+  }
+}
+
+/** Every team `.java` file under `root`, with its size. */
+async function walkJava(root, prefix = '', out = [], depthLeft = 12) {
+  if (depthLeft <= 0) return out;
+  let entries;
+  try {
+    entries = await readdir(join(root, prefix), { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      if (entry.name.startsWith('.')) continue;
+      // Pruned rather than walked and filtered: `build` and `.gradle` on a real
+      // checkout are thousands of entries.
+      if (['build', 'node_modules', '.gradle', '.idea'].includes(entry.name)) continue;
+      await walkJava(root, path, out, depthLeft - 1);
+      continue;
+    }
+    if (!isTeamJavaFile(path, { includeSamples: options.samples })) continue;
+    try {
+      const info = await stat(join(root, path));
+      out.push({ path, size: info.size });
+    } catch {
+      /* it went away between reading the directory and asking about it */
+    }
+  }
+  return out;
+}
+
+/** `GET /repo/files` -- the attached repository's op-mode sources. */
+async function serveRepoFiles(res) {
+  if (!repoRoot) {
+    res
+      .writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
+      .end(JSON.stringify({ error: 'no repository attached' }));
+    return;
+  }
+  const found = await walkJava(repoRoot);
+  const chosen = chooseRepoFiles(found, { includeSamples: options.samples });
+  const files = [];
+  for (const file of chosen.files) {
+    try {
+      files.push({
+        name: shortName(file.path),
+        path: file.path,
+        source: await readFile(join(repoRoot, file.path), 'utf8'),
+      });
+    } catch {
+      /* unreadable, so it is simply not offered */
+    }
+  }
+  res
+    .writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      // Always re-read: the point of attaching a checkout is that editing a
+      // file and pressing Reload picks it up.
+      'Cache-Control': 'no-store',
+    })
+    .end(JSON.stringify({ root: repoRoot, files, skipped: chosen.skipped, limits: REPO_LIMITS }));
+}
+
 const server = createServer(async (req, res) => {
+  const url = (req.url || '/').split('?')[0];
+  if (url === '/repo/files') {
+    await serveRepoFiles(res);
+    return;
+  }
   let filePath = safePath(req.url || '/');
   if (!filePath) {
     res.writeHead(403).end('Forbidden');
@@ -143,6 +267,9 @@ const server = createServer(async (req, res) => {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('404 Not Found');
   }
 });
+
+/** Resolved before the first request, and printed so it is never a mystery. */
+let repoRoot = null;
 
 const relay = new Relay({
   log: (line) => console.log(`  [multiplayer] ${line}`),
@@ -174,7 +301,8 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-server.listen(options.port, options.host, () => {
+server.listen(options.port, options.host, async () => {
+  repoRoot = await findRepo(options.repo);
   const address = server.address();
   const port = typeof address === 'object' && address ? address.port : options.port;
   // `0.0.0.0` is a bind address, not somewhere a browser can go, so the line
@@ -205,6 +333,17 @@ server.listen(options.port, options.host, () => {
     }
   } else {
     console.log('  For multiplayer, stop this and run:  npm run lan');
+    console.log('');
+  }
+  if (repoRoot) {
+    const found = chooseRepoFiles(await walkJava(repoRoot), { includeSamples: options.samples });
+    console.log(`  Your FTC repository is attached: ${repoRoot}`);
+    console.log(`  ${found.files.length} op-mode source file(s). Press F, then Load repository.`);
+    console.log('');
+  } else {
+    console.log('  To run your own op-modes, attach your repository:');
+    console.log('');
+    console.log('      npm start -- --repo ../your-FtcRobotController');
     console.log('');
   }
   console.log('  Leave this window open while you drive.');

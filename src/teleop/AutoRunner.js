@@ -1,6 +1,8 @@
 import { OpMode } from './OpMode.js';
 import { buildAutoApi } from './autoApi.js';
 import { HardwareBus } from '../hardware/HardwareBus.js';
+import { JavaProgram } from '../java/JavaProgram.js';
+import { JavaSyntaxError, looksLikeJava } from '../java/compile.js';
 
 /**
  * Runs an AUTO routine pasted in as JavaScript.
@@ -13,6 +15,18 @@ import { HardwareBus } from '../hardware/HardwareBus.js';
  * and the thing a team actually iterates on is that code. Being able to paste
  * it in and watch it run against the real physics -- the real battery sag, the
  * real encoder quantisation, the real flywheel recovery -- is the point.
+ *
+ * ## Two languages
+ *
+ * Paste JavaScript and it runs as described below. Paste **Java** -- a real
+ * `LinearOpMode` out of your team's repository, annotations and all -- and it
+ * is compiled to JavaScript and run against a shim of the FTC SDK. Which one
+ * you handed over is detected from the source, so there is nothing to select.
+ * See `java/compile.js` and `docs/JAVA.md`.
+ *
+ * A Java program can hold many op-modes, which is what a repository looks like,
+ * so the runner keeps the list and which one is chosen -- the same job a Driver
+ * Station's op-mode menu does.
  *
  * ## Two shapes, because autos are written both ways
  *
@@ -75,6 +89,15 @@ export class AutoRunner extends OpMode {
     this.stepBudgetMs = opts.stepBudgetMs ?? 250;
 
     this.source = '';
+    /** @type {'js'|'java'} */
+    this.language = 'js';
+    /**
+     * A compiled Java program, when that is what was handed over.
+     * @type {JavaProgram|null}
+     */
+    this.program = null;
+    /** Every file compiled, so a repository's helper classes are included. */
+    this.files = /** @type {Array<{name: string, source: string}>} */ ([]);
     /** @type {string|null} */
     this.error = null;
     /** @type {{init: Function|null, auto: Function|null, loop: Function|null}|null} */
@@ -98,26 +121,79 @@ export class AutoRunner extends OpMode {
    * the ROBOT simply sits there, which is what a finished auto looks like.
    */
   get armed() {
-    return Boolean(this._entry) && !this.error;
+    if (this.error) return false;
+    if (this.language === 'java') return Boolean(this.program?.descriptor);
+    return Boolean(this._entry);
+  }
+
+  /**
+   * Which match period this code owns.
+   *
+   * JavaScript routines are autos. A Java `@TeleOp` runs during TELEOP instead,
+   * so a team's own driver code can have the robot rather than the built-in
+   * teleop -- which is the other half of "run my repository".
+   */
+  get period() {
+    return this.language === 'java' ? this.program?.period ?? 'auto' : 'auto';
+  }
+
+  /** The op-modes found in the compiled files, for the chooser. */
+  get opModes() {
+    return this.program?.opModes ?? [];
+  }
+
+  /** Which one is selected. */
+  get selected() {
+    return this.program?.selected ?? null;
+  }
+
+  /** Choose one, and run its init sequence. */
+  select(className) {
+    if (!this.program) return this;
+    this.program.select(className);
+    this._initJava();
+    return this;
+  }
+
+  /** What `hardwareMap.get` found, for the panel. */
+  get resolutions() {
+    return this.program?.resolutions ?? [];
+  }
+
+  /** Anything the compiler or the hardware map wants to say. */
+  get warnings() {
+    return this.program?.warnings ?? [];
   }
 
   /** @returns {AutoStatus} */
   status() {
     return {
-      state: this.error
-        ? 'error'
-        : !this._entry
-          ? 'empty'
-          : this.finished
-            ? 'done'
-            : this._started
-              ? 'running'
-              : 'compiled',
-      error: this.error,
+      state: this._state(),
+      error: this.error ?? this.program?.error ?? null,
       runtime: this.runtime,
       log: this.log.slice(-40),
       telemetry: { ...this.telemetry },
+      language: this.language,
+      opModes: this.opModes,
+      selected: this.selected,
+      resolutions: this.resolutions,
+      warnings: this.warnings,
+      files: this.files.map((f) => f.name),
     };
+  }
+
+  _state() {
+    if (this.error) return 'error';
+    if (this.language === 'java') {
+      if (!this.program) return 'empty';
+      if (this.program.state === 'error') return 'error';
+      if (this.program.state === 'done') return 'done';
+      if (this.program.state === 'running') return 'running';
+      return this.program.descriptor ? 'compiled' : 'empty';
+    }
+    if (!this._entry) return 'empty';
+    if (this.finished) return 'done';
+    return this._started ? 'running' : 'compiled';
   }
 
   /**
@@ -129,8 +205,13 @@ export class AutoRunner extends OpMode {
    * @param {string} source
    * @returns {string|null}
    */
-  compile(source) {
-    this.source = source ?? '';
+  compile(source, name = 'Pasted.java') {
+    const text = source ?? '';
+    if (looksLikeJava(text)) return this.compileFiles([{ name, source: text }]);
+    this.source = text;
+    this.files = [];
+    this.language = 'js';
+    this.program = null;
     this.error = null;
     this._entry = null;
     this.reset();
@@ -163,9 +244,105 @@ export class AutoRunner extends OpMode {
     }
   }
 
+  /**
+   * Compile one or more Java files together.
+   *
+   * Together, because a repository's op-mode references the team's own helper
+   * classes and each file on its own would not compile. The op-modes found
+   * across all of them become the chooser's list.
+   *
+   * @param {Array<{name: string, source: string}>} files
+   * @returns {string|null} the error, or null
+   */
+  compileFiles(files) {
+    this.files = files.filter((f) => f.source?.trim());
+    this.source = this.files.length === 1 ? this.files[0].source : '';
+    this.language = 'java';
+    this.error = null;
+    this._entry = null;
+    this.program = null;
+    this.reset();
+    if (this.files.length === 0) return null;
+
+    try {
+      this.program = JavaProgram.from(this.files);
+    } catch (err) {
+      this.error =
+        err instanceof JavaSyntaxError ? err.message : `${err.name}: ${err.message}`;
+      return this.error;
+    }
+    if (this.program.opModes.length === 0) {
+      this.error =
+        'No op-mode here: a class has to extend LinearOpMode or OpMode, and ' +
+        'be annotated @Autonomous or @TeleOp.';
+      return this.error;
+    }
+    this._initJava();
+    return this.program.state === 'error' ? this.program.error : null;
+  }
+
+  /**
+   * Build the runtime and run the selected op-mode's init sequence.
+   *
+   * Needs a robot, so it is a no-op until the runner has one -- which is the
+   * case when a routine is compiled from storage before the simulation exists.
+   */
+  _initJava() {
+    if (!this.program || !this.robot) return this;
+    // What the SDK does when an op-mode starts. Directions and run modes
+    // belong to the op-mode, not to the robot, so whatever the last one left
+    // behind goes before this one looks at the hardware.
+    this.robot.resetDeviceConfiguration();
+    this.program.initialise({
+      robot: this.robot,
+      sim: this.sim,
+      telemetry: this.telemetry,
+      log: (message) => this._log(message),
+      warn: (message) => this._log(`warning: ${message}`),
+      clock: () => this.sim?.time ?? 0,
+      runtime: () => this.runtime,
+      resetRuntime: () => {
+        this.runtime = 0;
+      },
+      requestStop: () => {
+        this.program.state = 'done';
+      },
+      phase: () => this._phase(),
+      gamepads: () => ({
+        gamepad1: this._gamepad1 ?? EMPTY_PAD,
+        gamepad2: this._gamepad2 ?? EMPTY_PAD,
+      }),
+    });
+    return this;
+  }
+
+  /**
+   * Whether the op-mode's period is running, and whether it is ending.
+   *
+   * `started` is what `waitForStart()` waits for and what releases the motors,
+   * so it is the match period the op-mode owns -- AUTO for an `@Autonomous`,
+   * TELEOP for a `@TeleOp`.
+   */
+  _phase() {
+    const match = this.sim?.game?.match;
+    if (!match) return { started: true, stopping: false };
+    const mine = this.period === 'teleop' ? match.driverControl : match.inAuto;
+    return { started: mine, stopping: !mine && match.phase !== 'setup' && !this._beforeMine(match) };
+  }
+
+  /** True while the match has not reached this op-mode's period yet. */
+  _beforeMine(match) {
+    if (this.period === 'auto') return match.phase === 'setup';
+    return match.phase === 'setup' || match.phase === 'auto' || match.phase === 'transition';
+  }
+
   /** Throw the compiled routine away. */
   clear() {
+    this.robot?.resetDeviceConfiguration();
     this.source = '';
+    this.files = [];
+    this.language = 'js';
+    this.program = null;
     this._entry = null;
     this.error = null;
     this.reset();
@@ -187,19 +364,21 @@ export class AutoRunner extends OpMode {
     // a stale API, because the only thing that used to force a rebuild was the
     // game changing.
     this._api = null;
+    this.program?.reset();
     return this;
   }
 
   init() {
+    if (this.language === 'java') {
+      this._initJava();
+      return;
+    }
     this._apiGame = this.sim?.game ?? null;
     this._api = buildAutoApi({
       robot: this.robot,
       game: this.sim?.game ?? null,
       telemetry: this.telemetry,
-      log: (message) => {
-        this.log.push(message);
-        if (this.log.length > 200) this.log.shift();
-      },
+      log: (message) => this._log(message),
       runtime: () => this.runtime,
       loopSeconds: () => this.sim?.controlPeriod ?? 0,
       drawing: this.sim?.drawing,
@@ -211,7 +390,13 @@ export class AutoRunner extends OpMode {
    *
    * @param {number} dt seconds
    */
-  loop(dt) {
+  loop(dt, gamepad1, gamepad2) {
+    this._gamepad1 = gamepad1;
+    this._gamepad2 = gamepad2;
+    if (this.language === 'java') {
+      this._loopJava(dt);
+      return;
+    }
     if (!this._entry || this.error || this.finished) return;
     // The game may have been switched on since this was compiled, so the API is
     // rebuilt lazily rather than captured at compile time.
@@ -275,6 +460,38 @@ export class AutoRunner extends OpMode {
     }
     this._waiting = interpretYield(step.value);
     if (this._waiting?.kind === 'time') this._waiting.until -= carry;
+  }
+
+  /**
+   * One cycle of a Java op-mode.
+   *
+   * The wall-clock budget is kept: a compiled loop is still somebody's code and
+   * can still be written so that it never returns.
+   */
+  _loopJava(dt) {
+    if (!this.program || this.error) return;
+    if (!this.program.instance) this._initJava();
+    if (!this.program.instance) return;
+    this.runtime += dt;
+    const started = now();
+    this.program.step(dt, this._phase());
+    if (this.program.state === 'error') {
+      this.error = this.program.error;
+      this.robot?.drivetrain?.driveNormalized(0, 0, 0);
+      this._log(`stopped: ${this.error}`);
+      return;
+    }
+    const spent = now() - started;
+    if (spent > this.stepBudgetMs) {
+      this.error = `One cycle took ${spent.toFixed(0)} ms. Is there a loop with no yield in it?`;
+      this._log(`stopped: ${this.error}`);
+      this.robot?.drivetrain?.driveNormalized(0, 0, 0);
+    }
+  }
+
+  _log(message) {
+    this.log.push(String(message));
+    if (this.log.length > 200) this.log.shift();
   }
 
   _fail(message) {
@@ -349,4 +566,18 @@ function interpretYield(value) {
   }
   if (typeof value === 'function') return { kind: 'until', test: value };
   return null;
+}
+
+/** A gamepad with nothing pressed, for a cycle that has not been handed one. */
+const EMPTY_PAD = Object.freeze({
+  left_stick_x: 0, left_stick_y: 0, right_stick_x: 0, right_stick_y: 0,
+  left_trigger: 0, right_trigger: 0,
+  a: false, b: false, x: false, y: false,
+  left_bumper: false, right_bumper: false,
+  dpad_up: false, dpad_down: false, dpad_left: false, dpad_right: false,
+  back: false, start: false, guide: false,
+});
+
+function now() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
 }

@@ -565,6 +565,16 @@ cell's opening is tilted and faces one way, so from the starting wall there is n
 arc at any speed), empties the pre-load into the cell, and parks: 32 points,
 including a tip, with no fouls.
 
+### Or your actual Java
+
+The editor takes Java as well. Paste a real `LinearOpMode` out of your team's
+repository — annotations, `hardwareMap`, `waitForStart`, the lot — and it is
+compiled and run against a shim of the FTC SDK. Or load the whole repository and
+pick from an op-mode list, the way a Driver Station does.
+
+See [JAVA](JAVA.md) for how to load one, what Java is supported, and the one
+thing to get right (which way your motors are bolted on).
+
 ### Coordinates your routine already uses
 
 An AUTO is a list of coordinates, and a coordinate only means something inside a

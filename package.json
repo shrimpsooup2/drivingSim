@@ -10,7 +10,8 @@
     "test": "node --test --test-timeout=60000",
     "check": "node tools/check.js",
     "rules:doc": "node tools/rules-doc.js",
-    "lan": "node tools/serve.js --lan"
+    "lan": "node tools/serve.js --lan",
+    "repo": "node tools/serve.js --repo"
   },
   "engines": {
     "node": ">=18"

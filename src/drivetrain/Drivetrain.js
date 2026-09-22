@@ -111,6 +111,7 @@ export class Drivetrain {
           efficiency: m.efficiency,
           staticFrictionTorque: m.staticFrictionTorque,
           viscousFriction: m.viscousFriction,
+          mountSign: mountSignFor(w.name, config.drivetrain),
           controller: new MotorController({
             mode: config.control.runMode,
             zeroPowerBehavior: config.control.zeroPowerBehavior,
@@ -176,6 +177,7 @@ export class Drivetrain {
       w.rollerDrag = config.surface.rollerDrag;
     }
     for (const dm of this.motors) {
+      dm.mountSign = mountSignFor(dm.name, config.drivetrain);
       dm.efficiency = config.motor.efficiency;
       dm.staticFrictionTorque = config.motor.staticFrictionTorque;
       dm.viscousFriction = config.motor.viscousFriction;
@@ -239,7 +241,12 @@ export class Drivetrain {
     // Scale rather than clip: clipping each wheel independently changes the
     // direction the robot actually travels.
     desaturate(powers, 1);
-    for (let i = 0; i < this.motors.length; i++) this.motors[i].controller.setPower(powers[i]);
+    // Divided by the mount sign, so what reaches the wheel is what the
+    // kinematics asked for whichever way the motor is bolted on. See
+    // `DriveMotor.mountSign`.
+    for (let i = 0; i < this.motors.length; i++) {
+      this.motors[i].controller.setPower(powers[i] * this.motors[i].mountSign);
+    }
     return powers;
   }
 
@@ -250,7 +257,9 @@ export class Drivetrain {
     const maxSurface = this.motors[0].freeOutputSpeed(busVoltage) * this.config.drivetrain.wheelRadius;
     desaturate(speeds, maxSurface);
     for (let i = 0; i < this.motors.length; i++) {
-      this.motors[i].controller.setVelocity(speeds[i] / this.config.drivetrain.wheelRadius);
+      this.motors[i].controller.setVelocity(
+        (speeds[i] / this.config.drivetrain.wheelRadius) * this.motors[i].mountSign,
+      );
     }
     return speeds;
   }
@@ -273,7 +282,7 @@ export class Drivetrain {
   setWheelPowers(powers) {
     for (let i = 0; i < this.motors.length; i++) {
       this._commandedPowers[i] = powers[i] ?? 0;
-      this.motors[i].controller.setPower(this._commandedPowers[i]);
+      this.motors[i].controller.setPower(this._commandedPowers[i] * this.motors[i].mountSign);
     }
   }
 
@@ -297,7 +306,10 @@ export class Drivetrain {
     // Odometry from the drive encoders, exactly as a real robot would compute
     // it -- including the error that slip introduces.
     for (let i = 0; i < this.wheels.length; i++) {
-      this._wheelSpeeds[i] = this.motors[i].encoder.velocityRadPerSec * this.wheels[i].radius;
+      // Back out of the port's terms into the wheel's: the encoder counts the
+      // motor, which on a mirrored port turns the other way from the wheel.
+      this._wheelSpeeds[i] =
+        this.motors[i].encoder.velocityRadPerSec * this.motors[i].mountSign * this.wheels[i].radius;
     }
     const twist = forwardKinematics(this.rows, this._wheelSpeeds);
     this.telemetry.measuredTwist = { vx: twist.vx, vy: twist.vy, omega: twist.omega };
@@ -376,4 +388,22 @@ export class Drivetrain {
 function hubGainsFrom(control) {
   if (control.hubPidfDefaults !== false) return null;
   return { f: control.hubF ?? 0, p: control.hubP ?? 0, i: control.hubI ?? 0, d: control.hubD ?? 0 };
+}
+
+/**
+ * Which way a port's motor is bolted on.
+ *
+ * The left side mirrored is how nearly every FTC drivetrain is built -- two
+ * motors facing each other across the chassis -- and it is why a team's code
+ * reverses one side. A robot built the other way sets `mirroredSide` to
+ * 'right', and one with a belt or a bevel on every corner sets it to 'none'.
+ * @param {string} name
+ * @param {any} drivetrain
+ */
+function mountSignFor(name, drivetrain) {
+  const side = drivetrain?.mirroredSide ?? 'left';
+  if (side === 'none') return 1;
+  const isLeft = /left/i.test(name);
+  if (side === 'left') return isLeft ? -1 : 1;
+  return isLeft ? 1 : -1;
 }

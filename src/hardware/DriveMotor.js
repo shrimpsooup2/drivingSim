@@ -41,6 +41,19 @@ export class DriveMotor {
     /** Viscous drag, N*m per rad/s at the wheel. */
     this.viscousFriction = cfg.viscousFriction ?? 0.004;
 
+    /**
+     * Which way round the motor is bolted on: +1 or -1.
+     *
+     * A real drivetrain has one side mirrored, so positive power turns those
+     * wheels backwards -- which is why every team's code contains
+     * `setDirection(REVERSE)` on one side. This simulator's own kinematics
+     * works in wheel terms and divides this back out, so both are right at
+     * once: the built-in teleop drives straight, and a team's op-mode drives
+     * straight *because* it reverses the mirrored side, exactly as on the
+     * robot. Ported from the JVM simulator's `MotorState.physicalSign`.
+     */
+    this.mountSign = cfg.mountSign ?? 1;
+
     this.controller = cfg.controller ?? new MotorController();
     this.encoder =
       cfg.encoder ??
@@ -120,7 +133,10 @@ export class DriveMotor {
    */
   computeWheelTorque(wheelOmega, busVoltage) {
     const ratio = this.totalRatio;
-    const motorOmega = wheelOmega * ratio;
+    // The motor's own shaft, which on a mirrored port turns the other way from
+    // the wheel. Everything from here to `geared` is in the motor's terms.
+    const mount = this.mountSign;
+    const motorOmega = wheelOmega * ratio * mount;
     this.motorSpeed = motorOmega;
 
     const commandedVoltage = this.duty * busVoltage;
@@ -148,8 +164,9 @@ export class DriveMotor {
     this.busCurrent = this.duty * result.current;
 
     // Gearbox losses reduce the magnitude of whatever torque is being
-    // transmitted, in either direction of power flow.
-    const geared = result.torque * ratio * this.efficiency;
+    // transmitted, in either direction of power flow. Back into wheel terms on
+    // the way out, which is where the mount sign leaves the calculation.
+    const geared = result.torque * ratio * this.efficiency * mount;
 
     // Drivetrain friction always opposes motion. tanh gives a smooth breakaway
     // instead of a discontinuity at zero speed.
@@ -160,9 +177,16 @@ export class DriveMotor {
     return this.wheelTorque;
   }
 
-  /** Update the encoder from the true wheel angle. */
+  /**
+   * Update the encoder from the true wheel angle.
+   *
+   * Through the mount sign, because the encoder is on the motor: a mirrored
+   * port counts *down* while the robot drives forward, which is exactly why a
+   * team's code has to reverse that side and why its encoder readings look
+   * negative until it does.
+   */
   updateSensors(wheelAngle, dt) {
     this.encoder.gearRatio = this.totalRatio;
-    this.encoder.update(wheelAngle, dt);
+    this.encoder.update(wheelAngle * this.mountSign, dt);
   }
 }

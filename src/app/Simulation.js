@@ -234,13 +234,23 @@ export class Simulation {
 
   /** Swap in a different op-mode: an autonomous routine, a test, a drill. */
   /**
-   * Whether a pasted AUTO routine is driving right now.
+   * Whether pasted code has the ROBOT right now.
    *
-   * Only during the AUTO period of a BIOBUZZ MATCH: outside one there is no
-   * AUTO to run, and the driver should have the ROBOT.
+   * During the period it is written for: an AUTO routine during AUTO, and a
+   * Java `@TeleOp` during TELEOP -- because "run my repository" means the
+   * team's own driver code too, not only its autos. Outside that period the
+   * driver has the ROBOT.
    */
+  get runningCode() {
+    if (!this.autoRunner?.armed) return false;
+    const match = this.game?.match;
+    if (!match) return false;
+    return Boolean(this.autoRunner.period === 'teleop' ? match.driverControl : match.inAuto);
+  }
+
+  /** The AUTO case specifically, which is what the rules care about. */
   get runningAuto() {
-    return Boolean(this.autoRunner?.armed) && Boolean(this.game?.match?.inAuto);
+    return this.runningCode && this.autoRunner.period === 'auto';
   }
 
   setOpMode(opMode) {
@@ -611,7 +621,7 @@ export class Simulation {
     // indirectly interact with a ROBOT ... until the end of AUTO") and the
     // whole point of having pasted an auto in. The gamepad is still *read*, so
     // its edge detection stays warm for TELEOP.
-    if (this.runningAuto) {
+    if (this.runningCode) {
       this.autoRunner.loop(dt, gamepad, gamepad);
       // No gamepad to the subsystems: the routine sets their commands itself,
       // and a null gamepad leaves them where it put them.

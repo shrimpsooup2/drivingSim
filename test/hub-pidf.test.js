@@ -134,7 +134,10 @@ test('a robot in RUN_USING_ENCODER holds its speed on the hub loop', () => {
   sim.resetRobot();
   const motor = sim.robot.drivetrain.motors[0];
   for (let i = 0; i < 90; i++) {
-    for (const m of sim.robot.drivetrain.motors) m.controller.setPower(0.5);
+    // Through the kinematics rather than by poking the ports: a port command
+    // is in the motor's terms, and one side of the drivetrain is bolted on
+    // mirrored, so half a stick on every port would spin the robot.
+    sim.robot.drivetrain.driveNormalized(0.5, 0, 0);
     sim.robot.updateControl(1 / 90, null);
     for (let j = 0; j < 30; j++) sim.robot.stepPhysics(1 / 2700);
   }

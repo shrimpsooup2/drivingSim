@@ -127,10 +127,14 @@ async function main() {
   const failures = [];
   const consoleErrors = [];
 
-  // 1. Serve the project.
-  const server = spawn(process.execPath, [resolve(ROOT, 'tools/serve.js'), '--port', String(PORT)], {
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
+  // 1. Serve the project, with a small FTC repository attached so the
+  //    "load my op-modes" path can be exercised the way a team would use it.
+  const fixtureRepo = await writeFixtureRepo();
+  const server = spawn(
+    process.execPath,
+    [resolve(ROOT, 'tools/serve.js'), '--port', String(PORT), '--repo', fixtureRepo],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
   await waitFor(async () => {
     const res = await fetch(`http://127.0.0.1:${PORT}/index.html`).catch(() => null);
     return res?.ok;
@@ -1268,6 +1272,107 @@ async function main() {
       return true;
     })()`);
 
+    // --- A team's Java op-modes, loaded from the attached repository.
+    const java = await cdp.evaluate(`(async () => {
+      const app = globalThis.ftcSim;
+      const sim = app.sim;
+      const panel = app.auto;
+      panel.toggle(true);
+
+      await panel.loadRepo();
+      const status = sim.autoRunner.status();
+      const options = [...panel.chooser.querySelectorAll('option')].map((o) => o.value);
+      const wiring = [...panel.readout.querySelectorAll('.auto-wire')].map((n) => n.textContent.trim());
+      const missing = panel.readout.querySelectorAll('.auto-wire.missing').length;
+
+      // Pick the second op-mode from the chooser, as a driver would.
+      panel.chooser.value = 'CurveAuto';
+      panel.chooser.dispatchEvent(new Event('change'));
+      const afterPick = sim.autoRunner.status().selected;
+
+      // Then run the straight one and check it goes straight, which is the
+      // whole point of getting the motor mounting right.
+      panel.chooser.value = 'StraightAuto';
+      panel.chooser.dispatchEvent(new Event('change'));
+      // The editor has to follow the chooser, or what is on screen is not what
+      // is running.
+      const shown = panel.editor.value.includes('class StraightAuto');
+      sim.game.start();
+      const from = { x: sim.robot.body.position.x, y: sim.robot.body.position.y };
+      let peakMs = 0;
+      for (let i = 0; i < 60 * 4; i++) {
+        sim.step(1 / 60);
+        peakMs = Math.max(peakMs, sim.controlPeriod * 1000);
+      }
+      const ran = sim.autoRunner.status();
+      const moved = Math.hypot(
+        sim.robot.body.position.x - from.x,
+        sim.robot.body.position.y - from.y,
+      );
+      const drift = Math.abs(sim.robot.body.rotation.radians);
+      panel.update();
+      return {
+        language: status.language,
+        files: status.files,
+        loadedFrom: panel.loadedFrom,
+        options,
+        wiring,
+        missing,
+        afterPick,
+        shown,
+        messageTone: panel.message.className,
+        state: ran.state,
+        error: ran.error,
+        telemetry: ran.telemetry,
+        log: ran.log.join(' | '),
+        moved,
+        drift,
+        peakMs,
+      };
+    })()`);
+    console.log(
+      `  Java op-modes: ${java.files.length} file(s) from ${java.loadedFrom}; ` +
+        `chooser [${java.options.join(', ')}]`,
+    );
+    console.log(`    wiring: ${java.wiring.join('  ')}`);
+    console.log(
+      `    ${java.state} after driving ${java.moved.toFixed(2)} m with ` +
+        `${(java.drift * 180 / Math.PI).toFixed(1)} deg of drift, loop peaked at ${java.peakMs.toFixed(1)} ms`,
+    );
+    if (java.language !== 'java') failures.push(`the repository loaded as ${java.language}`);
+    if (java.files.length !== 3) failures.push(`${java.files.length} files loaded, expected 3`);
+    if (!java.options.includes('StraightAuto') || !java.options.includes('CurveAuto')) {
+      failures.push(`the chooser listed [${java.options.join(', ')}]`);
+    }
+    if (java.options.includes('NotAnnotated')) failures.push('an unannotated class reached the chooser');
+    if (java.afterPick !== 'CurveAuto') failures.push('choosing an op-mode did not select it');
+    if (!java.shown) failures.push('the editor did not follow the op-mode chooser');
+    if (!/news/.test(java.messageTone)) {
+      failures.push(`loading files was reported as an error: ${java.messageTone}`);
+    }
+    if (java.wiring.length !== 4) failures.push(`${java.wiring.length} devices reported, expected 4`);
+    if (java.missing !== 0) failures.push('a drive motor did not resolve');
+    if (java.state !== 'done') failures.push(`the op-mode ended ${java.state}: ${java.error}`);
+    if (!(java.moved > 0.4)) failures.push(`it only moved ${java.moved} m`);
+    if (!(java.drift < 0.08)) failures.push(`it drifted ${java.drift} rad; the mounting signs are wrong`);
+    if (!(java.peakMs > 12)) {
+      failures.push(`the loop should cost four motor writes, peaked at ${java.peakMs} ms`);
+    }
+    if (!java.telemetry.Status) failures.push('the init telemetry never arrived');
+
+    await sleep(300);
+    const shotJava = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    const javaPath = shotPath.replace(/\.png$/, '-java.png');
+    await writeFile(javaPath, Buffer.from(shotJava.data, 'base64'));
+    console.log(`  Screenshot: ${javaPath}`);
+    await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      app.auto.toggle(false);
+      app.sim.autoRunner.clear();
+      app.sim.resetRobot();
+      return true;
+    })()`);
+
     // --- The AUTO editor, through the real UI.
     //
     // The whole point of the feature is that you paste a routine in and it
@@ -2273,3 +2378,118 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
+/**
+ * A small FTC repository, laid out the way a real one is.
+ *
+ * Three op-mode files plus the noise a checkout carries -- build output, the
+ * SDK's own samples, a class with no annotation -- because what the loader has
+ * to get right is choosing among them, and a fixture with only the wanted files
+ * would not test that at all.
+ */
+async function writeFixtureRepo() {
+  const root = resolve(ROOT, '.cache/fixture-repo');
+  await rm(root, { recursive: true, force: true });
+  const team = resolve(root, 'TeamCode/src/main/java/org/firstinspires/ftc/teamcode');
+  await mkdir(team, { recursive: true });
+  await mkdir(resolve(root, 'TeamCode/build/generated'), { recursive: true });
+  await mkdir(resolve(root, 'FtcRobotController/src/main/java/external/samples'), { recursive: true });
+
+  await writeFile(
+    resolve(team, 'Drive.java'),
+    `package org.firstinspires.ftc.teamcode;
+
+import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.util.ElapsedTime;
+
+public class Drive {
+    private final LinearOpMode op;
+    private final DcMotor lf, rf, lb, rb;
+    private final ElapsedTime timer = new ElapsedTime();
+
+    public Drive(LinearOpMode op) {
+        this.op = op;
+        lf = op.hardwareMap.get(DcMotor.class, "leftFront");
+        rf = op.hardwareMap.get(DcMotor.class, "rightFront");
+        lb = op.hardwareMap.get(DcMotor.class, "leftBack");
+        rb = op.hardwareMap.get(DcMotor.class, "rightBack");
+        lf.setDirection(DcMotor.Direction.REVERSE);
+        lb.setDirection(DcMotor.Direction.REVERSE);
+    }
+
+    public void tank(double left, double right, double seconds) {
+        timer.reset();
+        while (op.opModeIsActive() && timer.seconds() < seconds) {
+            lf.setPower(left);
+            lb.setPower(left);
+            rf.setPower(right);
+            rb.setPower(right);
+        }
+        stop();
+    }
+
+    public void stop() {
+        lf.setPower(0);
+        rf.setPower(0);
+        lb.setPower(0);
+        rb.setPower(0);
+    }
+}
+`,
+  );
+
+  await writeFile(
+    resolve(team, 'StraightAuto.java'),
+    `package org.firstinspires.ftc.teamcode;
+
+import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+
+@Autonomous(name = "Straight", group = "Comp")
+public class StraightAuto extends LinearOpMode {
+    @Override
+    public void runOpMode() {
+        Drive drive = new Drive(this);
+        telemetry.addData("Status", "Initialised");
+        telemetry.update();
+        waitForStart();
+        drive.tank(0.6, 0.6, 1.2);
+        sleep(200);
+        telemetry.addData("Status", "Done");
+        telemetry.update();
+    }
+}
+`,
+  );
+
+  await writeFile(
+    resolve(team, 'CurveAuto.java'),
+    `package org.firstinspires.ftc.teamcode;
+
+import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+
+@Autonomous(name = "Curve", group = "Comp")
+public class CurveAuto extends LinearOpMode {
+    @Override
+    public void runOpMode() {
+        Drive drive = new Drive(this);
+        waitForStart();
+        drive.tank(0.6, 0.3, 1.0);
+    }
+}
+
+class NotAnnotated {
+    int twice(int x) { return x * 2; }
+}
+`,
+  );
+
+  await writeFile(resolve(root, 'TeamCode/build/generated/Junk.java'), 'class Junk {}\n');
+  await writeFile(
+    resolve(root, 'FtcRobotController/src/main/java/external/samples/BasicOpMode.java'),
+    '@Autonomous(name = "SDK Sample") public class BasicOpMode extends LinearOpMode { public void runOpMode() {} }\n',
+  );
+  return root;
+}
