@@ -628,6 +628,87 @@ async function main() {
       }
     }
 
+    // --- Pause and step, through the real buttons.
+    const stepping = await cdp.evaluate(`(() => {
+      const app = globalThis.ftcSim;
+      const sim = app.sim;
+      const bar = app.stepBar;
+      sim.input.keyboardSource.active = true;
+      sim.input.keyboardSource.keys.add('KeyW');
+      for (let i = 0; i < 30; i++) sim.step(1 / 60);
+
+      // Pause, and check the world really stops.
+      bar.playButton.click();
+      const pausedLabel = bar.playButton.textContent;
+      const at = sim.time;
+      const wasAt = sim.robot.body.position.x;
+      for (let i = 0; i < 10; i++) sim.step(1 / 60);
+      const frozenTime = sim.time - at;
+      const frozenMove = sim.robot.body.position.x - wasAt;
+
+      // The 1 ms button: one millisecond, and frozen again.
+      const oneMs = bar.stepButtons[0];
+      oneMs.click();
+      sim.step(1 / 60);
+      const stepped = sim.time - at;
+      const refrozen = sim.frozen;
+
+      // The 100 ms button, which is longer than a frame's substep budget.
+      bar.stepButtons[3].click();
+      sim.step(1 / 60);
+      const hundred = sim.time - at - stepped;
+
+      // And one op-mode loop.
+      const period = sim.controlPeriod;
+      bar.cycleButton.click();
+      sim.step(1 / 60);
+      const cycle = sim.time - at - stepped - hundred;
+
+      bar.update();
+      const clock = bar.readout.textContent;
+      bar.togglePause(false);
+      sim.input.keyboardSource.keys.delete('KeyW');
+      sim.resetRobot();
+      return {
+        pausedLabel,
+        frozenTime,
+        frozenMove,
+        steppedMs: stepped * 1000,
+        refrozen,
+        hundredMs: hundred * 1000,
+        cycleMs: cycle * 1000,
+        periodMs: period * 1000,
+        clock,
+        running: !sim.paused,
+      };
+    })()`);
+    console.log(
+      `  Step: froze at "${stepping.pausedLabel}", then ${stepping.steppedMs.toFixed(3)} ms, ` +
+        `${stepping.hundredMs.toFixed(1)} ms, one ${stepping.cycleMs.toFixed(1)} ms loop`,
+    );
+    if (stepping.frozenTime !== 0) {
+      failures.push(`paused, but the clock advanced ${stepping.frozenTime} s`);
+    }
+    if (stepping.frozenMove !== 0) {
+      failures.push(`paused, but the robot moved ${stepping.frozenMove} m`);
+    }
+    if (Math.abs(stepping.steppedMs - 1) > 1e-6) {
+      failures.push(`the 1 ms button advanced ${stepping.steppedMs} ms`);
+    }
+    if (!stepping.refrozen) failures.push('a step did not freeze again afterwards');
+    if (Math.abs(stepping.hundredMs - 100) > 1e-6) {
+      failures.push(`the 100 ms button advanced ${stepping.hundredMs} ms`);
+    }
+    if (Math.abs(stepping.cycleMs - stepping.periodMs) > 0.6) {
+      failures.push(
+        `a cycle step should be one loop (${stepping.periodMs} ms), was ${stepping.cycleMs} ms`,
+      );
+    }
+    if (!/^\d+\.\d{3} s/.test(stepping.clock ?? '')) {
+      failures.push(`the step bar clock read "${stepping.clock}"`);
+    }
+    if (!stepping.running) failures.push('Run did not let it go again');
+
     // --- The loop rate is earned from hub transactions, in the real page.
     //
     // The arithmetic is covered in `test/hardware-bus.test.js`; what this is

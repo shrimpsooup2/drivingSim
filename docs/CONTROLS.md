@@ -67,6 +67,8 @@ silently.
 | `M` | Restart the match from setup |
 | `G` | Toggle the BIOBUZZ game (on by default) |
 | `P` | Pause |
+| `.` | Step one op-mode loop |
+| `,` | Step one millisecond |
 | `Tab` | Show / hide settings |
 | `?` | Help |
 
@@ -130,6 +132,35 @@ minimum range inside which no hood angle can score.
 A key is on or off, so keyboard input is a square wave. The acceleration ramp
 smooths it, which makes the keyboard fine for learning the field and useless for
 learning throttle control. There is no substitute for a real controller there.
+
+## Stepping through time
+
+The bar at the bottom of the screen pauses the world and walks it forward.
+`Pause` freezes everything — the physics, the match clock, and your op-mode,
+which are one thing here because the op-mode is called from the step. Then:
+
+| Button | What it advances |
+| --- | --- |
+| `1 ms` | Inside a single contact: a wheel going from gripping to sliding |
+| `5 ms` | About as long as a ball is touching the flywheel |
+| `20 ms` | Roughly one control cycle |
+| `100 ms` | A movement |
+| `cycle` | Exactly one op-mode loop, whatever that currently costs |
+
+The reason for a millisecond is that the interesting events are shorter than a
+frame. A NECTAR is in contact with the flywheel for about 8 ms; the HIVE's first
+touch on the floor, which decides where its load scatters, is over in a handful
+of milliseconds. At 60 frames a second you see the before and the after and
+nothing in between, and that is where the bugs are.
+
+`cycle` is the one for debugging code rather than physics: it advances exactly
+one op-mode loop, so a pasted AUTO can be walked a line at a time. With hub
+latency on (see [PHYSICS](PHYSICS.md#the-loop-rate-is-earned-not-set)) the step
+length is the loop time, so stepping a cycle at a time also shows what each
+cycle is costing.
+
+`.` and `,` are the same two on the keyboard, and a step button works whether
+the simulation is running or already paused — it pauses first.
 
 ## Reading the field
 

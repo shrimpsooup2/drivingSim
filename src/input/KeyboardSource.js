@@ -191,6 +191,8 @@ export const APP_SHORTCUTS = [
   'KeyC',
   'KeyT',
   'KeyP',
+  'Period',
+  'Comma',
   'Tab',
   'Slash',
   'Escape',
@@ -238,6 +240,8 @@ function clampUnit(v) {
 export function keyLabel(code) {
   if (code === 'Space') return 'Space';
   if (code === 'ShiftLeft' || code === 'ShiftRight') return 'Shift';
+  if (code === 'Period') return '.';
+  if (code === 'Comma') return ',';
   if (code.startsWith('Key')) return code.slice(3);
   if (code.startsWith('Digit')) return code.slice(5);
   if (code.startsWith('Arrow')) return `${code.slice(5)} arrow`;
@@ -285,5 +289,7 @@ export const KEYBOARD_HELP = [
   ['M', 'Restart the match'],
   ['G', 'Put the game away / bring it back'],
   ['P', 'Pause'],
+  ['.', 'Step one op-mode loop'],
+  [',', 'Step one millisecond'],
   ['Tab', 'Show / hide settings'],
 ];

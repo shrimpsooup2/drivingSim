@@ -881,3 +881,57 @@ select { width: 100%; }
   text-overflow: ellipsis;
   min-width: 0;
 }
+
+/* --- Pause and step ------------------------------------------------------ */
+
+/* Bottom centre, where a transport control lives in anything else that plays
+   time back. Always visible: the moment you want it is the moment something
+   went wrong, and that is not the moment to go looking for a menu. */
+.step-bar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  border-radius: 9px;
+  background: rgba(14, 17, 23, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(6px);
+}
+
+.step-bar.frozen { border-color: rgba(242, 163, 60, 0.55); }
+
+.step-bar button {
+  font: 10px/1 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  letter-spacing: 0.04em;
+  color: #e6e8ec;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.step-bar button:hover { background: rgba(255, 255, 255, 0.12); }
+.step-play { min-width: 62px; }
+.step-play.paused { border-color: #f2a33c; color: #f2a33c; }
+.step-cycle { border-color: rgba(110, 168, 254, 0.45); }
+
+.step-clock {
+  font: 10px/1 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--muted);
+  margin-left: 4px;
+  min-width: 108px;
+  text-align: right;
+}
+
+/* A narrow window has no room for the whole set, so the two least useful
+   sizes go rather than the bar wrapping over the field. */
+@media (max-width: 720px) {
+  .step-bar .step-jump:nth-of-type(2),
+  .step-bar .step-jump:nth-of-type(4) { display: none; }
+}

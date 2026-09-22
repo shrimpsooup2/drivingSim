@@ -8,6 +8,7 @@ import { ChallengePanel } from '../ui/ChallengePanel.js';
 import { AutoPanel } from '../ui/AutoPanel.js';
 import { NetPanel } from '../ui/NetPanel.js';
 import { MatchOverPanel } from '../ui/MatchOverPanel.js';
+import { StepBar } from '../ui/StepBar.js';
 import { InputManager } from '../input/InputManager.js';
 import { Overlay2d } from '../render/Overlay2d.js';
 import { defaultConfig } from '../config/schema.js';
@@ -61,6 +62,7 @@ export class App {
     this.matchOver = new MatchOverPanel(this.viewport, {
       onRestart: () => this.sim.game?.start(),
     });
+    this.stepBar = new StepBar(this.viewport, this.sim);
 
     /** Schema defaults, so a camera can be reset to its as-shipped framing. */
     this._defaultView = defaultConfig().view;
@@ -200,8 +202,18 @@ export class App {
       const view = this.config.values.view;
       this.config.set('view.showTrajectory', !view.showTrajectory);
     });
-    keyboard.on('KeyP', () => {
-      this.sim.paused = !this.sim.paused;
+    keyboard.on('KeyP', () => this.stepBar.togglePause());
+    // One op-mode loop, which is the unit a routine moves in -- and, with hub
+    // latency on, a step whose own length is the loop time.
+    keyboard.on('Period', () => {
+      this.sim.stepOneCycle();
+      this.stepBar.update();
+    });
+    // One millisecond, which is inside a wheel losing traction or a ball
+    // leaving a flywheel. Held down it is a slow-motion scrub.
+    keyboard.on('Comma', () => {
+      this.sim.stepFor(0.001);
+      this.stepBar.update();
     });
     keyboard.on('Tab', () => this.togglePanel());
     keyboard.on('Slash', () => this.toggleHelp());
@@ -349,6 +361,10 @@ export class App {
       // the HUD off the view is deliberately clean, and a full-screen result
       // card is the last thing that belongs over it.
       this.matchOver.update(view.showHud ? this.sim.game : null);
+      // Last, so the clock it shows is the one the frame just produced and the
+      // remaining step budget is what is actually left rather than what was
+      // left before the step ran.
+      this.stepBar.update();
     } catch (err) {
       this.running = false;
       console.error('[App] frame failed:', err);

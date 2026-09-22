@@ -67,7 +67,21 @@ export class Simulation {
     /** Wall-clock seconds spent inside `step`, for the performance readout. */
     this.stepCostMs = 0;
     this.substepsLastFrame = 0;
+    /**
+     * Pause. On its own this freezes everything; with a step budget set it is
+     * "frozen except for the next N milliseconds". See `stepFor`.
+     */
     this.paused = false;
+    /**
+     * Physics substeps still owed to the current step budget.
+     *
+     * A count rather than a deadline, which is what the JVM simulator uses --
+     * its physics thread runs on a clock and a deadline is the natural thing
+     * there. Here the budget has to come out exactly, and 100 ms is 200
+     * substeps of 0.5 ms only until floating-point subtraction leaves a
+     * remainder one substep short. Counting cannot drift.
+     */
+    this._stepBudget = 0;
 
     this._physicsAccumulator = 0;
     this._controlAccumulator = 0;
@@ -280,8 +294,78 @@ export class Simulation {
     this._physicsAccumulator = 0;
     this._controlAccumulator = 0;
     this.controlPeriod = 1 / clamp(this.config.control.loopRateHz, 1, 1000);
+    this._stepBudget = 0;
     this.trail.length = 0;
     this.events.emit('reset');
+    return this;
+  }
+
+  // -------------------------------------------------------- pause and step
+  //
+  // Ported from the JVM simulator's `World`, which freezes the world and the
+  // robot code at the same instant -- it does that by blocking robot code at
+  // its next hub transaction, so the op-mode stops within one hub call of the
+  // pause. Here the two are already one thing: the op-mode is called from
+  // `step`, so not stepping is not running it.
+  //
+  // The reason a *budget* matters rather than just a pause: a ball leaves a
+  // flywheel in about 8 ms and a wheel breaks traction in less, so watching
+  // either at 60 frames a second shows you the before and the after and
+  // nothing in between. A 1 ms step shows the in between.
+
+  /**
+   * Whether the world is standing still.
+   *
+   * Paused with no budget left. A budget smaller than one physics substep
+   * counts as spent, because it cannot be honoured and the alternative is a
+   * simulation that is neither frozen nor advancing.
+   */
+  get frozen() {
+    return this.paused && this._stepBudget <= 0;
+  }
+
+  /** The physics substep, in seconds. */
+  get substepSeconds() {
+    return 1 / clamp(this.config.sim.substepHz, 50, 20000);
+  }
+
+  /** How much of the current step budget has not been used yet, in seconds. */
+  get stepRemaining() {
+    return Math.max(0, this._stepBudget) * this.substepSeconds;
+  }
+
+  /**
+   * Advance by `seconds` of simulated time and freeze again.
+   *
+   * Pauses if it was running, which is what makes the step buttons work from
+   * either state. Budgets do not queue: asking for another one replaces
+   * whatever was left, so hammering the button is not a way to accidentally
+   * run half a match.
+   * @param {number} seconds
+   */
+  stepFor(seconds) {
+    this.paused = true;
+    // Rounded to whole substeps, and never to nothing: a step smaller than one
+    // substep still has to do something, or the button does nothing at all at
+    // low substep rates.
+    this._stepBudget = Math.max(1, Math.round(Math.max(0, seconds) / this.substepSeconds));
+    return this;
+  }
+
+  /**
+   * Advance by one op-mode cycle: the unit a routine actually moves in.
+   *
+   * With hub latency on, that is however long the last cycle's transactions
+   * took, so stepping a cycle at a time also shows the loop time changing.
+   */
+  stepOneCycle() {
+    return this.stepFor(this.controlPeriod);
+  }
+
+  /** Stop, and throw away any budget. `paused` alone would leave one running. */
+  pause(force) {
+    this.paused = force === undefined ? !this.paused : Boolean(force);
+    this._stepBudget = 0;
     return this;
   }
 
@@ -290,8 +374,8 @@ export class Simulation {
    * @param {number} frameSeconds wall-clock time since the last frame
    */
   step(frameSeconds) {
-    if (this.paused) {
-      // Still poll input while paused so the controller view stays live.
+    if (this.frozen) {
+      // Still poll input while frozen so the controller view stays live.
       this.input.update(1 / 60);
       return;
     }
@@ -307,17 +391,25 @@ export class Simulation {
       return;
     }
 
-    // Cap the frame so a stall in the browser cannot teleport the robot.
-    const scaled = Math.min(frameSeconds, cfg.sim.maxFrameSeconds) * cfg.sim.timeScale;
-    this._physicsAccumulator += scaled;
-
     const h = 1 / clamp(cfg.sim.substepHz, 50, 20000);
+    // A step is a count of substeps, not a slice of frame time. The time scale
+    // does not apply to it either: "step 1 ms" means 1 ms.
+    const stepping = this.paused;
+    if (stepping) this._physicsAccumulator = this._stepBudget * h;
+    // Cap the frame so a stall in the browser cannot teleport the robot.
+    else this._physicsAccumulator += Math.min(frameSeconds, cfg.sim.maxFrameSeconds) * cfg.sim.timeScale;
+
     // Bound the work one frame may do, so a slow machine degrades into slow
-    // motion rather than freezing.
-    const maxSubsteps = Math.ceil(cfg.sim.maxFrameSeconds / h) + 2;
+    // motion rather than freezing. A step is allowed its whole budget: 100 ms
+    // is six frames' worth of substeps and cutting it short would make the
+    // button lie about how far it went.
+    const maxSubsteps = stepping ? this._stepBudget : Math.ceil(cfg.sim.maxFrameSeconds / h) + 2;
 
     let substeps = 0;
-    while (this._physicsAccumulator >= h && substeps < maxSubsteps) {
+    // While stepping the accumulator is not the authority -- the count is --
+    // because the residue of 200 subtractions can land a hair under one substep
+    // and leave the last one for the next frame.
+    while (substeps < maxSubsteps && (stepping || this._physicsAccumulator >= h)) {
       this._controlAccumulator += h;
       // Read once: the cycle sets the *next* period, and the accumulator has to
       // be charged the one that just elapsed.
@@ -338,8 +430,9 @@ export class Simulation {
       substeps++;
     }
 
+    if (stepping) this._stepBudget -= substeps;
     // Drop any backlog we could not work through, rather than accumulating debt.
-    if (substeps >= maxSubsteps) this._physicsAccumulator = 0;
+    else if (substeps >= maxSubsteps) this._physicsAccumulator = 0;
 
     // How much simulated time actually elapsed. Using the requested frame time
     // instead would let a drill's clock drift away from the physics whenever
